@@ -4,6 +4,8 @@ use crate::{Diagnostic, Span};
 enum TokenKind {
     Fn,
     Val,
+    Var,
+    While,
     If,
     Else,
     True,
@@ -59,6 +61,8 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 match &source[start..i] {
                     "fn" => TokenKind::Fn,
                     "val" => TokenKind::Val,
+                    "var" => TokenKind::Var,
+                    "while" => TokenKind::While,
                     "if" => TokenKind::If,
                     "else" => TokenKind::Else,
                     "true" => TokenKind::True,
@@ -169,8 +173,17 @@ pub struct Function {
 
 #[derive(Clone, Debug)]
 pub struct Body {
-    pub lets: Vec<(String, Span, Expr)>,
-    pub tail: Expr,
+    pub statements: Vec<Statement>,
+    pub tail: Option<Expr>,
+}
+
+#[derive(Clone, Debug)]
+pub enum Statement {
+    Val(String, Span, Expr),
+    Var(String, Span, Expr),
+    Assign(String, Span, Expr),
+    While(Expr, Body),
+    Expr(Expr),
 }
 
 #[derive(Clone, Debug)]
@@ -256,11 +269,11 @@ impl Parser {
         }
         let body = if self.eat(&TokenKind::Equal).is_some() {
             Body {
-                lets: Vec::new(),
-                tail: self.expr(0)?,
+                statements: Vec::new(),
+                tail: Some(self.expr(0)?),
             }
         } else {
-            self.block()?
+            self.block(true)?
         };
         Ok(Function {
             name,
@@ -270,19 +283,73 @@ impl Parser {
         })
     }
 
-    fn block(&mut self) -> Result<Body, Diagnostic> {
+    fn block(&mut self, require_tail: bool) -> Result<Body, Diagnostic> {
         self.expect(&TokenKind::LBrace, "{")?;
-        let mut lets = Vec::new();
-        while self.eat(&TokenKind::Val).is_some() {
-            let (name, span) = self.name()?;
-            self.expect(&TokenKind::Equal, "=")?;
-            let value = self.expr(0)?;
-            self.expect(&TokenKind::Semicolon, "; after val binding")?;
-            lets.push((name, span, value));
+        let mut statements = Vec::new();
+        loop {
+            let binding = if self.eat(&TokenKind::Val).is_some() {
+                Some(false)
+            } else if self.eat(&TokenKind::Var).is_some() {
+                Some(true)
+            } else {
+                None
+            };
+            if let Some(mutable) = binding {
+                let (name, span) = self.name()?;
+                self.expect(&TokenKind::Equal, "=")?;
+                let value = self.expr(0)?;
+                self.expect(&TokenKind::Semicolon, "; after binding")?;
+                statements.push(if mutable {
+                    Statement::Var(name, span, value)
+                } else {
+                    Statement::Val(name, span, value)
+                });
+                continue;
+            }
+            if self.eat(&TokenKind::While).is_some() {
+                self.expect(&TokenKind::LParen, "(")?;
+                let condition = self.expr(0)?;
+                self.expect(&TokenKind::RParen, ")")?;
+                let body = self.block(false)?;
+                statements.push(Statement::While(condition, body));
+                continue;
+            }
+            let assignment = matches!(self.current().kind, TokenKind::Ident(_))
+                && self
+                    .tokens
+                    .get(self.pos + 1)
+                    .is_some_and(|next| next.kind == TokenKind::Equal);
+            if assignment {
+                let (name, span) = self.name()?;
+                self.expect(&TokenKind::Equal, "=")?;
+                let value = self.expr(0)?;
+                self.expect(&TokenKind::Semicolon, "; after assignment")?;
+                statements.push(Statement::Assign(name, span, value));
+                continue;
+            }
+            if self.eat(&TokenKind::RBrace).is_some() {
+                if require_tail {
+                    return Err(Diagnostic::new(
+                        self.tokens[self.pos - 1].span,
+                        "expected a final expression",
+                    ));
+                }
+                return Ok(Body {
+                    statements,
+                    tail: None,
+                });
+            }
+            let expr = self.expr(0)?;
+            if self.eat(&TokenKind::Semicolon).is_some() {
+                statements.push(Statement::Expr(expr));
+                continue;
+            }
+            self.expect(&TokenKind::RBrace, "}")?;
+            return Ok(Body {
+                statements,
+                tail: Some(expr),
+            });
         }
-        let tail = self.expr(0)?;
-        self.expect(&TokenKind::RBrace, "}")?;
-        Ok(Body { lets, tail })
     }
 
     fn expr(&mut self, min_bp: u8) -> Result<Expr, Diagnostic> {
@@ -325,9 +392,9 @@ impl Parser {
                 self.expect(&TokenKind::LParen, "(")?;
                 let condition = self.expr(0)?;
                 self.expect(&TokenKind::RParen, ")")?;
-                let then_body = self.block()?;
+                let then_body = self.block(true)?;
                 self.expect(&TokenKind::Else, "else")?;
-                let else_body = self.block()?;
+                let else_body = self.block(true)?;
                 let end = self.tokens[self.pos - 1].span;
                 Expr {
                     kind: ExprKind::If(

@@ -8,13 +8,15 @@ It does not yet have the language runtime or all features required for 0.0.1.
 ## Current milestone
 
 `docs/version-0.0.1.md` states the release gates and the exact subset that
-currently runs. The Rust crate parses I64 functions, arithmetic, and
-conditional expressions, lowers them to checked Core IR, and runs them through
-an interpreter or Cranelift JIT:
+currently runs. The Rust crate parses I64 functions, arithmetic, conditions,
+mutable locals, and loops, lowers them to checked Core IR, and runs them
+through an interpreter or Cranelift JIT. `docs/core-ir.md` describes the
+current IR and its limits.
 
 ```sh
 cargo run -- run examples/hello.phoebe
 cargo run -- run examples/branch.phoebe
+cargo run -- run examples/loop.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
 ```

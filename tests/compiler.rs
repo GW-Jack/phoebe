@@ -110,7 +110,9 @@ fn rejects_non_boolean_conditions_and_mismatched_branches() {
 #[test]
 fn verifier_rejects_non_dominating_branch_value() {
     let mut program = compile("fn main() -> I64 = if (true) { 1 } else { 2 }");
-    let then_result = program.functions[0].blocks[1].instructions[0].result;
+    let then_result = program.functions[0].blocks[1].instructions[0]
+        .result
+        .unwrap();
     if let core::Terminator::Jump(_, args) = &mut program.functions[0].blocks[2].terminator {
         args[0] = then_result;
     } else {
@@ -131,5 +133,58 @@ fn boolean_join_value_can_control_another_branch() {
     for (arg, expected) in [(-4, 1), (4, 2)] {
         assert_eq!(program.interpret("main", &[arg]).unwrap(), expected);
         assert_eq!(native::run(&program, "main", &[arg]).unwrap(), expected);
+    }
+}
+
+#[test]
+fn mutable_places_and_loop_backedges_agree() {
+    let program = compile(
+        "fn sum_to(n: I64) -> I64 { var i = 0; var total = 0; while (i < n) { total = total + i; i = i + 1; } total }",
+    );
+    assert_eq!(program.functions[0].place_types.len(), 2);
+    for (n, expected) in [(0, 0), (1, 0), (10, 45), (-4, 0)] {
+        assert_eq!(program.interpret("sum_to", &[n]).unwrap(), expected);
+        assert_eq!(native::run(&program, "sum_to", &[n]).unwrap(), expected);
+    }
+}
+
+#[test]
+fn boolean_place_and_branch_inside_loop_agree() {
+    let program = compile(
+        "fn main() -> I64 { var go = true; var value = 1; while (go) { value = if (value == 1) { 8 } else { 9 }; go = false; } value }",
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 8);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 8);
+}
+
+#[test]
+fn rejects_val_assignment_and_bad_while_condition() {
+    let source = "fn main() -> I64 { val x = 1; x = 2; x }";
+    let error = core::lower(&syntax::parse(source).unwrap()).unwrap_err();
+    assert!(error.message.contains("cannot assign to val"));
+    let source = "fn main() -> I64 { var x = 1; while (x) { x = 2; } x }";
+    let error = core::lower(&syntax::parse(source).unwrap()).unwrap_err();
+    assert!(error.message.contains("expected Bool"));
+}
+
+#[test]
+fn verifier_rejects_place_use_before_initialization() {
+    let mut program = compile("fn main() -> I64 { var x = 1; x }");
+    program.functions[0].blocks[0].instructions.swap(1, 2);
+    assert!(
+        core::verify(&program)
+            .unwrap_err()
+            .contains("place used before initialization")
+    );
+}
+
+#[test]
+fn branch_mutations_rejoin_through_one_place() {
+    let program = compile(
+        "fn choose(flag: I64) -> I64 { var x = 0; val y = if (flag < 0) { x = 5; 1 } else { x = 7; 2 }; x + y }",
+    );
+    for (flag, expected) in [(-1, 6), (0, 9)] {
+        assert_eq!(program.interpret("choose", &[flag]).unwrap(), expected);
+        assert_eq!(native::run(&program, "choose", &[flag]).unwrap(), expected);
     }
 }

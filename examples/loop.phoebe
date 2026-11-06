@@ -1,0 +1,11 @@
+fn sum_to(n: I64) -> I64 {
+  var i = 0;
+  var total = 0;
+  while (i < n) {
+    total = total + i;
+    i = i + 1;
+  }
+  total
+}
+
+fn main() -> I64 = sum_to(10)

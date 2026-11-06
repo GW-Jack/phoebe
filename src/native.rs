@@ -3,7 +3,7 @@ use std::mem;
 
 use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::{AbiParam, UserFuncName, types};
+use cranelift_codegen::ir::{AbiParam, StackSlotData, StackSlotKind, UserFuncName, types};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -34,6 +34,7 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
         .finish(settings::Flags::new(flags))
         .map_err(|e| e.to_string())?;
     let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
+    let pointer_type = module.target_config().pointer_type();
     let mut ids = Vec::with_capacity(program.functions.len());
     for function in &program.functions {
         let mut signature = module.make_signature();
@@ -58,6 +59,21 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
                 .blocks
                 .iter()
                 .map(|_| builder.create_block())
+                .collect::<Vec<_>>();
+            let places = function
+                .place_types
+                .iter()
+                .map(|ty| {
+                    let (size, align_shift) = match ty {
+                        Type::I64 => (8, 3),
+                        Type::Bool => (1, 0),
+                    };
+                    builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        size,
+                        align_shift,
+                    ))
+                })
                 .collect::<Vec<_>>();
             builder.append_block_params_for_function_params(blocks[0]);
             for (block_id, block) in function.blocks.iter().enumerate().skip(1) {
@@ -107,26 +123,50 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
                 for instruction in &block.instructions {
                     let get = |id: core::ValueId| values[id.0].expect("verified value is defined");
                     let value = match &instruction.operation {
-                        Operation::Const(value) => builder.ins().iconst(types::I64, *value),
+                        Operation::Const(value) => Some(builder.ins().iconst(types::I64, *value)),
                         Operation::Bool(value) => {
-                            builder.ins().iconst(types::I8, i64::from(*value))
+                            Some(builder.ins().iconst(types::I8, i64::from(*value)))
                         }
-                        Operation::Neg(a) => builder.ins().ineg(get(*a)),
-                        Operation::Add(a, b) => builder.ins().iadd(get(*a), get(*b)),
-                        Operation::Sub(a, b) => builder.ins().isub(get(*a), get(*b)),
-                        Operation::Mul(a, b) => builder.ins().imul(get(*a), get(*b)),
-                        Operation::Eq(a, b) => builder.ins().icmp(IntCC::Equal, get(*a), get(*b)),
+                        Operation::Neg(a) => Some(builder.ins().ineg(get(*a))),
+                        Operation::Add(a, b) => Some(builder.ins().iadd(get(*a), get(*b))),
+                        Operation::Sub(a, b) => Some(builder.ins().isub(get(*a), get(*b))),
+                        Operation::Mul(a, b) => Some(builder.ins().imul(get(*a), get(*b))),
+                        Operation::Eq(a, b) => {
+                            Some(builder.ins().icmp(IntCC::Equal, get(*a), get(*b)))
+                        }
                         Operation::Lt(a, b) => {
-                            builder.ins().icmp(IntCC::SignedLessThan, get(*a), get(*b))
+                            Some(builder.ins().icmp(IntCC::SignedLessThan, get(*a), get(*b)))
                         }
                         Operation::Call(target, args) => {
                             let callee = module.declare_func_in_func(ids[target.0].0, builder.func);
                             let args = args.iter().map(|arg| get(*arg)).collect::<Vec<_>>();
                             let call = builder.ins().call(callee, &args);
-                            builder.inst_results(call)[0]
+                            Some(builder.inst_results(call)[0])
+                        }
+                        Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
+                            builder.ins().stack_store(
+                                pointer_type,
+                                get(*value),
+                                places[place.0],
+                                0,
+                            );
+                            None
+                        }
+                        Operation::Load(place) => {
+                            let ty = match function.place_types[place.0] {
+                                Type::I64 => types::I64,
+                                Type::Bool => types::I8,
+                            };
+                            Some(
+                                builder
+                                    .ins()
+                                    .stack_load(pointer_type, ty, places[place.0], 0),
+                            )
                         }
                     };
-                    values[instruction.result.0] = Some(value);
+                    if let Some(result) = instruction.result {
+                        values[result.0] = value;
+                    }
                 }
                 let get = |id: core::ValueId| values[id.0].expect("verified value is defined");
                 match &block.terminator {

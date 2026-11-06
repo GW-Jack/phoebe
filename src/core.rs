@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 
-use crate::syntax::{self, Body, Expr, ExprKind};
+use crate::syntax::{self, Body, Expr, ExprKind, Statement};
 use crate::{Diagnostic, Span};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -12,6 +12,9 @@ pub struct FunctionId(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BlockId(pub usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PlaceId(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
@@ -27,6 +30,12 @@ pub enum Value {
 
 type TypedValue = (ValueId, Type);
 
+#[derive(Clone, Copy)]
+enum Binding {
+    Val(ValueId),
+    Var(PlaceId),
+}
+
 #[derive(Clone, Debug)]
 pub enum Operation {
     Const(i64),
@@ -38,11 +47,14 @@ pub enum Operation {
     Eq(ValueId, ValueId),
     Lt(ValueId, ValueId),
     Call(FunctionId, Vec<ValueId>),
+    PlaceInit(PlaceId, ValueId),
+    Load(PlaceId),
+    Store(PlaceId, ValueId),
 }
 
 #[derive(Clone, Debug)]
 pub struct Instruction {
-    pub result: ValueId,
+    pub result: Option<ValueId>,
     pub operation: Operation,
     pub span: Span,
 }
@@ -70,6 +82,7 @@ pub struct Function {
     pub name: String,
     pub blocks: Vec<Block>,
     pub value_types: Vec<Type>,
+    pub place_types: Vec<Type>,
 }
 
 #[derive(Clone, Debug)]
@@ -87,6 +100,7 @@ struct Lowerer<'a> {
     functions: &'a HashMap<String, (FunctionId, usize)>,
     blocks: Vec<DraftBlock>,
     value_types: Vec<Type>,
+    place_types: Vec<Type>,
     current: BlockId,
 }
 
@@ -100,6 +114,7 @@ impl<'a> Lowerer<'a> {
                 terminator: None,
             }],
             value_types: Vec::new(),
+            place_types: Vec::new(),
             current: BlockId(0),
         };
         for _ in 0..param_count {
@@ -134,11 +149,25 @@ impl<'a> Lowerer<'a> {
     fn emit(&mut self, operation: Operation, ty: Type, span: Span) -> ValueId {
         let result = self.value(ty);
         self.blocks[self.current.0].instructions.push(Instruction {
-            result,
+            result: Some(result),
             operation,
             span,
         });
         result
+    }
+
+    fn emit_effect(&mut self, operation: Operation, span: Span) {
+        self.blocks[self.current.0].instructions.push(Instruction {
+            result: None,
+            operation,
+            span,
+        });
+    }
+
+    fn place(&mut self, ty: Type) -> PlaceId {
+        let id = PlaceId(self.place_types.len());
+        self.place_types.push(ty);
+        id
     }
 
     fn terminate(&mut self, terminator: Terminator) {
@@ -160,23 +189,78 @@ impl<'a> Lowerer<'a> {
     fn body(
         &mut self,
         body: &Body,
-        locals: &mut HashMap<String, ValueId>,
-    ) -> Result<(ValueId, Type), Diagnostic> {
-        for (name, span, expr) in &body.lets {
-            if locals.contains_key(name) {
-                return Err(Diagnostic::new(*span, format!("duplicate local {name}")));
+        locals: &mut HashMap<String, Binding>,
+    ) -> Result<Option<TypedValue>, Diagnostic> {
+        for statement in &body.statements {
+            match statement {
+                Statement::Val(name, span, expr) | Statement::Var(name, span, expr) => {
+                    if locals.contains_key(name) {
+                        return Err(Diagnostic::new(*span, format!("duplicate local {name}")));
+                    }
+                    let (value, ty) = self.expr(expr, locals)?;
+                    if matches!(statement, Statement::Var(..)) {
+                        let place = self.place(ty);
+                        self.emit_effect(Operation::PlaceInit(place, value), *span);
+                        locals.insert(name.clone(), Binding::Var(place));
+                    } else {
+                        locals.insert(name.clone(), Binding::Val(value));
+                    }
+                }
+                Statement::Assign(name, span, expr) => {
+                    let binding = locals
+                        .get(name)
+                        .copied()
+                        .ok_or_else(|| Diagnostic::new(*span, format!("unknown local {name}")))?;
+                    let Binding::Var(place) = binding else {
+                        return Err(Diagnostic::new(
+                            *span,
+                            format!("cannot assign to val {name}"),
+                        ));
+                    };
+                    let (value, ty) = self.expr(expr, locals)?;
+                    self.require(ty, self.place_types[place.0], expr.span)?;
+                    self.emit_effect(Operation::Store(place, value), *span);
+                }
+                Statement::While(condition, loop_body) => {
+                    if let Some(tail) = &loop_body.tail {
+                        return Err(Diagnostic::new(
+                            tail.span,
+                            "while body cannot end in a value expression; add a semicolon",
+                        ));
+                    }
+                    let head = self.block();
+                    let body_block = self.block();
+                    let exit = self.block();
+                    self.terminate(Terminator::Jump(head, vec![]));
+                    self.current = head;
+                    let (cond, ty) = self.expr(condition, locals)?;
+                    self.require(ty, Type::Bool, condition.span)?;
+                    self.terminate(Terminator::Branch {
+                        condition: cond,
+                        then_block: body_block,
+                        else_block: exit,
+                    });
+                    self.current = body_block;
+                    self.body(loop_body, &mut locals.clone())?;
+                    self.terminate(Terminator::Jump(head, vec![]));
+                    self.current = exit;
+                }
+                Statement::Expr(expr) => {
+                    self.expr(expr, locals)?;
+                }
             }
-            let (value, _) = self.expr(expr, locals)?;
-            locals.insert(name.clone(), value);
         }
-        self.expr(&body.tail, locals)
+        body.tail
+            .as_ref()
+            .map(|expr| self.expr(expr, locals))
+            .transpose()
     }
 
     fn pair(
         &mut self,
         lhs: &Expr,
         rhs: &Expr,
-        locals: &HashMap<String, ValueId>,
+        locals: &HashMap<String, Binding>,
     ) -> Result<(TypedValue, TypedValue), Diagnostic> {
         let a = self.expr(lhs, locals)?;
         let b = self.expr(rhs, locals)?;
@@ -186,17 +270,23 @@ impl<'a> Lowerer<'a> {
     fn expr(
         &mut self,
         expr: &Expr,
-        locals: &HashMap<String, ValueId>,
+        locals: &HashMap<String, Binding>,
     ) -> Result<(ValueId, Type), Diagnostic> {
         let (operation, ty) = match &expr.kind {
             ExprKind::Int(value) => (Operation::Const(*value), Type::I64),
             ExprKind::Bool(value) => (Operation::Bool(*value), Type::Bool),
             ExprKind::Name(name) => {
-                let id = locals
+                let binding = locals
                     .get(name)
                     .copied()
                     .ok_or_else(|| Diagnostic::new(expr.span, format!("unknown local {name}")))?;
-                return Ok((id, self.value_types[id.0]));
+                return Ok(match binding {
+                    Binding::Val(id) => (id, self.value_types[id.0]),
+                    Binding::Var(place) => {
+                        let ty = self.place_types[place.0];
+                        (self.emit(Operation::Load(place), ty, expr.span), ty)
+                    }
+                });
             }
             ExprKind::Neg(rhs) => {
                 let (value, ty) = self.expr(rhs, locals)?;
@@ -266,10 +356,14 @@ impl<'a> Lowerer<'a> {
                     else_block,
                 });
                 self.current = then_block;
-                let (then_value, then_type) = self.body(then_body, &mut locals.clone())?;
+                let (then_value, then_type) = self
+                    .body(then_body, &mut locals.clone())?
+                    .expect("parser requires an if-arm tail");
                 let then_end = self.current;
                 self.current = else_block;
-                let (else_value, else_type) = self.body(else_body, &mut locals.clone())?;
+                let (else_value, else_type) = self
+                    .body(else_body, &mut locals.clone())?
+                    .expect("parser requires an if-arm tail");
                 let else_end = self.current;
                 if then_type != else_type {
                     return Err(Diagnostic::new(
@@ -310,6 +404,7 @@ impl<'a> Lowerer<'a> {
             name,
             blocks,
             value_types: self.value_types,
+            place_types: self.place_types,
         })
     }
 }
@@ -341,15 +436,24 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         let mut lowerer = Lowerer::new(&functions, function.params.len());
         let mut locals = HashMap::new();
         for (index, (name, span)) in function.params.iter().enumerate() {
-            if locals.insert(name.clone(), ValueId(index)).is_some() {
+            if locals
+                .insert(name.clone(), Binding::Val(ValueId(index)))
+                .is_some()
+            {
                 return Err(Diagnostic::new(
                     *span,
                     format!("duplicate parameter {name}"),
                 ));
             }
         }
-        let (value, ty) = lowerer.body(&function.body, &mut locals)?;
-        lowerer.require(ty, Type::I64, function.body.tail.span)?;
+        let (value, ty) = lowerer
+            .body(&function.body, &mut locals)?
+            .expect("parser requires a function tail");
+        lowerer.require(
+            ty,
+            Type::I64,
+            function.body.tail.as_ref().expect("tail").span,
+        )?;
         lowerer.terminate(Terminator::Return(value));
         lowered.push(lowerer.finish(function.name.clone())?);
     }
@@ -358,34 +462,38 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     Ok(program)
 }
 
-fn op_type(program: &Program, function: &Function, operation: &Operation) -> Result<Type, String> {
+fn op_type(
+    program: &Program,
+    function: &Function,
+    operation: &Operation,
+) -> Result<Option<Type>, String> {
     let ty = |id: ValueId| function.value_types[id.0];
     match operation {
-        Operation::Const(_) => Ok(Type::I64),
-        Operation::Bool(_) => Ok(Type::Bool),
+        Operation::Const(_) => Ok(Some(Type::I64)),
+        Operation::Bool(_) => Ok(Some(Type::Bool)),
         Operation::Neg(a) => {
             if ty(*a) != Type::I64 {
                 return Err("neg expects I64".into());
             }
-            Ok(Type::I64)
+            Ok(Some(Type::I64))
         }
         Operation::Add(a, b) | Operation::Sub(a, b) | Operation::Mul(a, b) => {
             if ty(*a) != Type::I64 || ty(*b) != Type::I64 {
                 return Err("arithmetic expects I64".into());
             }
-            Ok(Type::I64)
+            Ok(Some(Type::I64))
         }
         Operation::Eq(a, b) => {
             if ty(*a) != ty(*b) {
                 return Err("equality type mismatch".into());
             }
-            Ok(Type::Bool)
+            Ok(Some(Type::Bool))
         }
         Operation::Lt(a, b) => {
             if ty(*a) != Type::I64 || ty(*b) != Type::I64 {
                 return Err("less-than expects I64".into());
             }
-            Ok(Type::Bool)
+            Ok(Some(Type::Bool))
         }
         Operation::Call(target, args) => {
             let callee = program
@@ -397,15 +505,32 @@ fn op_type(program: &Program, function: &Function, operation: &Operation) -> Res
             {
                 return Err("call signature mismatch".into());
             }
-            Ok(Type::I64)
+            Ok(Some(Type::I64))
         }
+        Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
+            let place_ty = function
+                .place_types
+                .get(place.0)
+                .ok_or_else(|| "invalid place ID".to_owned())?;
+            if ty(*value) != *place_ty {
+                return Err("place store type mismatch".into());
+            }
+            Ok(None)
+        }
+        Operation::Load(place) => function
+            .place_types
+            .get(place.0)
+            .copied()
+            .map(Some)
+            .ok_or_else(|| "invalid place ID".to_owned()),
     }
 }
 
 fn operands(operation: &Operation) -> Vec<ValueId> {
     match operation {
         Operation::Const(_) | Operation::Bool(_) => vec![],
-        Operation::Neg(a) => vec![*a],
+        Operation::Neg(a) | Operation::PlaceInit(_, a) | Operation::Store(_, a) => vec![*a],
+        Operation::Load(_) => vec![],
         Operation::Add(a, b)
         | Operation::Sub(a, b)
         | Operation::Mul(a, b)
@@ -431,6 +556,7 @@ pub fn verify(program: &Program) -> Result<(), String> {
         }
         let count = function.value_types.len();
         let mut definitions = vec![None; count];
+        let mut place_initializers = vec![None; function.place_types.len()];
         for (block_id, block) in function.blocks.iter().enumerate() {
             for (param_index, param) in block.params.iter().enumerate() {
                 let slot = definitions
@@ -446,16 +572,29 @@ pub fn verify(program: &Program) -> Result<(), String> {
                 }
             }
             for (index, instruction) in block.instructions.iter().enumerate() {
-                let slot = definitions
-                    .get_mut(instruction.result.0)
-                    .ok_or_else(|| format!("{}: invalid value ID", function.name))?;
-                if slot.replace((block_id, Some(index))).is_some() {
-                    return Err(format!("{}: duplicate value definition", function.name));
+                if let Some(result) = instruction.result {
+                    let slot = definitions
+                        .get_mut(result.0)
+                        .ok_or_else(|| format!("{}: invalid value ID", function.name))?;
+                    if slot.replace((block_id, Some(index))).is_some() {
+                        return Err(format!("{}: duplicate value definition", function.name));
+                    }
+                }
+                if let Operation::PlaceInit(place, _) = instruction.operation {
+                    let slot = place_initializers
+                        .get_mut(place.0)
+                        .ok_or_else(|| format!("{}: invalid place ID", function.name))?;
+                    if slot.replace((block_id, index)).is_some() {
+                        return Err(format!("{}: duplicate place initialization", function.name));
+                    }
                 }
             }
         }
         if definitions.iter().any(Option::is_none) {
             return Err(format!("{}: undefined value ID", function.name));
+        }
+        if place_initializers.iter().any(Option::is_none) {
+            return Err(format!("{}: uninitialized place", function.name));
         }
         let mut successors = vec![Vec::new(); function.blocks.len()];
         let mut predecessors = vec![Vec::new(); function.blocks.len()];
@@ -533,11 +672,32 @@ pub fn verify(program: &Program) -> Result<(), String> {
                     check_use(operand, block_id, index)?;
                 }
                 let expected = op_type(program, function, &instruction.operation)?;
-                if function.value_types[instruction.result.0] != expected {
+                if instruction
+                    .result
+                    .map(|result| function.value_types[result.0])
+                    != expected
+                {
                     return Err(format!(
                         "{}: instruction result type mismatch",
                         function.name
                     ));
+                }
+                if let Operation::Load(place) | Operation::Store(place, _) = instruction.operation {
+                    let (init_block, init_index) =
+                        place_initializers[place.0].expect("checked above");
+                    if init_block == block_id {
+                        if init_index >= index {
+                            return Err(format!(
+                                "{}: place used before initialization",
+                                function.name
+                            ));
+                        }
+                    } else if !dominators[block_id].contains(&init_block) {
+                        return Err(format!(
+                            "{}: non-dominating place initialization",
+                            function.name
+                        ));
+                    }
                 }
             }
             let end = block.instructions.len();
@@ -647,6 +807,7 @@ impl Program {
             ));
         }
         let mut values = vec![None; function.value_types.len()];
+        let mut places = vec![None; function.place_types.len()];
         for (param, arg) in function.blocks[0].params.iter().zip(args) {
             values[param.0] = Some(Value::I64(*arg));
         }
@@ -656,26 +817,35 @@ impl Program {
             for instruction in &block.instructions {
                 let get = |id: ValueId| values[id.0].expect("verified value is defined");
                 let value = match &instruction.operation {
-                    Operation::Const(x) => Value::I64(*x),
-                    Operation::Bool(x) => Value::Bool(*x),
-                    Operation::Neg(a) => Value::I64(as_i64(get(*a)).wrapping_neg()),
+                    Operation::Const(x) => Some(Value::I64(*x)),
+                    Operation::Bool(x) => Some(Value::Bool(*x)),
+                    Operation::Neg(a) => Some(Value::I64(as_i64(get(*a)).wrapping_neg())),
                     Operation::Add(a, b) => {
-                        Value::I64(as_i64(get(*a)).wrapping_add(as_i64(get(*b))))
+                        Some(Value::I64(as_i64(get(*a)).wrapping_add(as_i64(get(*b)))))
                     }
                     Operation::Sub(a, b) => {
-                        Value::I64(as_i64(get(*a)).wrapping_sub(as_i64(get(*b))))
+                        Some(Value::I64(as_i64(get(*a)).wrapping_sub(as_i64(get(*b)))))
                     }
                     Operation::Mul(a, b) => {
-                        Value::I64(as_i64(get(*a)).wrapping_mul(as_i64(get(*b))))
+                        Some(Value::I64(as_i64(get(*a)).wrapping_mul(as_i64(get(*b)))))
                     }
-                    Operation::Eq(a, b) => Value::Bool(get(*a) == get(*b)),
-                    Operation::Lt(a, b) => Value::Bool(as_i64(get(*a)) < as_i64(get(*b))),
+                    Operation::Eq(a, b) => Some(Value::Bool(get(*a) == get(*b))),
+                    Operation::Lt(a, b) => Some(Value::Bool(as_i64(get(*a)) < as_i64(get(*b)))),
                     Operation::Call(target, args) => {
                         let args = args.iter().map(|arg| as_i64(get(*arg))).collect::<Vec<_>>();
-                        Value::I64(self.interpret_id(*target, &args, depth + 1)?)
+                        Some(Value::I64(self.interpret_id(*target, &args, depth + 1)?))
+                    }
+                    Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
+                        places[place.0] = Some(get(*value));
+                        None
+                    }
+                    Operation::Load(place) => {
+                        Some(places[place.0].expect("verified place is initialized"))
                     }
                 };
-                values[instruction.result.0] = Some(value);
+                if let Some(result) = instruction.result {
+                    values[result.0] = value;
+                }
             }
             let get = |id: ValueId| values[id.0].expect("verified value is defined");
             match &block.terminator {
@@ -738,11 +908,15 @@ impl fmt::Display for Program {
                 }
                 writeln!(f, "):")?;
                 for instruction in &block.instructions {
-                    write!(
-                        f,
-                        "    v{}: {:?} = ",
-                        instruction.result.0, function.value_types[instruction.result.0]
-                    )?;
+                    if let Some(result) = instruction.result {
+                        write!(
+                            f,
+                            "    v{}: {:?} = ",
+                            result.0, function.value_types[result.0]
+                        )?;
+                    } else {
+                        write!(f, "    ")?;
+                    }
                     match &instruction.operation {
                         Operation::Const(x) => write!(f, "const {x}")?,
                         Operation::Bool(x) => write!(f, "bool {x}")?,
@@ -761,6 +935,13 @@ impl fmt::Display for Program {
                                 write!(f, "v{}", arg.0)?;
                             }
                             write!(f, ")")?;
+                        }
+                        Operation::PlaceInit(place, value) => {
+                            write!(f, "place.init p{}, v{}", place.0, value.0)?
+                        }
+                        Operation::Load(place) => write!(f, "place.load p{}", place.0)?,
+                        Operation::Store(place, value) => {
+                            write!(f, "place.store p{}, v{}", place.0, value.0)?
                         }
                     }
                     writeln!(f, "  @{}..{}", instruction.span.start, instruction.span.end)?;
