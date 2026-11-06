@@ -198,6 +198,7 @@ pub struct Scheduler {
     reply_slots: Vec<ReplySlot>,
     max_tasks: usize,
     max_channels: usize,
+    max_replies: usize,
     stats: RuntimeStats,
 }
 
@@ -212,6 +213,7 @@ impl Scheduler {
         root: impl Task + 'static,
         max_tasks: usize,
         max_channels: usize,
+        max_replies: usize,
     ) -> Result<Self, String> {
         if max_tasks == 0 {
             return Err("scope requires capacity for its root task".into());
@@ -238,6 +240,7 @@ impl Scheduler {
             reply_slots: Vec::new(),
             max_tasks,
             max_channels,
+            max_replies,
             stats: RuntimeStats {
                 tasks_created: 1,
                 ..RuntimeStats::default()
@@ -645,6 +648,9 @@ impl Scheduler {
 
 impl Context<'_> {
     pub fn reply(&mut self) -> Result<(ReplyTo, ReplyReceiver), String> {
+        if self.scheduler.reply_rights.len() >= self.scheduler.max_replies {
+            return Err("scope reply limit exceeded".into());
+        }
         self.scheduler
             .reply_rights
             .try_reserve(1)

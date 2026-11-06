@@ -66,7 +66,7 @@ impl Task for ReceiveRoot {
 
 #[test]
 fn scope_spawn_transfer_and_receive_park_without_os_threads() {
-    let mut scheduler = Scheduler::new(ReceiveRoot::default(), 2, 1).unwrap();
+    let mut scheduler = Scheduler::new(ReceiveRoot::default(), 2, 1, 0).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     let stats = scheduler.stats();
     assert_eq!(stats.tasks_created, 2);
@@ -151,7 +151,7 @@ impl Task for BackpressureRoot {
 
 #[test]
 fn one_slot_fifo_backpressure_parks_sender_and_wakes_on_receive() {
-    let mut scheduler = Scheduler::new(BackpressureRoot::default(), 2, 1).unwrap();
+    let mut scheduler = Scheduler::new(BackpressureRoot::default(), 2, 1, 0).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     let stats = scheduler.stats();
     assert_eq!(stats.max_queued, 1);
@@ -175,7 +175,7 @@ impl Task for ClosedRoot {
 
 #[test]
 fn last_receiver_close_discards_queue_and_rejected_send_keeps_message() {
-    let mut scheduler = Scheduler::new(ClosedRoot, 1, 1).unwrap();
+    let mut scheduler = Scheduler::new(ClosedRoot, 1, 1, 0).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.stats().discarded_messages, 1);
     scheduler.verify().unwrap();
@@ -222,7 +222,7 @@ impl Task for FailureRoot {
 
 #[test]
 fn child_failure_closes_owned_sender_and_reports_at_scope_join() {
-    let mut scheduler = Scheduler::new(FailureRoot::default(), 2, 1).unwrap();
+    let mut scheduler = Scheduler::new(FailureRoot::default(), 2, 1, 0).unwrap();
     assert!(scheduler.run().unwrap_err().contains("task 1 failed: boom"));
     assert!(scheduler.stats().wakes >= 1);
     assert_eq!(scheduler.open_handles(), 0);
@@ -252,7 +252,7 @@ impl Task for DeadlockRoot {
 
 #[test]
 fn deadlocked_scope_fails_and_closes_every_handle() {
-    let mut scheduler = Scheduler::new(DeadlockRoot::default(), 1, 1).unwrap();
+    let mut scheduler = Scheduler::new(DeadlockRoot::default(), 1, 1, 0).unwrap();
     assert!(scheduler.run().unwrap_err().contains("scope deadlocked"));
     assert_eq!(scheduler.open_handles(), 0);
     scheduler.verify().unwrap();
@@ -309,7 +309,7 @@ impl Task for RejectedBlockedSendRoot {
 
 #[test]
 fn blocked_sender_wakes_closed_with_original_message() {
-    let mut scheduler = Scheduler::new(RejectedBlockedSendRoot::default(), 2, 1).unwrap();
+    let mut scheduler = Scheduler::new(RejectedBlockedSendRoot::default(), 2, 1, 0).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.stats().discarded_messages, 1);
     assert_eq!(scheduler.open_handles(), 0);
@@ -354,7 +354,7 @@ impl Task for YieldRoot {
 
 #[test]
 fn cooperative_yields_keep_task_runnable_and_join_wakes_root() {
-    let mut scheduler = Scheduler::new(YieldRoot::default(), 2, 0).unwrap();
+    let mut scheduler = Scheduler::new(YieldRoot::default(), 2, 0, 0).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.stats().yields, 3);
     assert_eq!(scheduler.stats().parks, 1);

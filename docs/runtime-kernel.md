@@ -5,7 +5,8 @@ channels, and one-shot `ReplyTo<I64>`. Source syntax, Core IR operations,
 compiler-generated continuations, native linking, and general typed messages
 are not implemented here yet.
 
-`Scheduler` owns a bounded table of task records and channels. Each task has
+`Scheduler` owns bounded tables of task records, channels, and reply slots.
+The caller supplies all three limits. Each task has
 one retained `Task` frame and is polled until it returns `Ready` or registers a
 wait and returns `Pending`. The scheduler runs on one OS thread. A full send
 parks the sender with the original message still in its frame; a receive of an
@@ -45,13 +46,15 @@ does not run that scan.
 
 The kernel allocates bounded channel storage and retained frames under scope
 ownership, without a garbage collector or a general shared program heap.
-The task table and ready queue have explicit limits. Channel queues reserve
+The task, channel, and reply tables have explicit limits. Channel queues reserve
 their full capacity before use. Rust `Box` frame allocation and the host
 allocator are not yet fallible in this implementation, so this does not meet
 the release requirement for safe allocation failure. The public Rust `Task`
 trait also cannot by itself prevent a handwritten Rust task from sharing
 mutable memory; Phoebe's future type checker and frame lowering must enforce
 that boundary.
+Reply slots are not reused yet, so the reply limit bounds the total number
+created in one scope rather than only the number simultaneously open.
 
 The compiler integration target is a generated poll function with a typed,
 scope-owned frame. The frame retains task-local values and places across

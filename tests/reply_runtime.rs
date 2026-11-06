@@ -70,7 +70,7 @@ impl Task for ReplyRoot {
 
 #[test]
 fn request_queue_transfers_reply_right_to_service_once() {
-    let mut scheduler = Scheduler::new(ReplyRoot::default(), 2, 1).unwrap();
+    let mut scheduler = Scheduler::new(ReplyRoot::default(), 2, 1, 2).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.open_handles(), 0);
     scheduler.verify().unwrap();
@@ -102,7 +102,7 @@ impl Task for RejectedRequestRoot {
 
 #[test]
 fn rejected_send_returns_request_with_live_reply_right() {
-    let mut scheduler = Scheduler::new(RejectedRequestRoot, 1, 1).unwrap();
+    let mut scheduler = Scheduler::new(RejectedRequestRoot, 1, 1, 2).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.open_handles(), 0);
     scheduler.verify().unwrap();
@@ -130,7 +130,7 @@ impl Task for DiscardRequestRoot {
 
 #[test]
 fn discarding_queued_request_closes_reply_right_and_wakes_receiver() {
-    let mut scheduler = Scheduler::new(DiscardRequestRoot, 1, 1).unwrap();
+    let mut scheduler = Scheduler::new(DiscardRequestRoot, 1, 1, 2).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.stats().discarded_messages, 1);
     assert_eq!(scheduler.open_handles(), 0);
@@ -197,7 +197,7 @@ impl Task for FailureRoot {
 
 #[test]
 fn child_failure_closes_dequeued_reply_right_and_scope_reports_failure() {
-    let mut scheduler = Scheduler::new(FailureRoot::default(), 2, 1).unwrap();
+    let mut scheduler = Scheduler::new(FailureRoot::default(), 2, 1, 2).unwrap();
     assert!(
         scheduler
             .run()
@@ -221,7 +221,7 @@ impl Task for CancelRoot {
 
 #[test]
 fn canceled_reply_receiver_rejects_late_completion() {
-    let mut scheduler = Scheduler::new(CancelRoot, 1, 0).unwrap();
+    let mut scheduler = Scheduler::new(CancelRoot, 1, 0, 2).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.open_handles(), 0);
     scheduler.verify().unwrap();
@@ -317,7 +317,7 @@ impl Task for BackpressureRoot {
 
 #[test]
 fn full_queue_keeps_unsent_reply_right_with_sender_until_retry() {
-    let mut scheduler = Scheduler::new(BackpressureRoot::default(), 2, 1).unwrap();
+    let mut scheduler = Scheduler::new(BackpressureRoot::default(), 2, 1, 2).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.stats().parks, 1);
     assert_eq!(scheduler.stats().discarded_messages, 1);
@@ -344,7 +344,29 @@ impl Task for WrongShapeRoot {
 
 #[test]
 fn scalar_send_cannot_corrupt_request_queue() {
-    let mut scheduler = Scheduler::new(WrongShapeRoot, 1, 1).unwrap();
+    let mut scheduler = Scheduler::new(WrongShapeRoot, 1, 1, 2).unwrap();
     assert_eq!(scheduler.run().unwrap(), 0);
+    scheduler.verify().unwrap();
+}
+
+struct ReplyBudgetRoot;
+
+impl Task for ReplyBudgetRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        let (right, receiver) = context.reply()?;
+        assert_eq!(context.reply().unwrap_err(), "scope reply limit exceeded");
+        assert_eq!(context.complete(right, 42)?, CompleteResult::Delivered);
+        match context.receive_reply(&receiver)? {
+            ReplyReceiveResult::Value(value) => Ok(Poll::Ready(value)),
+            _ => Err("first reply was damaged by capacity failure".into()),
+        }
+    }
+}
+
+#[test]
+fn reply_budget_failure_is_atomic() {
+    let mut scheduler = Scheduler::new(ReplyBudgetRoot, 1, 0, 1).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
+    assert_eq!(scheduler.open_handles(), 0);
     scheduler.verify().unwrap();
 }
