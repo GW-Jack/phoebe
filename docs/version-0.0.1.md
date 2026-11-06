@@ -35,14 +35,16 @@ only by prose at release.
 ## Current executable slice
 
 The Rust crate currently parses I64 function declarations, up to four I64
-parameters, `val` bindings, integer literals, unary negation, `+`, `-`, `*`,
-acyclic direct function calls, and an I64 tail expression. Recursion is
+parameters, `val` bindings, integer and boolean literals, unary negation,
+`+`, `-`, `*`, `==`, `<`, `if` expressions with block arms, acyclic direct
+function calls, and an I64 tail expression. Recursion is
 rejected until task stacks have safe growth limits. Arithmetic wraps at 64
 bits in both interpreter and native execution. `phoebe check`, `phoebe ir`,
 and `phoebe run` work on that subset. Native execution uses Cranelift JIT;
-`--interp` selects the reference interpreter. Core IR is currently a single
-block per function, and its verifier checks use-before-definition, call
-targets, arity, and return values. Source spans survive parsing and lowering.
+`--interp` selects the reference interpreter. Core IR has typed values,
+conditional branches, and block parameters. Its verifier checks definition
+uniqueness, dominance, block-argument types, call targets and arity, and
+return types. Source spans survive parsing and lowering.
 
 This slice establishes the parser → checked IR → interpreter/Cranelift path.
 It does not yet implement the ownership, concurrency, module, or release
@@ -53,6 +55,7 @@ design fixtures, not executable acceptance tests.
 
 ```sh
 cargo run -- run examples/hello.phoebe
+cargo run -- run examples/branch.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
 cargo test

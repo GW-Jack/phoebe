@@ -4,6 +4,10 @@ use crate::{Diagnostic, Span};
 enum TokenKind {
     Fn,
     Val,
+    If,
+    Else,
+    True,
+    False,
     Ident(String),
     Int(i64),
     LParen,
@@ -15,6 +19,8 @@ enum TokenKind {
     Semicolon,
     Arrow,
     Equal,
+    EqualEqual,
+    Less,
     Plus,
     Minus,
     Star,
@@ -53,6 +59,10 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 match &source[start..i] {
                     "fn" => TokenKind::Fn,
                     "val" => TokenKind::Val,
+                    "if" => TokenKind::If,
+                    "else" => TokenKind::Else,
+                    "true" => TokenKind::True,
+                    "false" => TokenKind::False,
                     word => TokenKind::Ident(word.to_owned()),
                 }
             }
@@ -94,9 +104,17 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 i += 1;
                 TokenKind::Semicolon
             }
+            b'=' if bytes.get(i + 1) == Some(&b'=') => {
+                i += 2;
+                TokenKind::EqualEqual
+            }
             b'=' => {
                 i += 1;
                 TokenKind::Equal
+            }
+            b'<' => {
+                i += 1;
+                TokenKind::Less
             }
             b'+' => {
                 i += 1;
@@ -164,11 +182,15 @@ pub struct Expr {
 #[derive(Clone, Debug)]
 pub enum ExprKind {
     Int(i64),
+    Bool(bool),
     Name(String),
     Neg(Box<Expr>),
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
+    Eq(Box<Expr>, Box<Expr>),
+    Lt(Box<Expr>, Box<Expr>),
+    If(Box<Expr>, Box<Body>, Box<Body>),
     Call(String, Vec<Expr>),
 }
 
@@ -276,6 +298,47 @@ impl Parser {
                 }
             }
             Token {
+                kind: TokenKind::True,
+                span,
+            } => {
+                self.pos += 1;
+                Expr {
+                    kind: ExprKind::Bool(true),
+                    span,
+                }
+            }
+            Token {
+                kind: TokenKind::False,
+                span,
+            } => {
+                self.pos += 1;
+                Expr {
+                    kind: ExprKind::Bool(false),
+                    span,
+                }
+            }
+            Token {
+                kind: TokenKind::If,
+                span,
+            } => {
+                self.pos += 1;
+                self.expect(&TokenKind::LParen, "(")?;
+                let condition = self.expr(0)?;
+                self.expect(&TokenKind::RParen, ")")?;
+                let then_body = self.block()?;
+                self.expect(&TokenKind::Else, "else")?;
+                let else_body = self.block()?;
+                let end = self.tokens[self.pos - 1].span;
+                Expr {
+                    kind: ExprKind::If(
+                        Box::new(condition),
+                        Box::new(then_body),
+                        Box::new(else_body),
+                    ),
+                    span: span.join(end),
+                }
+            }
+            Token {
                 kind: TokenKind::Ident(name),
                 span,
             } => {
@@ -308,7 +371,7 @@ impl Parser {
                 span,
             } => {
                 self.pos += 1;
-                let rhs = self.expr(5)?;
+                let rhs = self.expr(7)?;
                 let end = rhs.span;
                 Expr {
                     kind: ExprKind::Neg(Box::new(rhs)),
@@ -329,8 +392,9 @@ impl Parser {
 
         loop {
             let (left_bp, right_bp) = match self.current().kind {
-                TokenKind::Plus | TokenKind::Minus => (1, 2),
-                TokenKind::Star => (3, 4),
+                TokenKind::EqualEqual | TokenKind::Less => (1, 2),
+                TokenKind::Plus | TokenKind::Minus => (3, 4),
+                TokenKind::Star => (5, 6),
                 _ => break,
             };
             if left_bp < min_bp {
@@ -344,6 +408,8 @@ impl Parser {
                 TokenKind::Plus => ExprKind::Add(Box::new(lhs), Box::new(rhs)),
                 TokenKind::Minus => ExprKind::Sub(Box::new(lhs), Box::new(rhs)),
                 TokenKind::Star => ExprKind::Mul(Box::new(lhs), Box::new(rhs)),
+                TokenKind::EqualEqual => ExprKind::Eq(Box::new(lhs), Box::new(rhs)),
+                TokenKind::Less => ExprKind::Lt(Box::new(lhs), Box::new(rhs)),
                 _ => unreachable!(),
             };
             lhs = Expr { kind, span };

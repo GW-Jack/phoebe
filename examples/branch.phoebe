@@ -1,0 +1,6 @@
+fn absolute(x: I64) -> I64 = if (x < 0) { -x } else { x }
+
+fn main() -> I64 {
+  val answer = absolute(-41) + 1;
+  answer
+}

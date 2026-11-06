@@ -1,6 +1,8 @@
+use std::collections::VecDeque;
 use std::mem;
 
 use cranelift_codegen::ir::InstBuilder;
+use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{AbiParam, UserFuncName, types};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -8,17 +10,17 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};
 use cranelift_native::builder as native_builder;
 
-use crate::core::{self, Operation, Program};
+use crate::core::{self, Operation, Program, Terminator, Type};
 
 pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
     core::verify(program)?;
     let (_, entry) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
-    if args.len() != entry.block.params.len() {
+    if args.len() != entry.blocks[0].params.len() {
         return Err(format!(
             "`{name}` expects {} arguments, got {}",
-            entry.block.params.len(),
+            entry.blocks[0].params.len(),
             args.len()
         ));
     }
@@ -35,7 +37,7 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
     let mut ids = Vec::with_capacity(program.functions.len());
     for function in &program.functions {
         let mut signature = module.make_signature();
-        for _ in &function.block.params {
+        for _ in &function.blocks[0].params {
             signature.params.push(AbiParam::new(types::I64));
         }
         signature.returns.push(AbiParam::new(types::I64));
@@ -52,29 +54,104 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
         ctx.func.name = UserFuncName::user(0, id.as_u32());
         {
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_context);
-            let block = builder.create_block();
-            builder.switch_to_block(block);
-            builder.append_block_params_for_function_params(block);
-            let mut values = builder.block_params(block).to_vec();
-            for instruction in &function.block.instructions {
-                let value = match &instruction.operation {
-                    Operation::Const(value) => builder.ins().iconst(types::I64, *value),
-                    Operation::Neg(a) => builder.ins().ineg(values[a.0]),
-                    Operation::Add(a, b) => builder.ins().iadd(values[a.0], values[b.0]),
-                    Operation::Sub(a, b) => builder.ins().isub(values[a.0], values[b.0]),
-                    Operation::Mul(a, b) => builder.ins().imul(values[a.0], values[b.0]),
-                    Operation::Call(target, args) => {
-                        let callee = module.declare_func_in_func(ids[target.0].0, builder.func);
-                        let args = args.iter().map(|arg| values[arg.0]).collect::<Vec<_>>();
-                        let call = builder.ins().call(callee, &args);
-                        builder.inst_results(call)[0]
-                    }
-                };
-                values.push(value);
+            let blocks = function
+                .blocks
+                .iter()
+                .map(|_| builder.create_block())
+                .collect::<Vec<_>>();
+            builder.append_block_params_for_function_params(blocks[0]);
+            for (block_id, block) in function.blocks.iter().enumerate().skip(1) {
+                for param in &block.params {
+                    let ty = match function.value_types[param.0] {
+                        Type::I64 => types::I64,
+                        Type::Bool => types::I8,
+                    };
+                    builder.append_block_param(blocks[block_id], ty);
+                }
             }
-            builder
-                .ins()
-                .return_(&[values[function.block.return_value.0]]);
+            let mut values = vec![None; function.value_types.len()];
+            for (block_id, block) in function.blocks.iter().enumerate() {
+                for (param, value) in block
+                    .params
+                    .iter()
+                    .zip(builder.block_params(blocks[block_id]))
+                {
+                    values[param.0] = Some(*value);
+                }
+            }
+            let mut order = Vec::with_capacity(function.blocks.len());
+            let mut seen = vec![false; function.blocks.len()];
+            let mut ready = VecDeque::from([0usize]);
+            seen[0] = true;
+            while let Some(block_id) = ready.pop_front() {
+                order.push(block_id);
+                let successors = match &function.blocks[block_id].terminator {
+                    Terminator::Return(_) => vec![],
+                    Terminator::Jump(target, _) => vec![target.0],
+                    Terminator::Branch {
+                        then_block,
+                        else_block,
+                        ..
+                    } => vec![then_block.0, else_block.0],
+                };
+                for target in successors {
+                    if !seen[target] {
+                        seen[target] = true;
+                        ready.push_back(target);
+                    }
+                }
+            }
+            for block_id in order {
+                let block = &function.blocks[block_id];
+                builder.switch_to_block(blocks[block_id]);
+                for instruction in &block.instructions {
+                    let get = |id: core::ValueId| values[id.0].expect("verified value is defined");
+                    let value = match &instruction.operation {
+                        Operation::Const(value) => builder.ins().iconst(types::I64, *value),
+                        Operation::Bool(value) => {
+                            builder.ins().iconst(types::I8, i64::from(*value))
+                        }
+                        Operation::Neg(a) => builder.ins().ineg(get(*a)),
+                        Operation::Add(a, b) => builder.ins().iadd(get(*a), get(*b)),
+                        Operation::Sub(a, b) => builder.ins().isub(get(*a), get(*b)),
+                        Operation::Mul(a, b) => builder.ins().imul(get(*a), get(*b)),
+                        Operation::Eq(a, b) => builder.ins().icmp(IntCC::Equal, get(*a), get(*b)),
+                        Operation::Lt(a, b) => {
+                            builder.ins().icmp(IntCC::SignedLessThan, get(*a), get(*b))
+                        }
+                        Operation::Call(target, args) => {
+                            let callee = module.declare_func_in_func(ids[target.0].0, builder.func);
+                            let args = args.iter().map(|arg| get(*arg)).collect::<Vec<_>>();
+                            let call = builder.ins().call(callee, &args);
+                            builder.inst_results(call)[0]
+                        }
+                    };
+                    values[instruction.result.0] = Some(value);
+                }
+                let get = |id: core::ValueId| values[id.0].expect("verified value is defined");
+                match &block.terminator {
+                    Terminator::Return(value) => {
+                        builder.ins().return_(&[get(*value)]);
+                    }
+                    Terminator::Jump(target, args) => {
+                        let args = args.iter().map(|arg| get(*arg).into()).collect::<Vec<_>>();
+                        builder.ins().jump(blocks[target.0], &args);
+                    }
+                    Terminator::Branch {
+                        condition,
+                        then_block,
+                        else_block,
+                    } => {
+                        builder.ins().brif(
+                            get(*condition),
+                            blocks[then_block.0],
+                            &[],
+                            blocks[else_block.0],
+                            &[],
+                        );
+                    }
+                }
+            }
             builder.seal_all_blocks();
             builder.finalize(module.target_config());
         }
