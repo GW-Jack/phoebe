@@ -1,0 +1,74 @@
+--- Bounded core: one task; outer/inner regions; one reference; one sender and
+--- receiver; a one-slot queue. Rules are the complete transition relation.
+mod PHOEBE-CORE is
+  protecting BOOL .
+
+  sorts Outer Inner Ref Sender Receiver Queue Task State .
+  ops outerUp outerDown : -> Outer [ctor] .
+  ops innerOff innerUp innerDown : -> Inner [ctor] .
+  ops noRef liveRef releasedRef : -> Ref [ctor] .
+  ops senderOpen senderClosed : -> Sender [ctor] .
+  ops receiverOpen receiverEnd receiverClosed : -> Receiver [ctor] .
+  ops empty full : -> Queue [ctor] .
+  ops running failed : -> Task [ctor] .
+
+  op st : Outer Inner Ref Sender Receiver Queue Task -> State [ctor] .
+  op initial : -> State .
+  eq initial = st(outerUp, innerOff, noRef,
+                  senderOpen, receiverOpen, empty, running) .
+
+  vars S : Sender .
+  vars R : Receiver .
+  vars Q : Queue .
+  vars I : Inner .
+  vars F : Ref .
+  vars O : Outer .
+
+  rl [enter-inner] : st(outerUp, innerOff, noRef, S, R, Q, running)
+    => st(outerUp, innerUp, noRef, S, R, Q, running) .
+  rl [borrow-inner] : st(outerUp, innerUp, noRef, S, R, Q, running)
+    => st(outerUp, innerUp, liveRef, S, R, Q, running) .
+  rl [release-ref] : st(outerUp, innerUp, liveRef, S, R, Q, running)
+    => st(outerUp, innerUp, releasedRef, S, R, Q, running) .
+  rl [exit-inner-empty] : st(outerUp, innerUp, noRef, S, R, Q, running)
+    => st(outerUp, innerDown, noRef, S, R, Q, running) .
+  rl [exit-inner-released] : st(outerUp, innerUp, releasedRef, S, R, Q, running)
+    => st(outerUp, innerDown, releasedRef, S, R, Q, running) .
+  rl [exit-outer-off] : st(outerUp, innerOff, noRef, S, R, Q, running)
+    => st(outerDown, innerOff, noRef, S, R, Q, running) .
+  rl [exit-outer-empty] : st(outerUp, innerDown, noRef, S, R, Q, running)
+    => st(outerDown, innerDown, noRef, S, R, Q, running) .
+  rl [exit-outer-released] : st(outerUp, innerDown, releasedRef, S, R, Q, running)
+    => st(outerDown, innerDown, releasedRef, S, R, Q, running) .
+
+  --- The only message is a closed integer value; references are not sendable.
+  rl [send-value] : st(O, I, F, senderOpen, receiverOpen, empty, running)
+    => st(O, I, F, senderOpen, receiverOpen, full, running) .
+  rl [receive-value] : st(O, I, F, S, receiverOpen, full, running)
+    => st(O, I, F, S, receiverOpen, empty, running) .
+  rl [close-sender] : st(O, I, F, senderOpen, R, Q, running)
+    => st(O, I, F, senderClosed, R, Q, running) .
+  rl [receive-end] : st(O, I, F, senderClosed, receiverOpen, empty, running)
+    => st(O, I, F, senderClosed, receiverEnd, empty, running) .
+  rl [close-receiver] : st(O, I, F, S, receiverEnd, empty, running)
+    => st(O, I, F, S, receiverClosed, empty, running) .
+  rl [close-receiver-early] : st(O, I, F, S, receiverOpen, empty, running)
+    => st(O, I, F, S, receiverClosed, empty, running) .
+
+  --- Failure ends the task and lets the runtime close both handles and free
+  --- its storage. Pending queued data is discarded because no receiver lives.
+  rl [fail] : st(O, I, F, S, R, Q, running)
+    => st(outerDown, innerDown, releasedRef,
+          senderClosed, receiverClosed, empty, failed) .
+
+  op bad : State -> Bool .
+  eq bad(st(outerDown, innerUp, F, S, R, Q, running)) = true .
+  eq bad(st(O, innerDown, liveRef, S, R, Q, running)) = true .
+  eq bad(st(O, I, F, S, receiverEnd, full, running)) = true .
+  eq bad(st(O, I, F, S, receiverClosed, full, running)) = true .
+  eq bad(st(O, I, F, senderOpen, R, Q, failed)) = true .
+  eq bad(st(O, I, F, S, receiverOpen, Q, failed)) = true .
+  eq bad(st(O, I, F, S, R, Q, failed)) =
+    not (O == outerDown and I == innerDown and Q == empty) [owise] .
+  eq bad(st(O, I, F, S, R, Q, running)) = false [owise] .
+endm

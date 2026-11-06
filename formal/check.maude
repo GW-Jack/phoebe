@@ -1,0 +1,24 @@
+load core.maude
+
+--- Sanity check that the bad-state predicate recognizes a dangling reference.
+reduce in PHOEBE-CORE : bad(st(outerUp, innerDown, liveRef,
+  senderOpen, receiverOpen, empty, running)) .
+
+--- Exhaustive reachability searches in this finite abstract machine.
+search [1] in PHOEBE-CORE : initial =>* X:State
+  such that bad(X:State) == true .
+
+--- Witnesses that the model actually reaches the intended behaviors.
+search [1] in PHOEBE-CORE : initial =>*
+  st(outerUp, innerUp, liveRef, senderClosed, receiverOpen, full, running) .
+--- From this full queue, the only path to the specified empty/open state is
+--- receive-value. This checks the receive rule is reachable.
+search [1] in PHOEBE-CORE :
+  st(outerUp, innerUp, liveRef, senderClosed, receiverOpen, full, running)
+  =>+ st(outerUp, innerUp, liveRef,
+          senderClosed, receiverOpen, empty, running) .
+search [1] in PHOEBE-CORE : initial =>*
+  st(outerUp, innerOff, noRef, senderClosed, receiverEnd, empty, running) .
+search [1] in PHOEBE-CORE : initial =>*
+  st(outerDown, innerDown, releasedRef,
+     senderClosed, receiverClosed, empty, failed) .
