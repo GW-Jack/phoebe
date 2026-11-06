@@ -188,3 +188,76 @@ fn branch_mutations_rejoin_through_one_place() {
         assert_eq!(native::run(&program, "choose", &[flag]).unwrap(), expected);
     }
 }
+
+#[test]
+fn shared_and_exclusive_borrows_cross_calls() {
+    let program = compile(
+        "fn read(x: &I64) -> I64 = x fn bump(x: &mut I64) -> I64 { x = x + 1; x } fn main() -> I64 { val seed = 40; var x = read(&seed); bump(&mut x); bump(&mut x); x }",
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
+fn exclusive_borrow_can_be_forwarded_as_shared() {
+    let program = compile(
+        "fn read(x: &I64) -> I64 = x fn forward(x: &mut I64) -> I64 = read(&x) fn main() -> I64 { var x = 42; forward(&mut x) }",
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
+fn overlapping_exclusive_borrows_are_rejected() {
+    let source = "fn pair(a: &mut I64, b: &mut I64) -> I64 = a + b fn main() -> I64 { var x = 1; pair(&mut x, &mut x) }";
+    let error = core::lower(&syntax::parse(source).unwrap()).unwrap_err();
+    assert!(error.message.contains("overlapping call borrows"));
+    let source = "fn pair(a: &I64, b: &mut I64) -> I64 = a + b fn main() -> I64 { var x = 1; pair(&x, &mut x) }";
+    let error = core::lower(&syntax::parse(source).unwrap()).unwrap_err();
+    assert!(error.message.contains("overlapping call borrows"));
+}
+
+#[test]
+fn borrowed_function_cannot_be_called_as_external_entry() {
+    let program = compile("fn read(x: &I64) -> I64 = x");
+    assert!(
+        program
+            .interpret("read", &[1])
+            .unwrap_err()
+            .contains("Phoebe caller")
+    );
+    assert!(
+        native::run(&program, "read", &[1])
+            .unwrap_err()
+            .contains("Phoebe caller")
+    );
+}
+
+#[test]
+fn verifier_rejects_reference_storage() {
+    let mut program = compile("fn main() -> I64 { var x = 1; x }");
+    program.functions[0].place_types[0] = core::Type::RefMutI64;
+    assert!(
+        core::verify(&program)
+            .unwrap_err()
+            .contains("references cannot be stored")
+    );
+}
+
+#[test]
+fn repeated_shared_borrow_is_allowed() {
+    let program = compile(
+        "fn add(a: &I64, b: &I64) -> I64 = a + b fn main() -> I64 { var x = 21; add(&x, &x) }",
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
+fn call_borrow_begins_after_value_arguments_evaluate() {
+    let program = compile(
+        "fn bump(x: &mut I64) -> I64 { x = x + 1; x } fn add(x: &mut I64, n: I64) -> I64 { x = x + n; x } fn main() -> I64 { var x = 1; add(&mut x, bump(&mut x)) }",
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 4);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 4);
+}

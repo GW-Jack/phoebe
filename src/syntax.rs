@@ -5,6 +5,7 @@ enum TokenKind {
     Fn,
     Val,
     Var,
+    Mut,
     While,
     If,
     Else,
@@ -26,6 +27,7 @@ enum TokenKind {
     Plus,
     Minus,
     Star,
+    Amp,
     Eof,
 }
 
@@ -62,6 +64,7 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     "fn" => TokenKind::Fn,
                     "val" => TokenKind::Val,
                     "var" => TokenKind::Var,
+                    "mut" => TokenKind::Mut,
                     "while" => TokenKind::While,
                     "if" => TokenKind::If,
                     "else" => TokenKind::Else,
@@ -128,6 +131,10 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 i += 1;
                 TokenKind::Star
             }
+            b'&' => {
+                i += 1;
+                TokenKind::Amp
+            }
             b'-' if bytes.get(i + 1) == Some(&b'>') => {
                 i += 2;
                 TokenKind::Arrow
@@ -167,8 +174,32 @@ pub struct Program {
 pub struct Function {
     pub name: String,
     pub name_span: Span,
-    pub params: Vec<(String, Span)>,
+    pub params: Vec<Param>,
     pub body: Body,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamMode {
+    Own,
+    Shared,
+    Exclusive,
+}
+
+#[derive(Clone, Debug)]
+pub struct Param {
+    pub name: String,
+    pub span: Span,
+    pub mode: ParamMode,
+}
+
+#[derive(Clone, Debug)]
+pub enum CallArgument {
+    Value(Expr),
+    Borrow {
+        name: String,
+        span: Span,
+        mutable: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -204,7 +235,7 @@ pub enum ExprKind {
     Eq(Box<Expr>, Box<Expr>),
     Lt(Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Body>, Box<Body>),
-    Call(String, Vec<Expr>),
+    Call(String, Vec<CallArgument>),
 }
 
 struct Parser {
@@ -249,13 +280,26 @@ impl Parser {
         let mut params = Vec::new();
         if self.eat(&TokenKind::RParen).is_none() {
             loop {
-                let param = self.name()?;
+                let (param_name, param_span) = self.name()?;
                 self.expect(&TokenKind::Colon, ":")?;
+                let mode = if self.eat(&TokenKind::Amp).is_some() {
+                    if self.eat(&TokenKind::Mut).is_some() {
+                        ParamMode::Exclusive
+                    } else {
+                        ParamMode::Shared
+                    }
+                } else {
+                    ParamMode::Own
+                };
                 let (ty, span) = self.name()?;
                 if ty != "I64" {
                     return Err(Diagnostic::new(span, "only I64 is implemented"));
                 }
-                params.push(param);
+                params.push(Param {
+                    name: param_name,
+                    span: param_span,
+                    mode,
+                });
                 if self.eat(&TokenKind::Comma).is_none() {
                     self.expect(&TokenKind::RParen, ")")?;
                     break;
@@ -416,7 +460,17 @@ impl Parser {
                         close.span
                     } else {
                         loop {
-                            args.push(self.expr(0)?);
+                            if let Some(amp) = self.eat(&TokenKind::Amp) {
+                                let mutable = self.eat(&TokenKind::Mut).is_some();
+                                let (name, name_span) = self.name()?;
+                                args.push(CallArgument::Borrow {
+                                    name,
+                                    span: amp.span.join(name_span),
+                                    mutable,
+                                });
+                            } else {
+                                args.push(CallArgument::Value(self.expr(0)?));
+                            }
                             if self.eat(&TokenKind::Comma).is_none() {
                                 break self.expect(&TokenKind::RParen, ")")?.span;
                             }

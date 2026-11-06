@@ -37,16 +37,19 @@ only by prose at release.
 The Rust crate currently parses I64 function declarations, up to four I64
 parameters, `val` and `var` bindings, assignment, `while` statements, integer
 and boolean literals, unary negation, `+`, `-`, `*`, `==`, `<`, `if` expressions
-with block arms, acyclic direct function calls, and an I64 tail expression. Recursion is
+with block arms, acyclic direct function calls, call-site `&I64` and
+`&mut I64` arguments, and an I64 tail expression. Recursion is
 rejected until task stacks have safe growth limits. Arithmetic wraps at 64
 bits in both interpreter and native execution. `phoebe check`, `phoebe ir`,
 and `phoebe run` work on that subset. Native execution uses Cranelift JIT;
 `--interp` selects the reference interpreter. Core IR has typed values,
 conditional branches, block parameters, and task-local scalar places for
 `var`. Its verifier checks definition uniqueness, dominance, place
-initialization, block-argument types, call targets and arity, and return
-types. Source spans survive parsing and lowering. `docs/core-ir.md` explains
-the current operations and their evidence boundary.
+initialization, block-argument types, call targets and modes, and return
+types. Source spans survive parsing and lowering. `docs/core-ir.md` and
+`docs/call-borrows.md` explain the current operations and their evidence
+boundary. Borrows are confined to synchronous calls; general reference
+lifetimes and regions are not implemented.
 
 This slice establishes the parser → checked IR → interpreter/Cranelift path.
 It does not yet implement the ownership, concurrency, module, or release
@@ -59,6 +62,7 @@ design fixtures, not executable acceptance tests.
 cargo run -- run examples/hello.phoebe
 cargo run -- run examples/branch.phoebe
 cargo run -- run examples/loop.phoebe
+cargo run -- run examples/borrow.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
 cargo test

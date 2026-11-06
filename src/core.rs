@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 
-use crate::syntax::{self, Body, Expr, ExprKind, Statement};
+use crate::syntax::{self, Body, CallArgument, Expr, ExprKind, ParamMode, Statement};
 use crate::{Diagnostic, Span};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -20,20 +20,47 @@ pub struct PlaceId(pub usize);
 pub enum Type {
     I64,
     Bool,
+    RefI64,
+    RefMutI64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Value {
     I64(i64),
     Bool(bool),
+    Ref(usize),
 }
 
 type TypedValue = (ValueId, Type);
+
+fn check_call_aliases(args: &[CallArg]) -> Result<(), String> {
+    for (index, arg) in args.iter().enumerate() {
+        for other in &args[..index] {
+            let (overlap, exclusive) = match (arg, other) {
+                (CallArg::Borrow(a, am), CallArg::Borrow(b, bm)) => (a == b, *am || *bm),
+                (CallArg::Ref(a, am), CallArg::Ref(b, bm)) => (a == b, *am || *bm),
+                _ => (false, false),
+            };
+            if overlap && exclusive {
+                return Err("overlapping call borrows include an exclusive borrow".into());
+            }
+        }
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy)]
 enum Binding {
     Val(ValueId),
     Var(PlaceId),
+    Ref(ValueId, ParamMode),
+}
+
+#[derive(Clone, Debug)]
+pub enum CallArg {
+    Value(ValueId),
+    Borrow(PlaceId, bool),
+    Ref(ValueId, bool),
 }
 
 #[derive(Clone, Debug)]
@@ -46,7 +73,9 @@ pub enum Operation {
     Mul(ValueId, ValueId),
     Eq(ValueId, ValueId),
     Lt(ValueId, ValueId),
-    Call(FunctionId, Vec<ValueId>),
+    Call(FunctionId, Vec<CallArg>),
+    LoadRef(ValueId),
+    StoreRef(ValueId, ValueId),
     PlaceInit(PlaceId, ValueId),
     Load(PlaceId),
     Store(PlaceId, ValueId),
@@ -80,6 +109,7 @@ pub struct Block {
 #[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
+    pub param_modes: Vec<ParamMode>,
     pub blocks: Vec<Block>,
     pub value_types: Vec<Type>,
     pub place_types: Vec<Type>,
@@ -97,15 +127,19 @@ struct DraftBlock {
 }
 
 struct Lowerer<'a> {
-    functions: &'a HashMap<String, (FunctionId, usize)>,
+    functions: &'a HashMap<String, (FunctionId, Vec<ParamMode>)>,
     blocks: Vec<DraftBlock>,
     value_types: Vec<Type>,
     place_types: Vec<Type>,
+    param_modes: Vec<ParamMode>,
     current: BlockId,
 }
 
 impl<'a> Lowerer<'a> {
-    fn new(functions: &'a HashMap<String, (FunctionId, usize)>, param_count: usize) -> Self {
+    fn new(
+        functions: &'a HashMap<String, (FunctionId, Vec<ParamMode>)>,
+        param_modes: Vec<ParamMode>,
+    ) -> Self {
         let mut lowerer = Self {
             functions,
             blocks: vec![DraftBlock {
@@ -115,10 +149,16 @@ impl<'a> Lowerer<'a> {
             }],
             value_types: Vec::new(),
             place_types: Vec::new(),
+            param_modes: param_modes.clone(),
             current: BlockId(0),
         };
-        for _ in 0..param_count {
-            let id = lowerer.value(Type::I64);
+        for mode in param_modes {
+            let ty = match mode {
+                ParamMode::Own => Type::I64,
+                ParamMode::Shared => Type::RefI64,
+                ParamMode::Exclusive => Type::RefMutI64,
+            };
+            let id = lowerer.value(ty);
             lowerer.blocks[0].params.push(id);
         }
         lowerer
@@ -211,15 +251,23 @@ impl<'a> Lowerer<'a> {
                         .get(name)
                         .copied()
                         .ok_or_else(|| Diagnostic::new(*span, format!("unknown local {name}")))?;
-                    let Binding::Var(place) = binding else {
-                        return Err(Diagnostic::new(
-                            *span,
-                            format!("cannot assign to val {name}"),
-                        ));
-                    };
                     let (value, ty) = self.expr(expr, locals)?;
-                    self.require(ty, self.place_types[place.0], expr.span)?;
-                    self.emit_effect(Operation::Store(place, value), *span);
+                    match binding {
+                        Binding::Var(place) => {
+                            self.require(ty, self.place_types[place.0], expr.span)?;
+                            self.emit_effect(Operation::Store(place, value), *span);
+                        }
+                        Binding::Ref(reference, ParamMode::Exclusive) => {
+                            self.require(ty, Type::I64, expr.span)?;
+                            self.emit_effect(Operation::StoreRef(reference, value), *span);
+                        }
+                        _ => {
+                            return Err(Diagnostic::new(
+                                *span,
+                                format!("cannot assign to val {name}"),
+                            ));
+                        }
+                    }
                 }
                 Statement::While(condition, loop_body) => {
                     if let Some(tail) = &loop_body.tail {
@@ -286,6 +334,10 @@ impl<'a> Lowerer<'a> {
                         let ty = self.place_types[place.0];
                         (self.emit(Operation::Load(place), ty, expr.span), ty)
                     }
+                    Binding::Ref(reference, _) => (
+                        self.emit(Operation::LoadRef(reference), Type::I64, expr.span),
+                        Type::I64,
+                    ),
                 });
             }
             ExprKind::Neg(rhs) => {
@@ -328,21 +380,79 @@ impl<'a> Lowerer<'a> {
                 (Operation::Lt(a, b), Type::Bool)
             }
             ExprKind::Call(name, args) => {
-                let (target, expected) = self.functions.get(name).copied().ok_or_else(|| {
+                let (target, expected) = self.functions.get(name).cloned().ok_or_else(|| {
                     Diagnostic::new(expr.span, format!("unknown function {name}"))
                 })?;
-                if args.len() != expected {
+                if args.len() != expected.len() {
                     return Err(Diagnostic::new(
                         expr.span,
-                        format!("{name} expects {expected} arguments, got {}", args.len()),
+                        format!(
+                            "{name} expects {} arguments, got {}",
+                            expected.len(),
+                            args.len()
+                        ),
                     ));
                 }
                 let mut values = Vec::with_capacity(args.len());
-                for arg in args {
-                    let (value, ty) = self.expr(arg, locals)?;
-                    self.require(ty, Type::I64, arg.span)?;
-                    values.push(value);
+                for (arg, mode) in args.iter().zip(expected) {
+                    match (arg, mode) {
+                        (CallArgument::Value(arg), ParamMode::Own) => {
+                            let (value, ty) = self.expr(arg, locals)?;
+                            self.require(ty, Type::I64, arg.span)?;
+                            values.push(CallArg::Value(value));
+                        }
+                        (
+                            CallArgument::Borrow {
+                                name,
+                                span,
+                                mutable,
+                            },
+                            ParamMode::Shared | ParamMode::Exclusive,
+                        ) => {
+                            if *mutable != (mode == ParamMode::Exclusive) {
+                                return Err(Diagnostic::new(
+                                    *span,
+                                    "borrow mutability does not match parameter",
+                                ));
+                            }
+                            let binding = locals.get(name).copied().ok_or_else(|| {
+                                Diagnostic::new(*span, format!("unknown local {name}"))
+                            })?;
+                            let call_arg = match binding {
+                                Binding::Var(place) => {
+                                    self.require(self.place_types[place.0], Type::I64, *span)?;
+                                    CallArg::Borrow(place, *mutable)
+                                }
+                                Binding::Val(value) if !*mutable => {
+                                    self.require(self.value_types[value.0], Type::I64, *span)?;
+                                    let place = self.place(Type::I64);
+                                    self.emit_effect(Operation::PlaceInit(place, value), *span);
+                                    CallArg::Borrow(place, false)
+                                }
+                                Binding::Ref(value, source_mode)
+                                    if !*mutable || source_mode == ParamMode::Exclusive =>
+                                {
+                                    CallArg::Ref(value, *mutable)
+                                }
+                                _ => {
+                                    return Err(Diagnostic::new(
+                                        *span,
+                                        "cannot mutably borrow this binding",
+                                    ));
+                                }
+                            };
+                            values.push(call_arg);
+                        }
+                        (CallArgument::Value(arg), _) => {
+                            return Err(Diagnostic::new(arg.span, "expected explicit borrow"));
+                        }
+                        (CallArgument::Borrow { span, .. }, _) => {
+                            return Err(Diagnostic::new(*span, "expected owned I64 argument"));
+                        }
+                    }
                 }
+                check_call_aliases(&values)
+                    .map_err(|message| Diagnostic::new(expr.span, message))?;
                 (Operation::Call(target, values), Type::I64)
             }
             ExprKind::If(condition, then_body, else_body) => {
@@ -405,6 +515,7 @@ impl<'a> Lowerer<'a> {
             blocks,
             value_types: self.value_types,
             place_types: self.place_types,
+            param_modes: self.param_modes,
         })
     }
 }
@@ -421,7 +532,14 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         if functions
             .insert(
                 function.name.clone(),
-                (FunctionId(index), function.params.len()),
+                (
+                    FunctionId(index),
+                    function
+                        .params
+                        .iter()
+                        .map(|param| param.mode)
+                        .collect::<Vec<_>>(),
+                ),
             )
             .is_some()
         {
@@ -433,16 +551,20 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     }
     let mut lowered = Vec::with_capacity(ast.functions.len());
     for function in &ast.functions {
-        let mut lowerer = Lowerer::new(&functions, function.params.len());
+        let mut lowerer = Lowerer::new(
+            &functions,
+            function.params.iter().map(|param| param.mode).collect(),
+        );
         let mut locals = HashMap::new();
-        for (index, (name, span)) in function.params.iter().enumerate() {
-            if locals
-                .insert(name.clone(), Binding::Val(ValueId(index)))
-                .is_some()
-            {
+        for (index, param) in function.params.iter().enumerate() {
+            let binding = match param.mode {
+                ParamMode::Own => Binding::Val(ValueId(index)),
+                mode => Binding::Ref(ValueId(index), mode),
+            };
+            if locals.insert(param.name.clone(), binding).is_some() {
                 return Err(Diagnostic::new(
-                    *span,
-                    format!("duplicate parameter {name}"),
+                    param.span,
+                    format!("duplicate parameter {}", param.name),
                 ));
             }
         }
@@ -484,7 +606,7 @@ fn op_type(
             Ok(Some(Type::I64))
         }
         Operation::Eq(a, b) => {
-            if ty(*a) != ty(*b) {
+            if ty(*a) != ty(*b) || !matches!(ty(*a), Type::I64 | Type::Bool) {
                 return Err("equality type mismatch".into());
             }
             Ok(Some(Type::Bool))
@@ -500,12 +622,41 @@ fn op_type(
                 .functions
                 .get(target.0)
                 .ok_or_else(|| "invalid call target".to_owned())?;
-            if args.len() != callee.blocks[0].params.len()
-                || args.iter().any(|arg| ty(*arg) != Type::I64)
-            {
+            if args.len() != callee.param_modes.len() || check_call_aliases(args).is_err() {
                 return Err("call signature mismatch".into());
             }
+            for (arg, mode) in args.iter().zip(&callee.param_modes) {
+                let valid = match (arg, mode) {
+                    (CallArg::Value(value), ParamMode::Own) => ty(*value) == Type::I64,
+                    (CallArg::Borrow(place, false), ParamMode::Shared)
+                    | (CallArg::Borrow(place, true), ParamMode::Exclusive) => {
+                        function.place_types.get(place.0) == Some(&Type::I64)
+                    }
+                    (CallArg::Ref(value, false), ParamMode::Shared) => {
+                        matches!(ty(*value), Type::RefI64 | Type::RefMutI64)
+                    }
+                    (CallArg::Ref(value, true), ParamMode::Exclusive) => {
+                        ty(*value) == Type::RefMutI64
+                    }
+                    _ => false,
+                };
+                if !valid {
+                    return Err("call signature mismatch".into());
+                }
+            }
             Ok(Some(Type::I64))
+        }
+        Operation::LoadRef(reference) => {
+            if !matches!(ty(*reference), Type::RefI64 | Type::RefMutI64) {
+                return Err("load requires a reference".into());
+            }
+            Ok(Some(Type::I64))
+        }
+        Operation::StoreRef(reference, value) => {
+            if ty(*reference) != Type::RefMutI64 || ty(*value) != Type::I64 {
+                return Err("store requires an exclusive I64 reference".into());
+            }
+            Ok(None)
         }
         Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
             let place_ty = function
@@ -529,14 +680,24 @@ fn op_type(
 fn operands(operation: &Operation) -> Vec<ValueId> {
     match operation {
         Operation::Const(_) | Operation::Bool(_) => vec![],
-        Operation::Neg(a) | Operation::PlaceInit(_, a) | Operation::Store(_, a) => vec![*a],
+        Operation::Neg(a)
+        | Operation::PlaceInit(_, a)
+        | Operation::Store(_, a)
+        | Operation::LoadRef(a) => vec![*a],
+        Operation::StoreRef(a, b) => vec![*a, *b],
         Operation::Load(_) => vec![],
         Operation::Add(a, b)
         | Operation::Sub(a, b)
         | Operation::Mul(a, b)
         | Operation::Eq(a, b)
         | Operation::Lt(a, b) => vec![*a, *b],
-        Operation::Call(_, args) => args.clone(),
+        Operation::Call(_, args) => args
+            .iter()
+            .filter_map(|arg| match arg {
+                CallArg::Value(value) | CallArg::Ref(value, _) => Some(*value),
+                CallArg::Borrow(_, _) => None,
+            })
+            .collect(),
     }
 }
 
@@ -554,6 +715,19 @@ pub fn verify(program: &Program) -> Result<(), String> {
                 function.name
             ));
         }
+        if function.param_modes.len() != function.blocks[0].params.len() {
+            return Err(format!("{}: parameter mode count mismatch", function.name));
+        }
+        if function
+            .place_types
+            .iter()
+            .any(|ty| !matches!(ty, Type::I64 | Type::Bool))
+        {
+            return Err(format!(
+                "{}: references cannot be stored in places",
+                function.name
+            ));
+        }
         let count = function.value_types.len();
         let mut definitions = vec![None; count];
         let mut place_initializers = vec![None; function.place_types.len()];
@@ -565,10 +739,23 @@ pub fn verify(program: &Program) -> Result<(), String> {
                 if slot.replace((block_id, None)).is_some() {
                     return Err(format!("{}: duplicate value definition", function.name));
                 }
-                if block_id == 0
-                    && (param_index != param.0 || function.value_types[param.0] != Type::I64)
-                {
-                    return Err(format!("{}: invalid function parameter", function.name));
+                if block_id == 0 {
+                    let expected = match function.param_modes[param_index] {
+                        ParamMode::Own => Type::I64,
+                        ParamMode::Shared => Type::RefI64,
+                        ParamMode::Exclusive => Type::RefMutI64,
+                    };
+                    if param_index != param.0 || function.value_types[param.0] != expected {
+                        return Err(format!("{}: invalid function parameter", function.name));
+                    }
+                } else if matches!(
+                    function.value_types[param.0],
+                    Type::RefI64 | Type::RefMutI64
+                ) {
+                    return Err(format!(
+                        "{}: reference cannot be a block parameter",
+                        function.name
+                    ));
                 }
             }
             for (index, instruction) in block.instructions.iter().enumerate() {
@@ -666,6 +853,27 @@ pub fn verify(program: &Program) -> Result<(), String> {
                 }
                 Ok(())
             };
+        let check_place = |place: PlaceId, block_id: usize, index: usize| -> Result<(), String> {
+            let (init_block, init_index) =
+                place_initializers
+                    .get(place.0)
+                    .and_then(|item| *item)
+                    .ok_or_else(|| format!("{}: invalid place ID", function.name))?;
+            if init_block == block_id {
+                if init_index >= index {
+                    return Err(format!(
+                        "{}: place used before initialization",
+                        function.name
+                    ));
+                }
+            } else if !dominators[block_id].contains(&init_block) {
+                return Err(format!(
+                    "{}: non-dominating place initialization",
+                    function.name
+                ));
+            }
+            Ok(())
+        };
         for (block_id, block) in function.blocks.iter().enumerate() {
             for (index, instruction) in block.instructions.iter().enumerate() {
                 for operand in operands(&instruction.operation) {
@@ -683,20 +891,13 @@ pub fn verify(program: &Program) -> Result<(), String> {
                     ));
                 }
                 if let Operation::Load(place) | Operation::Store(place, _) = instruction.operation {
-                    let (init_block, init_index) =
-                        place_initializers[place.0].expect("checked above");
-                    if init_block == block_id {
-                        if init_index >= index {
-                            return Err(format!(
-                                "{}: place used before initialization",
-                                function.name
-                            ));
+                    check_place(place, block_id, index)?;
+                }
+                if let Operation::Call(_, args) = &instruction.operation {
+                    for arg in args {
+                        if let CallArg::Borrow(place, _) = arg {
+                            check_place(*place, block_id, index)?;
                         }
-                    } else if !dominators[block_id].contains(&init_block) {
-                        return Err(format!(
-                            "{}: non-dominating place initialization",
-                            function.name
-                        ));
                     }
                 }
             }
@@ -787,13 +988,30 @@ impl Program {
 
     pub fn interpret(&self, name: &str, args: &[i64]) -> Result<i64, String> {
         verify(self)?;
-        let (id, _) = self
+        let (id, function) = self
             .function(name)
             .ok_or_else(|| format!("unknown function {name}"))?;
-        self.interpret_id(id, args, 0)
+        if function
+            .param_modes
+            .iter()
+            .any(|mode| *mode != ParamMode::Own)
+        {
+            return Err("borrowed parameters require a Phoebe caller".into());
+        }
+        let args = args
+            .iter()
+            .map(|value| Value::I64(*value))
+            .collect::<Vec<_>>();
+        self.interpret_id(id, &args, &mut Vec::new(), 0)
     }
 
-    fn interpret_id(&self, id: FunctionId, args: &[i64], depth: usize) -> Result<i64, String> {
+    fn interpret_id(
+        &self,
+        id: FunctionId,
+        args: &[Value],
+        stores: &mut Vec<Option<Value>>,
+        depth: usize,
+    ) -> Result<i64, String> {
         if depth >= 1024 {
             return Err("interpreter call depth exceeded 1024".into());
         }
@@ -807,9 +1025,10 @@ impl Program {
             ));
         }
         let mut values = vec![None; function.value_types.len()];
-        let mut places = vec![None; function.place_types.len()];
+        let base = stores.len();
+        stores.resize(base + function.place_types.len(), None);
         for (param, arg) in function.blocks[0].params.iter().zip(args) {
-            values[param.0] = Some(Value::I64(*arg));
+            values[param.0] = Some(*arg);
         }
         let mut current = 0usize;
         loop {
@@ -832,15 +1051,39 @@ impl Program {
                     Operation::Eq(a, b) => Some(Value::Bool(get(*a) == get(*b))),
                     Operation::Lt(a, b) => Some(Value::Bool(as_i64(get(*a)) < as_i64(get(*b)))),
                     Operation::Call(target, args) => {
-                        let args = args.iter().map(|arg| as_i64(get(*arg))).collect::<Vec<_>>();
-                        Some(Value::I64(self.interpret_id(*target, &args, depth + 1)?))
+                        let args = args
+                            .iter()
+                            .map(|arg| match arg {
+                                CallArg::Value(value) | CallArg::Ref(value, _) => get(*value),
+                                CallArg::Borrow(place, _) => Value::Ref(base + place.0),
+                            })
+                            .collect::<Vec<_>>();
+                        Some(Value::I64(self.interpret_id(
+                            *target,
+                            &args,
+                            stores,
+                            depth + 1,
+                        )?))
                     }
                     Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
-                        places[place.0] = Some(get(*value));
+                        stores[base + place.0] = Some(get(*value));
                         None
                     }
                     Operation::Load(place) => {
-                        Some(places[place.0].expect("verified place is initialized"))
+                        Some(stores[base + place.0].expect("verified place is initialized"))
+                    }
+                    Operation::LoadRef(reference) => {
+                        let Value::Ref(slot) = get(*reference) else {
+                            unreachable!("verified reference")
+                        };
+                        Some(stores[slot].expect("live borrowed place"))
+                    }
+                    Operation::StoreRef(reference, value) => {
+                        let Value::Ref(slot) = get(*reference) else {
+                            unreachable!("verified reference")
+                        };
+                        stores[slot] = Some(get(*value));
+                        None
                     }
                 };
                 if let Some(result) = instruction.result {
@@ -849,7 +1092,11 @@ impl Program {
             }
             let get = |id: ValueId| values[id.0].expect("verified value is defined");
             match &block.terminator {
-                Terminator::Return(value) => return Ok(as_i64(get(*value))),
+                Terminator::Return(value) => {
+                    let result = as_i64(get(*value));
+                    stores.truncate(base);
+                    return Ok(result);
+                }
                 Terminator::Jump(target, args) => {
                     let incoming = args.iter().map(|arg| get(*arg)).collect::<Vec<_>>();
                     for (param, value) in function.blocks[target.0].params.iter().zip(incoming) {
@@ -876,14 +1123,14 @@ impl Program {
 fn as_i64(value: Value) -> i64 {
     match value {
         Value::I64(x) => x,
-        Value::Bool(_) => unreachable!("verified I64 operand"),
+        Value::Bool(_) | Value::Ref(_) => unreachable!("verified I64 operand"),
     }
 }
 
 fn as_bool(value: Value) -> bool {
     match value {
         Value::Bool(x) => x,
-        Value::I64(_) => unreachable!("verified Bool operand"),
+        Value::I64(_) | Value::Ref(_) => unreachable!("verified Bool operand"),
     }
 }
 
@@ -895,7 +1142,7 @@ impl fmt::Display for Program {
                 if index > 0 {
                     write!(f, ", ")?;
                 }
-                write!(f, "v{}: I64", param.0)?;
+                write!(f, "v{}: {:?}", param.0, function.value_types[param.0])?;
             }
             writeln!(f, ") -> I64 {{")?;
             for (block_id, block) in function.blocks.iter().enumerate() {
@@ -932,7 +1179,13 @@ impl fmt::Display for Program {
                                 if index > 0 {
                                     write!(f, ", ")?;
                                 }
-                                write!(f, "v{}", arg.0)?;
+                                match arg {
+                                    CallArg::Value(value) => write!(f, "v{}", value.0)?,
+                                    CallArg::Borrow(place, false) => write!(f, "&p{}", place.0)?,
+                                    CallArg::Borrow(place, true) => write!(f, "&mut p{}", place.0)?,
+                                    CallArg::Ref(value, false) => write!(f, "&v{}", value.0)?,
+                                    CallArg::Ref(value, true) => write!(f, "&mut v{}", value.0)?,
+                                }
                             }
                             write!(f, ")")?;
                         }
@@ -942,6 +1195,10 @@ impl fmt::Display for Program {
                         Operation::Load(place) => write!(f, "place.load p{}", place.0)?,
                         Operation::Store(place, value) => {
                             write!(f, "place.store p{}, v{}", place.0, value.0)?
+                        }
+                        Operation::LoadRef(reference) => write!(f, "ref.load v{}", reference.0)?,
+                        Operation::StoreRef(reference, value) => {
+                            write!(f, "ref.store v{}, v{}", reference.0, value.0)?
                         }
                     }
                     writeln!(f, "  @{}..{}", instruction.span.start, instruction.span.end)?;

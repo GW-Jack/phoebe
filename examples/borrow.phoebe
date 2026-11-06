@@ -1,0 +1,16 @@
+fn read(value: &I64) -> I64 = value
+
+fn bump(value: &mut I64) -> I64 {
+  value = value + 1;
+  value
+}
+
+fn forward(value: &mut I64) -> I64 = read(&value)
+
+fn main() -> I64 {
+  val seed = 40;
+  var answer = read(&seed);
+  bump(&mut answer);
+  bump(&mut answer);
+  forward(&mut answer)
+}

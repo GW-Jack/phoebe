@@ -3,14 +3,17 @@ use std::mem;
 
 use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::{AbiParam, StackSlotData, StackSlotKind, UserFuncName, types};
+use cranelift_codegen::ir::{
+    AbiParam, MemFlagsData, StackSlotData, StackSlotKind, UserFuncName, types,
+};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};
 use cranelift_native::builder as native_builder;
 
-use crate::core::{self, Operation, Program, Terminator, Type};
+use crate::core::{self, CallArg, Operation, Program, Terminator, Type};
+use crate::syntax::ParamMode;
 
 pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
     core::verify(program)?;
@@ -23,6 +26,9 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
             entry.blocks[0].params.len(),
             args.len()
         ));
+    }
+    if entry.param_modes.iter().any(|mode| *mode != ParamMode::Own) {
+        return Err("borrowed parameters require a Phoebe caller".into());
     }
     let mut flags = settings::builder();
     flags
@@ -38,8 +44,13 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
     let mut ids = Vec::with_capacity(program.functions.len());
     for function in &program.functions {
         let mut signature = module.make_signature();
-        for _ in &function.blocks[0].params {
-            signature.params.push(AbiParam::new(types::I64));
+        for mode in &function.param_modes {
+            let ty = if *mode == ParamMode::Own {
+                types::I64
+            } else {
+                pointer_type
+            };
+            signature.params.push(AbiParam::new(ty));
         }
         signature.returns.push(AbiParam::new(types::I64));
         let id = module
@@ -67,6 +78,9 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
                     let (size, align_shift) = match ty {
                         Type::I64 => (8, 3),
                         Type::Bool => (1, 0),
+                        Type::RefI64 | Type::RefMutI64 => {
+                            unreachable!("references cannot be stored in places")
+                        }
                     };
                     builder.create_sized_stack_slot(StackSlotData::new(
                         StackSlotKind::ExplicitSlot,
@@ -81,6 +95,7 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
                     let ty = match function.value_types[param.0] {
                         Type::I64 => types::I64,
                         Type::Bool => types::I8,
+                        Type::RefI64 | Type::RefMutI64 => pointer_type,
                     };
                     builder.append_block_param(blocks[block_id], ty);
                 }
@@ -139,9 +154,32 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
                         }
                         Operation::Call(target, args) => {
                             let callee = module.declare_func_in_func(ids[target.0].0, builder.func);
-                            let args = args.iter().map(|arg| get(*arg)).collect::<Vec<_>>();
+                            let args = args
+                                .iter()
+                                .map(|arg| match arg {
+                                    CallArg::Value(value) | CallArg::Ref(value, _) => get(*value),
+                                    CallArg::Borrow(place, _) => {
+                                        builder.ins().stack_addr(pointer_type, places[place.0], 0)
+                                    }
+                                })
+                                .collect::<Vec<_>>();
                             let call = builder.ins().call(callee, &args);
                             Some(builder.inst_results(call)[0])
+                        }
+                        Operation::LoadRef(reference) => Some(builder.ins().load(
+                            types::I64,
+                            MemFlagsData::new(),
+                            get(*reference),
+                            0,
+                        )),
+                        Operation::StoreRef(reference, value) => {
+                            builder.ins().store(
+                                MemFlagsData::new(),
+                                get(*value),
+                                get(*reference),
+                                0,
+                            );
+                            None
                         }
                         Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                             builder.ins().stack_store(
@@ -156,6 +194,9 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
                             let ty = match function.place_types[place.0] {
                                 Type::I64 => types::I64,
                                 Type::Bool => types::I8,
+                                Type::RefI64 | Type::RefMutI64 => {
+                                    unreachable!("references cannot be stored in places")
+                                }
                             };
                             Some(
                                 builder
