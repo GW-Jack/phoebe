@@ -1,0 +1,6 @@
+fn twice(x: I64) -> I64 = x * 2
+
+fn main() -> I64 {
+  val answer = twice(20) + 2;
+  answer
+}

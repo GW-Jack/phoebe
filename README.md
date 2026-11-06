@@ -1,11 +1,21 @@
 # Phoebe
 
 Phoebe is an early language design for native programs with task-local memory,
-lightweight tasks, and value-passing channels. This repository currently contains
-a draft language specification and a deliberately small executable formal model.
-It does **not** contain a compiler or runtime.
+lightweight tasks, and value-passing channels. The repository has draft
+specifications, bounded formal models, and a first executable compiler slice.
+It does not yet have the language runtime or all features required for 0.0.1.
 
 ## Current milestone
+
+`docs/version-0.0.1.md` states the release gates and the exact subset that
+currently runs. The Rust crate parses I64 functions and arithmetic, lowers
+them to checked Core IR, and runs them through an interpreter or Cranelift JIT:
+
+```sh
+cargo run -- run examples/hello.phoebe
+cargo run -- run examples/hello.phoebe --interp
+cargo run -- ir examples/hello.phoebe
+```
 
 `docs/spec.md` states the proposed language contract and marks open decisions.
 `docs/non-pessimization.md` defines cost events and example IR acceptance

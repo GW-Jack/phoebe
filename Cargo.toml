@@ -1,0 +1,14 @@
+[package]
+name = "phoebe"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.95"
+description = "Experimental Phoebe language compiler"
+license = "Apache-2.0"
+
+[dependencies]
+cranelift-codegen = "=0.135.2"
+cranelift-frontend = "=0.135.2"
+cranelift-jit = "=0.135.2"
+cranelift-module = "=0.135.2"
+cranelift-native = "=0.135.2"
