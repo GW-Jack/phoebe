@@ -1,8 +1,11 @@
 # Capability flow in Core IR
 
-Status: design contract for the next compiler slice. The executable Core IR
-does not yet contain these types or operations. The runtime has a bounded
-`I64` request/reply implementation, but it is not connected to source code.
+Status: design contract and preparatory executable flow checker. The checker
+in `src/capability_flow.rs` verifies exact capability-slot states at joins and
+normal returns, and derives live-slot maps for failure and suspension edges.
+The executable Core IR does not yet produce these graphs or contain these
+types and operations. The runtime has a bounded `I64` request/reply
+implementation, but it is not connected to source code.
 
 ## Why the current affine rule is insufficient
 
@@ -107,13 +110,14 @@ in printable IR and avoids a second, implicit compiler cleanup algorithm.
 
 ## Verification boundary and implementation order
 
-The first executable step is a type classifier and CFG verifier that rejects
-implicit capability loss on forged IR, including differing branch states,
-loop backedges, place replacement, match discard, and early return. Next,
-lower `with` and structural cleanup, then the send/receive/reply terminators
-and retained frame layout. Interpreter and Cranelift executions must agree
-on the same IR, including failed and canceled paths. Only after those steps
-should source syntax expose the operations.
+The preparatory flow checker rejects implicit capability loss in an abstract
+graph, including differing branch states, loop backedges, duplicate creation,
+and normal return. It does not yet classify Core types, derive graphs from
+Core, or check place replacement and match discard. Next, add that type and
+graph integration, lower `with` and structural cleanup, then add the
+send/receive/reply terminators and retained frame layout. Interpreter and
+Cranelift executions must agree on the same IR, including failed and canceled
+paths. Only after those steps should source syntax expose the operations.
 
 The verifier establishes a property of the checked IR, conditional on its
 implementation and runtime ABI. It does not prove that Rust cleanup, Cranelift

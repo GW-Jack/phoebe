@@ -82,6 +82,10 @@ handle transfer, reply transfer through a request queue, rejected sends,
 queued request discard, cancellation, close, failure cleanup, and deadlock
 cleanup. `docs/runtime-kernel.md` describes the kernel and the compiler,
 general typed-message, and native-runtime integration still required.
+`src/capability_flow.rs` separately checks exact slot ownership in abstract
+control-flow graphs and derives failure/suspension live-slot maps. Core IR
+does not yet produce those graphs; this check is not a source-level capability
+safety guarantee. `docs/capability-ir.md` specifies the integration boundary.
 
 ## Commands
 

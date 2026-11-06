@@ -1,3 +1,4 @@
+pub mod capability_flow;
 pub mod core;
 pub mod native;
 pub mod runtime;
