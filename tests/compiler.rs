@@ -633,8 +633,8 @@ fn question_mark_checks_result_shape_and_return_type() {
             "same Result type",
         ),
         (
-            "data Thing { Value } fn use(x: Result<Thing,I64>) -> Result<Thing,I64> = x fn main() -> I64 = 1",
-            "Result currently requires I64 or Bool",
+            "fn use(x: Result<Unknown,I64>) -> Result<Unknown,I64> = x fn main() -> I64 = 1",
+            "unknown data type Unknown",
         ),
         (
             "data Result { Ok(value: I64), Err(error: I64) } fn main() -> I64 = 1",
@@ -660,4 +660,34 @@ fn nested_question_marks_handle_bool_errors_and_reversed_arms() {
     );
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
+fn nested_result_payloads_and_product_payloads_cross_all_backends() {
+    let program = compile(include_str!("../examples/nested_result.phoebe"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path =
+        std::env::temp_dir().join(format!("phoebe-nested-result-aot-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let result = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8(result.stdout).unwrap(), "42\n");
+}
+
+#[test]
+fn verifier_rejects_recursive_result_payload_shape() {
+    let mut program = compile(include_str!("../examples/nested_result.phoebe"));
+    let nested = program
+        .data
+        .iter()
+        .position(|definition| definition.name == "Result<Result<Pair,Stop>,Bool>")
+        .unwrap();
+    program.data[nested].payloads[0] = Some(core::Type::Data(core::DataId(nested)));
+    assert!(
+        core::verify(&program)
+            .unwrap_err()
+            .contains("invalid variant payload type")
+    );
 }

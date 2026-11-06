@@ -1,15 +1,15 @@
 # Executable `?` rule
 
-Status: concrete built-in `Result<T, E>` applications with scalar type arguments.
+Status: concrete built-in `Result<T, E>` applications.
 
-The current source subset accepts `Result<I64, Bool>` and the other concrete
-combinations of `I64` and `Bool`. Each application is a distinct checked type
-with `Ok` and `Err` variants carrying the corresponding payload. Constructors
-and patterns spell the application explicitly, for example
-`Result<I64, Bool>.Err(true)`. A user declaration named `Result` is reserved.
-`?` requires the enclosing function to return that same concrete application.
-Arbitrary payload types, generic functions, and error conversion are still
-unimplemented.
+The current source subset accepts concrete `Result<T, E>` applications with
+primitive, existing nominal, or nested `Result` arguments. Each application
+is a distinct checked type with `Ok` and `Err` variants carrying the
+corresponding payload. Constructors and patterns spell the application
+explicitly, for example `Result<I64, Bool>.Err(true)`. A user declaration
+named `Result` is reserved. `?` requires the enclosing function to return
+that same concrete application. Generic functions, user-declared nested
+payloads, and error conversion are still unimplemented.
 
 For `val x = expression?`, lowering evaluates `expression` once, then emits a
 Core IR `match`. The `Ok` target receives its payload as a typed block

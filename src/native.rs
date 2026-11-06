@@ -138,17 +138,19 @@ pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> 
     linked
 }
 
-fn abi_types(
-    program: &Program,
-    ty: Type,
+struct AbiShapes {
+    data: Vec<Vec<cranelift_codegen::ir::Type>>,
     pointer_type: cranelift_codegen::ir::Type,
-) -> Vec<cranelift_codegen::ir::Type> {
-    match ty {
-        Type::I64 => vec![types::I64],
-        Type::Bool => vec![types::I8],
-        Type::Data(id) => {
-            let definition = &program.data[id.0];
-            if !definition.fields.is_empty() {
+}
+
+impl AbiShapes {
+    fn new(program: &Program, pointer_type: cranelift_codegen::ir::Type) -> Self {
+        let mut shapes = Self {
+            data: Vec::with_capacity(program.data.len()),
+            pointer_type,
+        };
+        for definition in &program.data {
+            let shape = if !definition.fields.is_empty() {
                 definition
                     .fields
                     .iter()
@@ -158,13 +160,28 @@ fn abi_types(
                         _ => unreachable!("verified primitive product field"),
                     })
                     .collect()
-            } else if definition.payloads.iter().any(Option::is_some) {
-                vec![types::I64, types::I64]
             } else {
-                vec![types::I64]
-            }
+                let words = definition
+                    .payloads
+                    .iter()
+                    .flatten()
+                    .map(|ty| shapes.types(*ty).len())
+                    .max()
+                    .unwrap_or(0);
+                vec![types::I64; 1 + words]
+            };
+            shapes.data.push(shape);
         }
-        Type::RefI64 | Type::RefMutI64 => vec![pointer_type],
+        shapes
+    }
+
+    fn types(&self, ty: Type) -> Vec<cranelift_codegen::ir::Type> {
+        match ty {
+            Type::I64 => vec![types::I64],
+            Type::Bool => vec![types::I8],
+            Type::Data(id) => self.data[id.0].clone(),
+            Type::RefI64 | Type::RefMutI64 => vec![self.pointer_type],
+        }
     }
 }
 
@@ -174,16 +191,13 @@ fn compile_functions<M: Module>(
     export_main: bool,
 ) -> Result<Vec<(FuncId, Signature)>, String> {
     let pointer_type = module.target_config().pointer_type();
+    let shapes = AbiShapes::new(program, pointer_type);
     let mut ids = Vec::with_capacity(program.functions.len());
     for (index, function) in program.functions.iter().enumerate() {
         let mut signature = module.make_signature();
         for (index, mode) in function.param_modes.iter().enumerate() {
             let components = if *mode == ParamMode::Own {
-                abi_types(
-                    program,
-                    function.value_types[function.blocks[0].params[index].0],
-                    pointer_type,
-                )
+                shapes.types(function.value_types[function.blocks[0].params[index].0])
             } else {
                 vec![pointer_type]
             };
@@ -192,7 +206,8 @@ fn compile_functions<M: Module>(
                 .extend(components.into_iter().map(AbiParam::new));
         }
         signature.returns.extend(
-            abi_types(program, function.return_type, pointer_type)
+            shapes
+                .types(function.return_type)
                 .into_iter()
                 .map(AbiParam::new),
         );
@@ -228,7 +243,8 @@ fn compile_functions<M: Module>(
                 .place_types
                 .iter()
                 .map(|ty| {
-                    abi_types(program, *ty, pointer_type)
+                    shapes
+                        .types(*ty)
                         .into_iter()
                         .map(|component| {
                             let (size, align_shift) = if component == types::I8 {
@@ -248,7 +264,7 @@ fn compile_functions<M: Module>(
             builder.append_block_params_for_function_params(blocks[0]);
             for (block_id, block) in function.blocks.iter().enumerate().skip(1) {
                 for param in &block.params {
-                    for ty in abi_types(program, function.value_types[param.0], pointer_type) {
+                    for ty in shapes.types(function.value_types[param.0]) {
                         builder.append_block_param(blocks[block_id], ty);
                     }
                 }
@@ -258,8 +274,7 @@ fn compile_functions<M: Module>(
                 let mut offset = 0;
                 let raw = builder.block_params(blocks[block_id]);
                 for param in &block.params {
-                    let count =
-                        abi_types(program, function.value_types[param.0], pointer_type).len();
+                    let count = shapes.types(function.value_types[param.0]).len();
                     values[param.0] = Some(raw[offset..offset + count].to_vec());
                     offset += count;
                 }
@@ -305,15 +320,19 @@ fn compile_functions<M: Module>(
                         Operation::Variant(id, tag, payload) => {
                             let mut components =
                                 vec![builder.ins().iconst(types::I64, *tag as i64)];
-                            if program.data[id.0].payloads.iter().any(Option::is_some) {
-                                let word = match payload {
-                                    Some(value) if function.value_types[value.0] == Type::Bool => {
-                                        builder.ins().uextend(types::I64, one(*value))
-                                    }
-                                    Some(value) => one(*value),
-                                    None => builder.ins().iconst(types::I64, 0),
-                                };
-                                components.push(word);
+                            if let Some(value) = payload {
+                                let shape = shapes.types(function.value_types[value.0]);
+                                for (component, ty) in get(*value).into_iter().zip(shape) {
+                                    components.push(if ty == types::I8 {
+                                        builder.ins().uextend(types::I64, component)
+                                    } else {
+                                        component
+                                    });
+                                }
+                            }
+                            let words = shapes.data[id.0].len() - 1;
+                            while components.len() < 1 + words {
+                                components.push(builder.ins().iconst(types::I64, 0));
                             }
                             Some(components)
                         }
@@ -373,7 +392,8 @@ fn compile_functions<M: Module>(
                             None
                         }
                         Operation::Load(place) => Some(
-                            abi_types(program, function.place_types[place.0], pointer_type)
+                            shapes
+                                .types(function.place_types[place.0])
                                 .into_iter()
                                 .zip(&places[place.0])
                                 .map(|(ty, slot)| {
@@ -420,16 +440,24 @@ fn compile_functions<M: Module>(
                         let data = &program.data[id.0];
                         let components = get(*subject);
                         for (tag, target) in arms.iter().enumerate() {
-                            let args = match data.payloads[tag]
+                            let args = data.payloads[tag]
                                 .filter(|_| !function.blocks[target.0].params.is_empty())
-                            {
-                                None => vec![],
-                                Some(Type::I64) => vec![components[1].into()],
-                                Some(Type::Bool) => {
-                                    vec![builder.ins().ireduce(types::I8, components[1]).into()]
-                                }
-                                _ => unreachable!("verified primitive payload"),
-                            };
+                                .map(|ty| {
+                                    shapes
+                                        .types(ty)
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(index, shape)| {
+                                            let component = components[1 + index];
+                                            if shape == types::I8 {
+                                                builder.ins().ireduce(types::I8, component).into()
+                                            } else {
+                                                component.into()
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
                             if tag + 1 == arms.len() {
                                 builder.ins().jump(blocks[target.0], &args);
                             } else {

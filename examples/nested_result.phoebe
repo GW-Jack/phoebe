@@ -1,0 +1,37 @@
+data Pair { left: I64, positive: Bool }
+data Stop { code: I64, fatal: Bool }
+
+fn make(x: I64) -> Result<Pair, Stop> =
+  if (x < 0) {
+    Result<Pair, Stop>.Err(Stop(-x, true))
+  } else {
+    Result<Pair, Stop>.Ok(Pair(x, true))
+  }
+
+fn forward(x: I64) -> Result<Pair, Stop> {
+  val pair = make(x)?;
+  Result<Pair, Stop>.Ok(pair)
+}
+
+fn nested(x: I64) -> Result<Result<Pair, Stop>, Bool> =
+  if (x == 0) {
+    Result<Result<Pair, Stop>, Bool>.Err(true)
+  } else {
+    Result<Result<Pair, Stop>, Bool>.Ok(forward(x))
+  }
+
+fn inspect(result: Result<Result<Pair, Stop>, Bool>) -> I64 = when (result) {
+  Result<Result<Pair, Stop>, Bool>.Err(error) -> { -100 },
+  Result<Result<Pair, Stop>, Bool>.Ok(inner) -> {
+    when (inner) {
+      Result<Pair, Stop>.Err(reason) -> {
+        if (reason.fatal) { -reason.code } else { 0 }
+      },
+      Result<Pair, Stop>.Ok(pair) -> {
+        if (pair.positive) { pair.left } else { 0 }
+      },
+    }
+  },
+}
+
+fn main() -> I64 = inspect(nested(40)) + inspect(nested(-1)) + inspect(nested(0)) + 103

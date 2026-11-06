@@ -40,8 +40,8 @@ fields. It supports up to four owned parameters (I64 borrows only), `val` and
 `var` bindings, assignment, `while`, integer and boolean literals, unary
 negation, `+`, `-`, `*`, `==`, `<`, `if` expressions with block arms, exhaustive
 `when` expressions, acyclic direct calls, call-site `&I64` and `&mut I64`
-arguments, `?` on concrete built-in `Result<T, E>` applications where both
-type arguments are `I64` or `Bool`,
+arguments, `?` on concrete built-in `Result<T, E>` applications with
+primitive or existing nominal payloads,
 and a matching tail expression. Recursion is
 rejected until task stacks have safe growth limits. Arithmetic wraps at 64
 bits in both interpreter and native execution. `phoebe check`, `phoebe ir`,
@@ -55,13 +55,14 @@ Primitive-field products also cross calls and returns by flattened scalar
 components, without native heap allocation. `docs/abi-shapes.md` records the
 current internal calling convention and its missing cost threshold. Core IR
 has typed values, conditional branches, variant matches, block parameters, and task-local scalar places for
-`var`. Its verifier checks definition uniqueness, dominance, place
+`var`. Nested `Result` applications use a finite flattened ABI shape; see
+`examples/nested_result.phoebe`. Its verifier checks definition uniqueness, dominance, place
 initialization, block-argument types, call targets and modes, and return
 types. Source spans survive parsing and lowering. `docs/core-ir.md` and
 `docs/call-borrows.md` explain the current operations and their evidence
 boundary. Borrows are confined to synchronous calls; general reference
 lifetimes and regions are not implemented. `docs/result-try.md` states the
-current `?` rule and its missing general payload, generic function, and
+current `?` rule and its missing user-declared nested payload, generic function, and
 cleanup work.
 
 This slice establishes the parser → checked IR → interpreter/Cranelift path.
@@ -80,6 +81,7 @@ cargo run -- run examples/variant.phoebe
 cargo run -- run examples/product.phoebe
 cargo run -- run examples/payload.phoebe
 cargo run -- run examples/try.phoebe
+cargo run -- run examples/nested_result.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
 cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow

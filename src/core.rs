@@ -853,15 +853,21 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         if data_names.contains_key(&name) {
             continue;
         }
-        let scalar = |ty: &TypeName| match ty {
+        let concrete = |ty: &TypeName| match ty {
             TypeName::I64 => Ok(Type::I64),
             TypeName::Bool => Ok(Type::Bool),
-            _ => Err(Diagnostic::new(
-                *span,
-                "Result currently requires I64 or Bool type arguments",
-            )),
+            TypeName::Named(name) => data_names
+                .get(name)
+                .copied()
+                .map(Type::Data)
+                .ok_or_else(|| Diagnostic::new(*span, format!("unknown data type {name}"))),
+            TypeName::Result(_, _) => data_names
+                .get(&ty.key())
+                .copied()
+                .map(Type::Data)
+                .ok_or_else(|| Diagnostic::new(*span, "unknown Result application")),
         };
-        let payloads = vec![Some(scalar(ok)?), Some(scalar(err)?)];
+        let payloads = vec![Some(concrete(ok)?), Some(concrete(err)?)];
         data_names.insert(name.clone(), DataId(data.len()));
         data.push(DataDef {
             name,
@@ -1146,7 +1152,7 @@ pub fn verify(program: &Program) -> Result<(), String> {
         return Err("empty Core IR program".into());
     }
     let mut data_names = std::collections::HashSet::new();
-    for definition in &program.data {
+    for (index, definition) in program.data.iter().enumerate() {
         if !data_names.insert(&definition.name)
             || definition.variants.is_empty() == definition.fields.is_empty()
             || definition.payloads.len() != definition.variants.len()
@@ -1161,12 +1167,11 @@ pub fn verify(program: &Program) -> Result<(), String> {
         {
             return Err("duplicate data variant".into());
         }
-        if definition
-            .payloads
-            .iter()
-            .flatten()
-            .any(|ty| !matches!(ty, Type::I64 | Type::Bool))
-        {
+        if definition.payloads.iter().flatten().any(|ty| match ty {
+            Type::I64 | Type::Bool => false,
+            Type::Data(id) => id.0 >= index,
+            Type::RefI64 | Type::RefMutI64 => true,
+        }) {
             return Err("invalid variant payload type".into());
         }
         let mut fields = std::collections::HashSet::new();
