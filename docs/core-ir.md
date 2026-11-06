@@ -22,7 +22,7 @@ passes their addresses. This separation keeps reference and region rules
 attached to *places*, rather than pretending a mutable object is an SSA value.
 
 The structural verifier checks unique SSA definitions, operand dominance,
-block reachability, parameter and result types, branch targets, call modes,
+block reachability, parameter, call, and return types, branch targets, call modes,
 one dominating initializer per place, and the restricted borrow rules in
 `call-borrows.md`. Native lowering runs it before
 code generation. This is an engineering check, not a proof that lowering is

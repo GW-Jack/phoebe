@@ -34,18 +34,20 @@ only by prose at release.
 
 ## Current executable slice
 
-The Rust crate currently parses I64 function declarations, up to four I64
-parameters, `val` and `var` bindings, assignment, `while` statements, integer
+The Rust crate currently parses I64 and Bool function declarations, up to four
+I64 or Bool owned parameters (I64 borrows only), `val` and `var` bindings,
+assignment, `while` statements, integer
 and boolean literals, unary negation, `+`, `-`, `*`, `==`, `<`, `if` expressions
 with block arms, acyclic direct function calls, call-site `&I64` and
-`&mut I64` arguments, and an I64 tail expression. Recursion is
+`&mut I64` arguments, and a matching I64 or Bool tail expression. Recursion is
 rejected until task stacks have safe growth limits. Arithmetic wraps at 64
 bits in both interpreter and native execution. `phoebe check`, `phoebe ir`,
 `phoebe run`, and `phoebe build <file> -o <output>` work on that subset.
 Native execution uses Cranelift JIT or Cranelift object emission linked with
 the host `cc`; `--interp` selects the reference interpreter. The built
 executable runs without the compiler process and prints the I64 returned by
-zero-argument `main`. Core IR has typed values,
+zero-argument `main`. External JIT and interpreter entries also require I64
+signatures; calls within Phoebe can pass and return Bool. Core IR has typed values,
 conditional branches, block parameters, and task-local scalar places for
 `var`. Its verifier checks definition uniqueness, dominance, place
 initialization, block-argument types, call targets and modes, and return

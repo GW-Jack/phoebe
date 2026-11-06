@@ -175,7 +175,14 @@ pub struct Function {
     pub name: String,
     pub name_span: Span,
     pub params: Vec<Param>,
+    pub return_type: ScalarType,
     pub body: Body,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScalarType {
+    I64,
+    Bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,6 +197,7 @@ pub struct Param {
     pub name: String,
     pub span: Span,
     pub mode: ParamMode,
+    pub ty: ScalarType,
 }
 
 #[derive(Clone, Debug)]
@@ -292,13 +300,19 @@ impl Parser {
                     ParamMode::Own
                 };
                 let (ty, span) = self.name()?;
-                if ty != "I64" {
-                    return Err(Diagnostic::new(span, "only I64 is implemented"));
-                }
+                let ty = match ty.as_str() {
+                    "I64" => ScalarType::I64,
+                    "Bool" if mode == ParamMode::Own => ScalarType::Bool,
+                    "Bool" => {
+                        return Err(Diagnostic::new(span, "Bool borrows are not implemented"));
+                    }
+                    _ => return Err(Diagnostic::new(span, "only I64 and Bool are implemented")),
+                };
                 params.push(Param {
                     name: param_name,
                     span: param_span,
                     mode,
+                    ty,
                 });
                 if self.eat(&TokenKind::Comma).is_none() {
                     self.expect(&TokenKind::RParen, ")")?;
@@ -308,9 +322,11 @@ impl Parser {
         }
         self.expect(&TokenKind::Arrow, "->")?;
         let (ret_ty, span) = self.name()?;
-        if ret_ty != "I64" {
-            return Err(Diagnostic::new(span, "only I64 is implemented"));
-        }
+        let return_type = match ret_ty.as_str() {
+            "I64" => ScalarType::I64,
+            "Bool" => ScalarType::Bool,
+            _ => return Err(Diagnostic::new(span, "only I64 and Bool are implemented")),
+        };
         let body = if self.eat(&TokenKind::Equal).is_some() {
             Body {
                 statements: Vec::new(),
@@ -323,6 +339,7 @@ impl Parser {
             name,
             name_span,
             params,
+            return_type,
             body,
         })
     }

@@ -35,6 +35,14 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
     if entry.param_modes.iter().any(|mode| *mode != ParamMode::Own) {
         return Err("borrowed parameters require a Phoebe caller".into());
     }
+    if entry.return_type != Type::I64
+        || entry.blocks[0]
+            .params
+            .iter()
+            .any(|param| entry.value_types[param.0] != Type::I64)
+    {
+        return Err("external native entry requires an I64 signature".into());
+    }
     let mut flags = settings::builder();
     flags
         .set("use_colocated_libcalls", "false")
@@ -75,6 +83,9 @@ pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
         .ok_or("standalone executable requires `fn main() -> I64`")?;
     if !entry.param_modes.is_empty() {
         return Err("standalone `main` must take no parameters".into());
+    }
+    if entry.return_type != Type::I64 {
+        return Err("standalone `main` must return I64".into());
     }
     let mut flags = settings::builder();
     flags
@@ -135,15 +146,25 @@ fn compile_functions<M: Module>(
     let mut ids = Vec::with_capacity(program.functions.len());
     for (index, function) in program.functions.iter().enumerate() {
         let mut signature = module.make_signature();
-        for mode in &function.param_modes {
+        for (index, mode) in function.param_modes.iter().enumerate() {
             let ty = if *mode == ParamMode::Own {
-                types::I64
+                match function.value_types[function.blocks[0].params[index].0] {
+                    Type::I64 => types::I64,
+                    Type::Bool => types::I8,
+                    Type::RefI64 | Type::RefMutI64 => unreachable!("verified own parameter"),
+                }
             } else {
                 pointer_type
             };
             signature.params.push(AbiParam::new(ty));
         }
-        signature.returns.push(AbiParam::new(types::I64));
+        signature
+            .returns
+            .push(AbiParam::new(match function.return_type {
+                Type::I64 => types::I64,
+                Type::Bool => types::I8,
+                Type::RefI64 | Type::RefMutI64 => unreachable!("verified return type"),
+            }));
         let symbol = if function.name == "main" {
             "phoebe_main".to_owned()
         } else {

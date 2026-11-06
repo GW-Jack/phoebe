@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 
-use crate::syntax::{self, Body, CallArgument, Expr, ExprKind, ParamMode, Statement};
+use crate::syntax::{self, Body, CallArgument, Expr, ExprKind, ParamMode, ScalarType, Statement};
 use crate::{Diagnostic, Span};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -22,6 +22,15 @@ pub enum Type {
     Bool,
     RefI64,
     RefMutI64,
+}
+
+impl From<ScalarType> for Type {
+    fn from(value: ScalarType) -> Self {
+        match value {
+            ScalarType::I64 => Self::I64,
+            ScalarType::Bool => Self::Bool,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +119,7 @@ pub struct Block {
 pub struct Function {
     pub name: String,
     pub param_modes: Vec<ParamMode>,
+    pub return_type: Type,
     pub blocks: Vec<Block>,
     pub value_types: Vec<Type>,
     pub place_types: Vec<Type>,
@@ -126,19 +136,28 @@ struct DraftBlock {
     terminator: Option<Terminator>,
 }
 
+#[derive(Clone)]
+struct FunctionSignature {
+    id: FunctionId,
+    params: Vec<(ParamMode, Type)>,
+    return_type: Type,
+}
+
 struct Lowerer<'a> {
-    functions: &'a HashMap<String, (FunctionId, Vec<ParamMode>)>,
+    functions: &'a HashMap<String, FunctionSignature>,
     blocks: Vec<DraftBlock>,
     value_types: Vec<Type>,
     place_types: Vec<Type>,
     param_modes: Vec<ParamMode>,
+    return_type: Type,
     current: BlockId,
 }
 
 impl<'a> Lowerer<'a> {
     fn new(
-        functions: &'a HashMap<String, (FunctionId, Vec<ParamMode>)>,
-        param_modes: Vec<ParamMode>,
+        functions: &'a HashMap<String, FunctionSignature>,
+        params: Vec<(ParamMode, Type)>,
+        return_type: Type,
     ) -> Self {
         let mut lowerer = Self {
             functions,
@@ -149,12 +168,13 @@ impl<'a> Lowerer<'a> {
             }],
             value_types: Vec::new(),
             place_types: Vec::new(),
-            param_modes: param_modes.clone(),
+            param_modes: params.iter().map(|(mode, _)| *mode).collect(),
+            return_type,
             current: BlockId(0),
         };
-        for mode in param_modes {
+        for (mode, own_type) in params {
             let ty = match mode {
-                ParamMode::Own => Type::I64,
+                ParamMode::Own => own_type,
                 ParamMode::Shared => Type::RefI64,
                 ParamMode::Exclusive => Type::RefMutI64,
             };
@@ -380,9 +400,10 @@ impl<'a> Lowerer<'a> {
                 (Operation::Lt(a, b), Type::Bool)
             }
             ExprKind::Call(name, args) => {
-                let (target, expected) = self.functions.get(name).cloned().ok_or_else(|| {
+                let signature = self.functions.get(name).cloned().ok_or_else(|| {
                     Diagnostic::new(expr.span, format!("unknown function {name}"))
                 })?;
+                let expected = signature.params;
                 if args.len() != expected.len() {
                     return Err(Diagnostic::new(
                         expr.span,
@@ -394,11 +415,11 @@ impl<'a> Lowerer<'a> {
                     ));
                 }
                 let mut values = Vec::with_capacity(args.len());
-                for (arg, mode) in args.iter().zip(expected) {
+                for (arg, (mode, param_type)) in args.iter().zip(expected) {
                     match (arg, mode) {
                         (CallArgument::Value(arg), ParamMode::Own) => {
                             let (value, ty) = self.expr(arg, locals)?;
-                            self.require(ty, Type::I64, arg.span)?;
+                            self.require(ty, param_type, arg.span)?;
                             values.push(CallArg::Value(value));
                         }
                         (
@@ -453,7 +474,7 @@ impl<'a> Lowerer<'a> {
                 }
                 check_call_aliases(&values)
                     .map_err(|message| Diagnostic::new(expr.span, message))?;
-                (Operation::Call(target, values), Type::I64)
+                (Operation::Call(signature.id, values), signature.return_type)
             }
             ExprKind::If(condition, then_body, else_body) => {
                 let (cond, ty) = self.expr(condition, locals)?;
@@ -516,6 +537,7 @@ impl<'a> Lowerer<'a> {
             value_types: self.value_types,
             place_types: self.place_types,
             param_modes: self.param_modes,
+            return_type: self.return_type,
         })
     }
 }
@@ -532,14 +554,15 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         if functions
             .insert(
                 function.name.clone(),
-                (
-                    FunctionId(index),
-                    function
+                FunctionSignature {
+                    id: FunctionId(index),
+                    params: function
                         .params
                         .iter()
-                        .map(|param| param.mode)
+                        .map(|param| (param.mode, param.ty.into()))
                         .collect::<Vec<_>>(),
-                ),
+                    return_type: function.return_type.into(),
+                },
             )
             .is_some()
         {
@@ -553,7 +576,12 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     for function in &ast.functions {
         let mut lowerer = Lowerer::new(
             &functions,
-            function.params.iter().map(|param| param.mode).collect(),
+            function
+                .params
+                .iter()
+                .map(|param| (param.mode, param.ty.into()))
+                .collect(),
+            function.return_type.into(),
         );
         let mut locals = HashMap::new();
         for (index, param) in function.params.iter().enumerate() {
@@ -573,7 +601,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
             .expect("parser requires a function tail");
         lowerer.require(
             ty,
-            Type::I64,
+            function.return_type.into(),
             function.body.tail.as_ref().expect("tail").span,
         )?;
         lowerer.terminate(Terminator::Return(value));
@@ -622,12 +650,25 @@ fn op_type(
                 .functions
                 .get(target.0)
                 .ok_or_else(|| "invalid call target".to_owned())?;
-            if args.len() != callee.param_modes.len() || check_call_aliases(args).is_err() {
+            let callee_params = callee
+                .blocks
+                .first()
+                .ok_or_else(|| "callee has no entry block".to_owned())?
+                .params
+                .as_slice();
+            if args.len() != callee.param_modes.len()
+                || args.len() != callee_params.len()
+                || check_call_aliases(args).is_err()
+            {
                 return Err("call signature mismatch".into());
             }
-            for (arg, mode) in args.iter().zip(&callee.param_modes) {
+            for ((arg, mode), param) in args.iter().zip(&callee.param_modes).zip(callee_params) {
+                let expected = *callee
+                    .value_types
+                    .get(param.0)
+                    .ok_or_else(|| "invalid callee parameter".to_owned())?;
                 let valid = match (arg, mode) {
-                    (CallArg::Value(value), ParamMode::Own) => ty(*value) == Type::I64,
+                    (CallArg::Value(value), ParamMode::Own) => ty(*value) == expected,
                     (CallArg::Borrow(place, false), ParamMode::Shared)
                     | (CallArg::Borrow(place, true), ParamMode::Exclusive) => {
                         function.place_types.get(place.0) == Some(&Type::I64)
@@ -644,7 +685,7 @@ fn op_type(
                     return Err("call signature mismatch".into());
                 }
             }
-            Ok(Some(Type::I64))
+            Ok(Some(callee.return_type))
         }
         Operation::LoadRef(reference) => {
             if !matches!(ty(*reference), Type::RefI64 | Type::RefMutI64) {
@@ -706,6 +747,9 @@ pub fn verify(program: &Program) -> Result<(), String> {
         return Err("empty Core IR program".into());
     }
     for function in &program.functions {
+        if !matches!(function.return_type, Type::I64 | Type::Bool) {
+            return Err(format!("{}: invalid return type", function.name));
+        }
         if function.blocks.is_empty() {
             return Err(format!("{}: no entry block", function.name));
         }
@@ -741,11 +785,15 @@ pub fn verify(program: &Program) -> Result<(), String> {
                 }
                 if block_id == 0 {
                     let expected = match function.param_modes[param_index] {
-                        ParamMode::Own => Type::I64,
+                        ParamMode::Own => function.value_types[param.0],
                         ParamMode::Shared => Type::RefI64,
                         ParamMode::Exclusive => Type::RefMutI64,
                     };
-                    if param_index != param.0 || function.value_types[param.0] != expected {
+                    if param_index != param.0
+                        || function.value_types[param.0] != expected
+                        || (function.param_modes[param_index] == ParamMode::Own
+                            && !matches!(expected, Type::I64 | Type::Bool))
+                    {
                         return Err(format!("{}: invalid function parameter", function.name));
                     }
                 } else if matches!(
@@ -905,8 +953,8 @@ pub fn verify(program: &Program) -> Result<(), String> {
             match &block.terminator {
                 Terminator::Return(value) => {
                     check_use(*value, block_id, end)?;
-                    if function.value_types[value.0] != Type::I64 {
-                        return Err(format!("{}: return expects I64", function.name));
+                    if function.value_types[value.0] != function.return_type {
+                        return Err(format!("{}: return type mismatch", function.name));
                     }
                 }
                 Terminator::Jump(target, args) => {
@@ -998,11 +1046,19 @@ impl Program {
         {
             return Err("borrowed parameters require a Phoebe caller".into());
         }
+        if function.return_type != Type::I64
+            || function.blocks[0]
+                .params
+                .iter()
+                .any(|param| function.value_types[param.0] != Type::I64)
+        {
+            return Err("external interpreter entry requires an I64 signature".into());
+        }
         let args = args
             .iter()
             .map(|value| Value::I64(*value))
             .collect::<Vec<_>>();
-        self.interpret_id(id, &args, &mut Vec::new(), 0)
+        Ok(as_i64(self.interpret_id(id, &args, &mut Vec::new(), 0)?))
     }
 
     fn interpret_id(
@@ -1011,7 +1067,7 @@ impl Program {
         args: &[Value],
         stores: &mut Vec<Option<Value>>,
         depth: usize,
-    ) -> Result<i64, String> {
+    ) -> Result<Value, String> {
         if depth >= 1024 {
             return Err("interpreter call depth exceeded 1024".into());
         }
@@ -1058,12 +1114,7 @@ impl Program {
                                 CallArg::Borrow(place, _) => Value::Ref(base + place.0),
                             })
                             .collect::<Vec<_>>();
-                        Some(Value::I64(self.interpret_id(
-                            *target,
-                            &args,
-                            stores,
-                            depth + 1,
-                        )?))
+                        Some(self.interpret_id(*target, &args, stores, depth + 1)?)
                     }
                     Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                         stores[base + place.0] = Some(get(*value));
@@ -1093,7 +1144,7 @@ impl Program {
             let get = |id: ValueId| values[id.0].expect("verified value is defined");
             match &block.terminator {
                 Terminator::Return(value) => {
-                    let result = as_i64(get(*value));
+                    let result = get(*value);
                     stores.truncate(base);
                     return Ok(result);
                 }
@@ -1144,7 +1195,7 @@ impl fmt::Display for Program {
                 }
                 write!(f, "v{}: {:?}", param.0, function.value_types[param.0])?;
             }
-            writeln!(f, ") -> I64 {{")?;
+            writeln!(f, ") -> {:?} {{", function.return_type)?;
             for (block_id, block) in function.blocks.iter().enumerate() {
                 write!(f, "  block{block_id}(")?;
                 for (index, param) in block.params.iter().enumerate() {

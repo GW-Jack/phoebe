@@ -300,3 +300,36 @@ fn standalone_requires_zero_argument_main() {
             .contains("no parameters")
     );
 }
+
+#[test]
+fn bool_function_boundaries_work_across_backends() {
+    let program = compile(
+        "fn positive(x: I64) -> Bool = 0 < x fn invert(flag: Bool) -> Bool = flag == false fn choose(flag: Bool) -> I64 = if (flag) { 42 } else { 0 } fn main() -> I64 = choose(invert(positive(-1)))",
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-bool-aot-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let result = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8(result.stdout).unwrap(), "42\n");
+}
+
+#[test]
+fn mismatched_bool_signature_is_rejected() {
+    let source =
+        "fn choose(flag: Bool) -> I64 = if (flag) { 1 } else { 0 } fn main() -> I64 = choose(1)";
+    let error = core::lower(&syntax::parse(source).unwrap()).unwrap_err();
+    assert!(error.message.contains("expected Bool"));
+    let source = "fn main() -> Bool = 42";
+    let error = core::lower(&syntax::parse(source).unwrap()).unwrap_err();
+    assert!(error.message.contains("expected Bool"));
+}
+
+#[test]
+fn verifier_reports_missing_callee_entry() {
+    let mut program = compile("fn main() -> I64 = value() fn value() -> I64 = 42");
+    program.functions[1].blocks.clear();
+    assert!(core::verify(&program).unwrap_err().contains("entry block"));
+}

@@ -8,7 +8,7 @@ It does not yet have the language runtime or all features required for 0.0.1.
 ## Current milestone
 
 `docs/version-0.0.1.md` states the release gates and the exact subset that
-currently runs. The Rust crate parses I64 functions, arithmetic, conditions,
+currently runs. The Rust crate parses I64 and Bool function signatures, arithmetic, conditions,
 mutable locals, loops, and call-site scalar borrows, lowers them to checked
 Core IR, and runs them through an interpreter or Cranelift JIT. It can also
 build a standalone executable for a zero-argument `main` using Cranelift
