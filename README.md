@@ -10,7 +10,9 @@ It does not yet have the language runtime or all features required for 0.0.1.
 `docs/version-0.0.1.md` states the release gates and the exact subset that
 currently runs. The Rust crate parses I64 functions, arithmetic, conditions,
 mutable locals, loops, and call-site scalar borrows, lowers them to checked
-Core IR, and runs them through an interpreter or Cranelift JIT.
+Core IR, and runs them through an interpreter or Cranelift JIT. It can also
+build a standalone executable for a zero-argument `main` using Cranelift
+object output and the host C linker.
 `docs/core-ir.md` and `docs/call-borrows.md` describe the current IR and its
 limits.
 
@@ -21,6 +23,8 @@ cargo run -- run examples/loop.phoebe
 cargo run -- run examples/borrow.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
+cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow
+/tmp/phoebe-borrow
 ```
 
 `docs/spec.md` states the proposed language contract and marks open decisions.

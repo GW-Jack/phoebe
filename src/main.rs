@@ -1,17 +1,18 @@
 use std::env;
 use std::fs;
+use std::path::Path;
 use std::process::ExitCode;
 
 use phoebe::{core, native, syntax};
 
 fn usage() -> &'static str {
-    "usage: phoebe check <file> | phoebe ir <file> | phoebe run <file> [--interp] [function] [I64 args...]"
+    "usage: phoebe check <file> | phoebe ir <file> | phoebe run <file> [--interp] [function] [I64 args...] | phoebe build <file> -o <executable>"
 }
 
 fn command() -> Result<(), String> {
     let mut args = env::args().skip(1);
     let action = args.next().ok_or_else(|| usage().to_owned())?;
-    if !matches!(action.as_str(), "check" | "ir" | "run") {
+    if !matches!(action.as_str(), "check" | "ir" | "run" | "build") {
         return Err(usage().to_owned());
     }
     let path = args.next().ok_or_else(|| usage().to_owned())?;
@@ -55,6 +56,17 @@ fn command() -> Result<(), String> {
                 native::run(&program, name, &values)?
             };
             println!("{result}");
+        }
+        "build" => {
+            if args.next().as_deref() != Some("-o") {
+                return Err(usage().into());
+            }
+            let output = args.next().ok_or_else(|| usage().to_owned())?;
+            if args.next().is_some() {
+                return Err(usage().into());
+            }
+            native::build_executable(&program, Path::new(&output))?;
+            println!("built {output}");
         }
         _ => unreachable!(),
     }

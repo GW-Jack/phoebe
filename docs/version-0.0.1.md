@@ -41,8 +41,11 @@ with block arms, acyclic direct function calls, call-site `&I64` and
 `&mut I64` arguments, and an I64 tail expression. Recursion is
 rejected until task stacks have safe growth limits. Arithmetic wraps at 64
 bits in both interpreter and native execution. `phoebe check`, `phoebe ir`,
-and `phoebe run` work on that subset. Native execution uses Cranelift JIT;
-`--interp` selects the reference interpreter. Core IR has typed values,
+`phoebe run`, and `phoebe build <file> -o <output>` work on that subset.
+Native execution uses Cranelift JIT or Cranelift object emission linked with
+the host `cc`; `--interp` selects the reference interpreter. The built
+executable runs without the compiler process and prints the I64 returned by
+zero-argument `main`. Core IR has typed values,
 conditional branches, block parameters, and task-local scalar places for
 `var`. Its verifier checks definition uniqueness, dominance, place
 initialization, block-argument types, call targets and modes, and return
@@ -65,6 +68,8 @@ cargo run -- run examples/loop.phoebe
 cargo run -- run examples/borrow.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
+cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow
+/tmp/phoebe-borrow
 cargo test
 python3 formal/check_models.py
 ```

@@ -1,16 +1,21 @@
 use std::collections::VecDeque;
+use std::fs;
+use std::io::Write;
 use std::mem;
+use std::path::Path;
+use std::process::{Command, Stdio};
 
 use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
-    AbiParam, MemFlagsData, StackSlotData, StackSlotKind, UserFuncName, types,
+    AbiParam, MemFlagsData, Signature, StackSlotData, StackSlotKind, UserFuncName, types,
 };
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{Linkage, Module, default_libcall_names};
+use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use cranelift_native::builder as native_builder;
+use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use crate::core::{self, CallArg, Operation, Program, Terminator, Type};
 use crate::syntax::ParamMode;
@@ -40,9 +45,95 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
         .finish(settings::Flags::new(flags))
         .map_err(|e| e.to_string())?;
     let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
+    let ids = compile_functions(&mut module, program, false)?;
+    module.finalize_definitions().map_err(|e| e.to_string())?;
+    let (entry_id, _) = program.function(name).expect("checked above");
+    let pointer = module.get_finalized_function(ids[entry_id.0].0);
+    // The verifier and arity check establish the I64 signature. The module
+    // remains alive while we invoke the host-ABI function pointer.
+    let result = unsafe {
+        match args {
+            [] => mem::transmute::<*const u8, extern "C" fn() -> i64>(pointer)(),
+            [a] => mem::transmute::<*const u8, extern "C" fn(i64) -> i64>(pointer)(*a),
+            [a, b] => mem::transmute::<*const u8, extern "C" fn(i64, i64) -> i64>(pointer)(*a, *b),
+            [a, b, c] => mem::transmute::<*const u8, extern "C" fn(i64, i64, i64) -> i64>(pointer)(
+                *a, *b, *c,
+            ),
+            [a, b, c, d] => mem::transmute::<*const u8, extern "C" fn(i64, i64, i64, i64) -> i64>(
+                pointer,
+            )(*a, *b, *c, *d),
+            _ => return Err("at most four arguments are supported".into()),
+        }
+    };
+    Ok(result)
+}
+
+pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
+    core::verify(program)?;
+    let (_, entry) = program
+        .function("main")
+        .ok_or("standalone executable requires `fn main() -> I64`")?;
+    if !entry.param_modes.is_empty() {
+        return Err("standalone `main` must take no parameters".into());
+    }
+    let mut flags = settings::builder();
+    flags
+        .set("use_colocated_libcalls", "false")
+        .map_err(|e| e.to_string())?;
+    flags.set("is_pic", "true").map_err(|e| e.to_string())?;
+    let isa = native_builder()
+        .map_err(|e| format!("unsupported native host: {e}"))?
+        .finish(settings::Flags::new(flags))
+        .map_err(|e| e.to_string())?;
+    let builder =
+        ObjectBuilder::new(isa, "phoebe", default_libcall_names()).map_err(|e| e.to_string())?;
+    let mut module = ObjectModule::new(builder);
+    compile_functions(&mut module, program, true)?;
+    module.finish().emit().map_err(|e| e.to_string())
+}
+
+pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> {
+    let object = emit_object(program)?;
+    let object_path = output.with_extension(format!("phoebe-{}.o", std::process::id()));
+    fs::write(&object_path, object).map_err(|e| format!("{}: {e}", object_path.display()))?;
+    let linked = (|| -> Result<(), String> {
+        let mut child = Command::new("cc")
+            .args(["-x", "c", "-", "-x", "none"])
+            .arg(&object_path)
+            .arg("-o")
+            .arg(output)
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("failed to launch C linker: {e}"))?;
+        let wrapper = b"#include <stdio.h>\nextern long long phoebe_main(void);\nint main(void) { printf(\"%lld\\n\", phoebe_main()); return 0; }\n";
+        child
+            .stdin
+            .take()
+            .expect("piped stdin")
+            .write_all(wrapper)
+            .map_err(|e| format!("failed to pass entry wrapper to linker: {e}"))?;
+        let result = child.wait_with_output().map_err(|e| e.to_string())?;
+        if !result.status.success() {
+            return Err(format!(
+                "linker failed: {}",
+                String::from_utf8_lossy(&result.stderr)
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_file(&object_path);
+    linked
+}
+
+fn compile_functions<M: Module>(
+    module: &mut M,
+    program: &Program,
+    export_main: bool,
+) -> Result<Vec<(FuncId, Signature)>, String> {
     let pointer_type = module.target_config().pointer_type();
     let mut ids = Vec::with_capacity(program.functions.len());
-    for function in &program.functions {
+    for (index, function) in program.functions.iter().enumerate() {
         let mut signature = module.make_signature();
         for mode in &function.param_modes {
             let ty = if *mode == ParamMode::Own {
@@ -53,8 +144,18 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
             signature.params.push(AbiParam::new(ty));
         }
         signature.returns.push(AbiParam::new(types::I64));
+        let symbol = if function.name == "main" {
+            "phoebe_main".to_owned()
+        } else {
+            format!("phoebe_fn_{index}")
+        };
+        let linkage = if export_main && function.name == "main" {
+            Linkage::Export
+        } else {
+            Linkage::Local
+        };
         let id = module
-            .declare_function(&function.name, Linkage::Local, &signature)
+            .declare_function(&symbol, linkage, &signature)
             .map_err(|e| e.to_string())?;
         ids.push((id, signature));
     }
@@ -241,24 +342,5 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
             .map_err(|e| e.to_string())?;
         module.clear_context(&mut ctx);
     }
-    module.finalize_definitions().map_err(|e| e.to_string())?;
-    let (entry_id, _) = program.function(name).expect("checked above");
-    let pointer = module.get_finalized_function(ids[entry_id.0].0);
-    // The verifier and arity check establish the I64 signature. The module
-    // remains alive while we invoke the host-ABI function pointer.
-    let result = unsafe {
-        match args {
-            [] => mem::transmute::<*const u8, extern "C" fn() -> i64>(pointer)(),
-            [a] => mem::transmute::<*const u8, extern "C" fn(i64) -> i64>(pointer)(*a),
-            [a, b] => mem::transmute::<*const u8, extern "C" fn(i64, i64) -> i64>(pointer)(*a, *b),
-            [a, b, c] => mem::transmute::<*const u8, extern "C" fn(i64, i64, i64) -> i64>(pointer)(
-                *a, *b, *c,
-            ),
-            [a, b, c, d] => mem::transmute::<*const u8, extern "C" fn(i64, i64, i64, i64) -> i64>(
-                pointer,
-            )(*a, *b, *c, *d),
-            _ => return Err("at most four arguments are supported".into()),
-        }
-    };
-    Ok(result)
+    Ok(ids)
 }

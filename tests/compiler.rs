@@ -1,4 +1,5 @@
 use phoebe::{core, native, syntax};
+use std::process::Command;
 
 fn compile(source: &str) -> core::Program {
     core::lower(&syntax::parse(source).unwrap()).unwrap()
@@ -260,4 +261,42 @@ fn call_borrow_begins_after_value_arguments_evaluate() {
     );
     assert_eq!(program.interpret("main", &[]).unwrap(), 4);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 4);
+}
+
+#[test]
+fn standalone_executable_agrees_with_interpreter_and_jit() {
+    for (index, source) in [
+        "fn main() -> I64 = 20 * 2 + 2",
+        "fn main() -> I64 { var x = 0; while (x < 6) { x = x + 1; } if (x == 6) { 42 } else { 0 } }",
+        "fn bump(x: &mut I64) -> I64 { x = x + 1; x } fn main() -> I64 { var x = 40; bump(&mut x); bump(&mut x); x }",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let program = compile(source);
+        let path = std::env::temp_dir().join(format!("phoebe-aot-{}-{index}", std::process::id()));
+        native::build_executable(&program, &path).unwrap();
+        let result = Command::new(&path).output().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(result.status.success());
+        let standalone: i64 = String::from_utf8(result.stdout)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(standalone, program.interpret("main", &[]).unwrap());
+        assert_eq!(standalone, native::run(&program, "main", &[]).unwrap());
+    }
+}
+
+#[test]
+fn standalone_requires_zero_argument_main() {
+    let program = compile("fn value() -> I64 = 42");
+    assert!(native::emit_object(&program).unwrap_err().contains("main"));
+    let program = compile("fn main(x: I64) -> I64 = x");
+    assert!(
+        native::emit_object(&program)
+            .unwrap_err()
+            .contains("no parameters")
+    );
 }
