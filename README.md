@@ -6,8 +6,9 @@ specifications, bounded formal models, and a first executable compiler slice.
 It does not yet have an integrated language runtime or all features required
 for 0.0.1.
 
-An isolated cooperative runtime kernel now exercises scope-owned task frames
-and bounded `I64` channels; `docs/runtime-kernel.md` states its boundary.
+An isolated cooperative runtime kernel now exercises scope-owned task frames,
+bounded `I64` and request channels, and one-shot `ReplyTo<I64>` rights;
+`docs/runtime-kernel.md` states its boundary.
 
 ## Current milestone
 

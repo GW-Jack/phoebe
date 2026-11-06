@@ -76,10 +76,12 @@ gates above. The `examples/cost/` files other than scalar `identity` remain
 design fixtures, not executable acceptance tests.
 
 Separately, `src/runtime.rs` implements an unconnected cooperative scheduler
-kernel for one scope and bounded `I64` channels. Its tests cover parking,
-backpressure, FIFO delivery, handle transfer, close, failure cleanup, and
-deadlock cleanup. `docs/runtime-kernel.md` describes the kernel and the
-compiler, typed-message, and native-runtime integration still required.
+kernel for one scope, bounded `I64` and request channels, and a one-shot
+`ReplyTo<I64>` right. Its tests cover parking, backpressure, FIFO delivery,
+handle transfer, reply transfer through a request queue, rejected sends,
+queued request discard, cancellation, close, failure cleanup, and deadlock
+cleanup. `docs/runtime-kernel.md` describes the kernel and the compiler,
+general typed-message, and native-runtime integration still required.
 
 ## Commands
 
