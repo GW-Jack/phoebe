@@ -15,6 +15,8 @@ hackability plan.
 `docs/decisions/0001-compiler-principles.md` records the accepted compiler
 principles. `docs/pony-actors.md` explores an actor model without GC; its
 semantics remain undecided.
+`docs/concurrency-pressure-tests.md` compares scoped tasks and actors on
+stateful and asynchronous workloads and records the resulting design gates.
 `formal/core.maude` explores one task with nested regions and a reference.
 `formal/two_task.maude` explores parent and child tasks, explicit handle fork,
 transfer at spawn, channel delivery, close, and child failure. Both have
