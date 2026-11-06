@@ -3,7 +3,11 @@
 Phoebe is an early language design for native programs with task-local memory,
 lightweight tasks, and value-passing channels. The repository has draft
 specifications, bounded formal models, and a first executable compiler slice.
-It does not yet have the language runtime or all features required for 0.0.1.
+It does not yet have an integrated language runtime or all features required
+for 0.0.1.
+
+An isolated cooperative runtime kernel now exercises scope-owned task frames
+and bounded `I64` channels; `docs/runtime-kernel.md` states its boundary.
 
 ## Current milestone
 

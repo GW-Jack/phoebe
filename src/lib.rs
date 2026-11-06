@@ -1,5 +1,6 @@
 pub mod core;
 pub mod native;
+pub mod runtime;
 pub mod syntax;
 
 use std::fmt;

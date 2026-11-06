@@ -1,7 +1,9 @@
 # Phoebe language specification — draft 0.5
 
-Status: design proposal, 2026-11-06. Syntax examples are illustrative. Only the
-bounded machines in `formal/` have executable semantics so far.
+Status: design proposal, 2026-11-06. Syntax examples are illustrative. The
+current compiler subset and isolated runtime kernel are described in
+`version-0.0.1.md`; the bounded machines in `formal/` cover different
+abstract states.
 
 ## 1. Purpose and non-goals
 
@@ -51,7 +53,8 @@ signatures are explicit; local expression types may be inferred. `Option<T>`
 represents absence and `Result<T, E>` represents expected failure. The type,
 trait, operator, error, and package baseline is in `docs/language-features.md`
 and Decision 0003. Precise grammar and several ABI details remain open. The
-example illustrates proposed rules; no compiler exists yet.
+example illustrates proposed rules; the compiler does not parse this
+concurrency surface yet.
 
 ## 3. Storage and references
 
