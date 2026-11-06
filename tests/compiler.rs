@@ -333,3 +333,91 @@ fn verifier_reports_missing_callee_entry() {
     program.functions[1].blocks.clear();
     assert!(core::verify(&program).unwrap_err().contains("entry block"));
 }
+
+#[test]
+fn nominal_variants_and_exhaustive_when_agree_across_backends() {
+    let program = compile(include_str!("../examples/variant.phoebe"));
+    let comparisons = program.functions[0]
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| matches!(instruction.operation, core::Operation::Eq(_, _)))
+        .count();
+    assert_eq!(
+        comparisons, 2,
+        "three variants need only two tag comparisons"
+    );
+    assert_eq!(
+        program.functions[0].blocks.len(),
+        6,
+        "the final arm needs no extra jump block"
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-variant-aot-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let result = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8(result.stdout).unwrap(), "42\n");
+}
+
+#[test]
+fn when_checks_nominal_types_and_coverage() {
+    let cases = [
+        (
+            "data Light { Red, Green } fn main() -> I64 = when (Light.Red) { Light.Red -> { 1 } }",
+            "non-exhaustive when",
+        ),
+        (
+            "data Light { Red, Green } fn main() -> I64 = when (Light.Red) { Light.Red -> { 1 }, Light.Red -> { 2 }, Light.Green -> { 3 } }",
+            "duplicate when variant",
+        ),
+        (
+            "data Light { Red, Green } fn main() -> I64 = when (Light.Red) { Light.Blue -> { 1 }, Light.Green -> { 2 } }",
+            "unknown when variant",
+        ),
+        (
+            "data Light { Red, Green } data Shade { Red } fn main() -> I64 = when (Light.Red) { Shade.Red -> { 1 }, Light.Green -> { 2 } }",
+            "wrong data type",
+        ),
+        (
+            "data Light { Red, Green } data Shade { Red } fn use(x: Light) -> I64 = 1 fn main() -> I64 = use(Shade.Red)",
+            "expected Data",
+        ),
+    ];
+    for (source, message) in cases {
+        let error = core::lower(&syntax::parse(source).unwrap()).unwrap_err();
+        assert!(error.message.contains(message), "{error:?}");
+    }
+}
+
+#[test]
+fn verifier_rejects_invalid_data_tag() {
+    let mut program = compile(
+        "data Light { Red, Green } fn main() -> I64 = when (Light.Red) { Light.Red -> { 1 }, Light.Green -> { 2 } }",
+    );
+    let instruction = &mut program.functions[0].blocks[0].instructions[0];
+    instruction.operation = core::Operation::Variant(core::DataId(0), 2);
+    assert!(
+        core::verify(&program)
+            .unwrap_err()
+            .contains("invalid variant tag")
+    );
+}
+
+#[test]
+fn one_variant_and_mutable_nominal_place_agree() {
+    let program = compile(
+        "data State { Ready } fn main() -> I64 { var state = State.Ready; state = State.Ready; when (state) { State.Ready -> { 42 } } }",
+    );
+    assert!(
+        !program.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| matches!(instruction.operation, core::Operation::Eq(_, _)))
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}

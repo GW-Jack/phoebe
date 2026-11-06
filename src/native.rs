@@ -149,7 +149,7 @@ fn compile_functions<M: Module>(
         for (index, mode) in function.param_modes.iter().enumerate() {
             let ty = if *mode == ParamMode::Own {
                 match function.value_types[function.blocks[0].params[index].0] {
-                    Type::I64 => types::I64,
+                    Type::I64 | Type::Data(_) => types::I64,
                     Type::Bool => types::I8,
                     Type::RefI64 | Type::RefMutI64 => unreachable!("verified own parameter"),
                 }
@@ -161,7 +161,7 @@ fn compile_functions<M: Module>(
         signature
             .returns
             .push(AbiParam::new(match function.return_type {
-                Type::I64 => types::I64,
+                Type::I64 | Type::Data(_) => types::I64,
                 Type::Bool => types::I8,
                 Type::RefI64 | Type::RefMutI64 => unreachable!("verified return type"),
             }));
@@ -198,7 +198,7 @@ fn compile_functions<M: Module>(
                 .iter()
                 .map(|ty| {
                     let (size, align_shift) = match ty {
-                        Type::I64 => (8, 3),
+                        Type::I64 | Type::Data(_) => (8, 3),
                         Type::Bool => (1, 0),
                         Type::RefI64 | Type::RefMutI64 => {
                             unreachable!("references cannot be stored in places")
@@ -215,7 +215,7 @@ fn compile_functions<M: Module>(
             for (block_id, block) in function.blocks.iter().enumerate().skip(1) {
                 for param in &block.params {
                     let ty = match function.value_types[param.0] {
-                        Type::I64 => types::I64,
+                        Type::I64 | Type::Data(_) => types::I64,
                         Type::Bool => types::I8,
                         Type::RefI64 | Type::RefMutI64 => pointer_type,
                     };
@@ -263,6 +263,9 @@ fn compile_functions<M: Module>(
                         Operation::Const(value) => Some(builder.ins().iconst(types::I64, *value)),
                         Operation::Bool(value) => {
                             Some(builder.ins().iconst(types::I8, i64::from(*value)))
+                        }
+                        Operation::Variant(_, tag) => {
+                            Some(builder.ins().iconst(types::I64, *tag as i64))
                         }
                         Operation::Neg(a) => Some(builder.ins().ineg(get(*a))),
                         Operation::Add(a, b) => Some(builder.ins().iadd(get(*a), get(*b))),
@@ -314,7 +317,7 @@ fn compile_functions<M: Module>(
                         }
                         Operation::Load(place) => {
                             let ty = match function.place_types[place.0] {
-                                Type::I64 => types::I64,
+                                Type::I64 | Type::Data(_) => types::I64,
                                 Type::Bool => types::I8,
                                 Type::RefI64 | Type::RefMutI64 => {
                                     unreachable!("references cannot be stored in places")

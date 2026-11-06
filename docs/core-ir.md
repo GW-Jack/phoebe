@@ -11,6 +11,13 @@ to a conditional branch and a join block whose parameter carries the chosen
 arm's result. A `while` statement lowers to a loop head, body, exit, and
 backedge.
 
+Nullary nominal data variants have a distinct `Data(id)` type and an explicit
+`variant` instruction. Their native value is one I64 tag; the interpreter
+retains both type ID and tag. Source `when` checks every variant exactly once,
+then lowers to comparisons and a final unconditional arm. The verifier checks
+valid data IDs and tag bounds. Payload-bearing variants and products still
+need a value-layout design.
+
 `val` binds an SSA value. `var` creates a task-local scalar place. The current
 place operations are `place.init`, `place.load`, and `place.store`. An
 initializer dominates every use, including on a loop backedge. A place can

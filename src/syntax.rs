@@ -3,6 +3,8 @@ use crate::{Diagnostic, Span};
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TokenKind {
     Fn,
+    Data,
+    When,
     Val,
     Var,
     Mut,
@@ -18,6 +20,7 @@ enum TokenKind {
     LBrace,
     RBrace,
     Comma,
+    Dot,
     Colon,
     Semicolon,
     Arrow,
@@ -62,6 +65,8 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
                 match &source[start..i] {
                     "fn" => TokenKind::Fn,
+                    "data" => TokenKind::Data,
+                    "when" => TokenKind::When,
                     "val" => TokenKind::Val,
                     "var" => TokenKind::Var,
                     "mut" => TokenKind::Mut,
@@ -102,6 +107,10 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             b',' => {
                 i += 1;
                 TokenKind::Comma
+            }
+            b'.' => {
+                i += 1;
+                TokenKind::Dot
             }
             b':' => {
                 i += 1;
@@ -167,7 +176,15 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
 
 #[derive(Clone, Debug)]
 pub struct Program {
+    pub data: Vec<Data>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Data {
+    pub name: String,
+    pub span: Span,
+    pub variants: Vec<(String, Span)>,
 }
 
 #[derive(Clone, Debug)]
@@ -175,14 +192,15 @@ pub struct Function {
     pub name: String,
     pub name_span: Span,
     pub params: Vec<Param>,
-    pub return_type: ScalarType,
+    pub return_type: TypeName,
     pub body: Body,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScalarType {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TypeName {
     I64,
     Bool,
+    Named(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -197,7 +215,7 @@ pub struct Param {
     pub name: String,
     pub span: Span,
     pub mode: ParamMode,
-    pub ty: ScalarType,
+    pub ty: TypeName,
 }
 
 #[derive(Clone, Debug)]
@@ -243,7 +261,17 @@ pub enum ExprKind {
     Eq(Box<Expr>, Box<Expr>),
     Lt(Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Body>, Box<Body>),
+    Variant(String, String),
+    When(Box<Expr>, Vec<WhenArm>),
     Call(String, Vec<CallArgument>),
+}
+
+#[derive(Clone, Debug)]
+pub struct WhenArm {
+    pub type_name: String,
+    pub variant: String,
+    pub span: Span,
+    pub body: Body,
 }
 
 struct Parser {
@@ -252,6 +280,40 @@ struct Parser {
 }
 
 impl Parser {
+    fn type_name(&mut self, borrowed: bool) -> Result<TypeName, Diagnostic> {
+        let (name, span) = self.name()?;
+        match name.as_str() {
+            "I64" => Ok(TypeName::I64),
+            "Bool" if !borrowed => Ok(TypeName::Bool),
+            "Bool" => Err(Diagnostic::new(span, "Bool borrows are not implemented")),
+            _ if !borrowed => Ok(TypeName::Named(name)),
+            _ => Err(Diagnostic::new(span, "only I64 borrows are implemented")),
+        }
+    }
+
+    fn data(&mut self) -> Result<Data, Diagnostic> {
+        self.expect(&TokenKind::Data, "data")?;
+        let (name, span) = self.name()?;
+        self.expect(&TokenKind::LBrace, "{")?;
+        let mut variants = Vec::new();
+        loop {
+            let (variant, variant_span) = self.name()?;
+            variants.push((variant, variant_span));
+            if self.eat(&TokenKind::Comma).is_none() {
+                self.expect(&TokenKind::RBrace, "}")?;
+                break;
+            }
+            if self.eat(&TokenKind::RBrace).is_some() {
+                break;
+            }
+        }
+        Ok(Data {
+            name,
+            span,
+            variants,
+        })
+    }
+
     fn current(&self) -> &Token {
         &self.tokens[self.pos]
     }
@@ -299,15 +361,7 @@ impl Parser {
                 } else {
                     ParamMode::Own
                 };
-                let (ty, span) = self.name()?;
-                let ty = match ty.as_str() {
-                    "I64" => ScalarType::I64,
-                    "Bool" if mode == ParamMode::Own => ScalarType::Bool,
-                    "Bool" => {
-                        return Err(Diagnostic::new(span, "Bool borrows are not implemented"));
-                    }
-                    _ => return Err(Diagnostic::new(span, "only I64 and Bool are implemented")),
-                };
+                let ty = self.type_name(mode != ParamMode::Own)?;
                 params.push(Param {
                     name: param_name,
                     span: param_span,
@@ -321,12 +375,7 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::Arrow, "->")?;
-        let (ret_ty, span) = self.name()?;
-        let return_type = match ret_ty.as_str() {
-            "I64" => ScalarType::I64,
-            "Bool" => ScalarType::Bool,
-            _ => return Err(Diagnostic::new(span, "only I64 and Bool are implemented")),
-        };
+        let return_type = self.type_name(false)?;
         let body = if self.eat(&TokenKind::Equal).is_some() {
             Body {
                 statements: Vec::new(),
@@ -467,11 +516,54 @@ impl Parser {
                 }
             }
             Token {
+                kind: TokenKind::When,
+                span,
+            } => {
+                self.pos += 1;
+                self.expect(&TokenKind::LParen, "(")?;
+                let subject = self.expr(0)?;
+                self.expect(&TokenKind::RParen, ")")?;
+                self.expect(&TokenKind::LBrace, "{")?;
+                let mut arms = Vec::new();
+                loop {
+                    let (type_name, start) = self.name()?;
+                    self.expect(&TokenKind::Dot, ".")?;
+                    let (variant, end) = self.name()?;
+                    self.expect(&TokenKind::Arrow, "->")?;
+                    let body = self.block(true)?;
+                    arms.push(WhenArm {
+                        type_name,
+                        variant,
+                        span: start.join(end),
+                        body,
+                    });
+                    if self.eat(&TokenKind::Comma).is_none() {
+                        let end = self.expect(&TokenKind::RBrace, "}")?.span;
+                        break Expr {
+                            kind: ExprKind::When(Box::new(subject), arms),
+                            span: span.join(end),
+                        };
+                    }
+                    if let Some(end) = self.eat(&TokenKind::RBrace) {
+                        break Expr {
+                            kind: ExprKind::When(Box::new(subject), arms),
+                            span: span.join(end.span),
+                        };
+                    }
+                }
+            }
+            Token {
                 kind: TokenKind::Ident(name),
                 span,
             } => {
                 self.pos += 1;
-                if self.eat(&TokenKind::LParen).is_some() {
+                if self.eat(&TokenKind::Dot).is_some() {
+                    let (variant, end) = self.name()?;
+                    Expr {
+                        kind: ExprKind::Variant(name, variant),
+                        span: span.join(end),
+                    }
+                } else if self.eat(&TokenKind::LParen).is_some() {
                     let mut args = Vec::new();
                     let end = if let Some(close) = self.eat(&TokenKind::RParen) {
                         close.span
@@ -562,8 +654,13 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
         pos: 0,
     };
     let mut functions = Vec::new();
+    let mut data = Vec::new();
     while parser.current().kind != TokenKind::Eof {
-        functions.push(parser.function()?);
+        if parser.current().kind == TokenKind::Data {
+            data.push(parser.data()?);
+        } else {
+            functions.push(parser.function()?);
+        }
     }
     if functions.is_empty() {
         return Err(Diagnostic::new(
@@ -571,5 +668,5 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
             "expected a function",
         ));
     }
-    Ok(Program { functions })
+    Ok(Program { data, functions })
 }

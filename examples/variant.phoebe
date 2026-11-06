@@ -1,0 +1,15 @@
+data Light { Red, Amber, Green }
+
+fn next(light: Light) -> Light = when (light) {
+  Light.Red -> { Light.Green },
+  Light.Amber -> { Light.Red },
+  Light.Green -> { Light.Amber },
+}
+
+fn score(light: Light) -> I64 = when (light) {
+  Light.Red -> { 0 },
+  Light.Amber -> { 2 },
+  Light.Green -> { 4 },
+}
+
+fn main() -> I64 = score(next(Light.Red)) + 38

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 
-use crate::syntax::{self, Body, CallArgument, Expr, ExprKind, ParamMode, ScalarType, Statement};
+use crate::syntax::{self, Body, CallArgument, Expr, ExprKind, ParamMode, Statement, TypeName};
 use crate::{Diagnostic, Span};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -16,27 +16,23 @@ pub struct BlockId(pub usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PlaceId(pub usize);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DataId(pub usize);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
     I64,
     Bool,
+    Data(DataId),
     RefI64,
     RefMutI64,
-}
-
-impl From<ScalarType> for Type {
-    fn from(value: ScalarType) -> Self {
-        match value {
-            ScalarType::I64 => Self::I64,
-            ScalarType::Bool => Self::Bool,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Value {
     I64(i64),
     Bool(bool),
+    Data(DataId, usize),
     Ref(usize),
 }
 
@@ -76,6 +72,7 @@ pub enum CallArg {
 pub enum Operation {
     Const(i64),
     Bool(bool),
+    Variant(DataId, usize),
     Neg(ValueId),
     Add(ValueId, ValueId),
     Sub(ValueId, ValueId),
@@ -127,7 +124,14 @@ pub struct Function {
 
 #[derive(Clone, Debug)]
 pub struct Program {
+    pub data: Vec<DataDef>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DataDef {
+    pub name: String,
+    pub variants: Vec<String>,
 }
 
 struct DraftBlock {
@@ -145,6 +149,8 @@ struct FunctionSignature {
 
 struct Lowerer<'a> {
     functions: &'a HashMap<String, FunctionSignature>,
+    data: &'a [DataDef],
+    data_names: &'a HashMap<String, DataId>,
     blocks: Vec<DraftBlock>,
     value_types: Vec<Type>,
     place_types: Vec<Type>,
@@ -156,11 +162,15 @@ struct Lowerer<'a> {
 impl<'a> Lowerer<'a> {
     fn new(
         functions: &'a HashMap<String, FunctionSignature>,
+        data: &'a [DataDef],
+        data_names: &'a HashMap<String, DataId>,
         params: Vec<(ParamMode, Type)>,
         return_type: Type,
     ) -> Self {
         let mut lowerer = Self {
             functions,
+            data,
+            data_names,
             blocks: vec![DraftBlock {
                 params: Vec::new(),
                 instructions: Vec::new(),
@@ -343,6 +353,19 @@ impl<'a> Lowerer<'a> {
         let (operation, ty) = match &expr.kind {
             ExprKind::Int(value) => (Operation::Const(*value), Type::I64),
             ExprKind::Bool(value) => (Operation::Bool(*value), Type::Bool),
+            ExprKind::Variant(name, variant) => {
+                let id = self.data_names.get(name).copied().ok_or_else(|| {
+                    Diagnostic::new(expr.span, format!("unknown data type {name}"))
+                })?;
+                let tag = self.data[id.0]
+                    .variants
+                    .iter()
+                    .position(|candidate| candidate == variant)
+                    .ok_or_else(|| {
+                        Diagnostic::new(expr.span, format!("unknown variant {name}.{variant}"))
+                    })?;
+                (Operation::Variant(id, tag), Type::Data(id))
+            }
             ExprKind::Name(name) => {
                 let binding = locals
                     .get(name)
@@ -468,7 +491,7 @@ impl<'a> Lowerer<'a> {
                             return Err(Diagnostic::new(arg.span, "expected explicit borrow"));
                         }
                         (CallArgument::Borrow { span, .. }, _) => {
-                            return Err(Diagnostic::new(*span, "expected owned I64 argument"));
+                            return Err(Diagnostic::new(*span, "expected owned argument"));
                         }
                     }
                 }
@@ -511,6 +534,85 @@ impl<'a> Lowerer<'a> {
                 self.current = join;
                 return Ok((result, then_type));
             }
+            ExprKind::When(subject, arms) => {
+                let (subject_value, subject_type) = self.expr(subject, locals)?;
+                let Type::Data(data_id) = subject_type else {
+                    return Err(Diagnostic::new(subject.span, "when requires a data value"));
+                };
+                let data = &self.data[data_id.0];
+                let mut seen = vec![false; data.variants.len()];
+                let mut tags = Vec::with_capacity(arms.len());
+                for arm in arms {
+                    if arm.type_name != data.name {
+                        return Err(Diagnostic::new(
+                            arm.span,
+                            "when arm has the wrong data type",
+                        ));
+                    }
+                    let tag = data
+                        .variants
+                        .iter()
+                        .position(|candidate| candidate == &arm.variant)
+                        .ok_or_else(|| Diagnostic::new(arm.span, "unknown when variant"))?;
+                    if seen[tag] {
+                        return Err(Diagnostic::new(arm.span, "duplicate when variant"));
+                    }
+                    seen[tag] = true;
+                    tags.push(tag);
+                }
+                if let Some(missing) = seen.iter().position(|covered| !covered) {
+                    return Err(Diagnostic::new(
+                        expr.span,
+                        format!(
+                            "non-exhaustive when: missing {}.{}",
+                            data.name, data.variants[missing]
+                        ),
+                    ));
+                }
+                let mut arm_results = Vec::with_capacity(arms.len());
+                for (index, (arm, tag)) in arms.iter().zip(tags).enumerate() {
+                    let last = index + 1 == arms.len();
+                    let arm_block = if last { self.current } else { self.block() };
+                    let next_test = if last {
+                        None
+                    } else {
+                        let variant =
+                            self.emit(Operation::Variant(data_id, tag), subject_type, arm.span);
+                        let condition =
+                            self.emit(Operation::Eq(subject_value, variant), Type::Bool, arm.span);
+                        let next = self.block();
+                        self.terminate(Terminator::Branch {
+                            condition,
+                            then_block: arm_block,
+                            else_block: next,
+                        });
+                        Some(next)
+                    };
+                    self.current = arm_block;
+                    let (value, ty) = self
+                        .body(&arm.body, &mut locals.clone())?
+                        .expect("parser requires when-arm tail");
+                    arm_results.push((self.current, value, ty));
+                    if let Some(next) = next_test {
+                        self.current = next;
+                    }
+                }
+                let result_type = arm_results[0].2;
+                if arm_results.iter().any(|(_, _, ty)| *ty != result_type) {
+                    return Err(Diagnostic::new(
+                        expr.span,
+                        "when arms must have the same type",
+                    ));
+                }
+                let join = self.block();
+                let result = self.block_param(join, result_type);
+                for (end, value, _) in arm_results {
+                    self.current = end;
+                    self.terminate(Terminator::Jump(join, vec![value]));
+                }
+                self.current = join;
+                return Ok((result, result_type));
+            }
         };
         let value = self.emit(operation, ty, expr.span);
         Ok((value, ty))
@@ -543,6 +645,38 @@ impl<'a> Lowerer<'a> {
 }
 
 pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
+    let mut data = Vec::with_capacity(ast.data.len());
+    let mut data_names = HashMap::new();
+    for declaration in &ast.data {
+        if matches!(declaration.name.as_str(), "I64" | "Bool")
+            || data_names.contains_key(&declaration.name)
+        {
+            return Err(Diagnostic::new(declaration.span, "duplicate data type"));
+        }
+        let mut variants = Vec::with_capacity(declaration.variants.len());
+        for (variant, span) in &declaration.variants {
+            if variants.contains(variant) {
+                return Err(Diagnostic::new(*span, "duplicate variant"));
+            }
+            variants.push(variant.clone());
+        }
+        data_names.insert(declaration.name.clone(), DataId(data.len()));
+        data.push(DataDef {
+            name: declaration.name.clone(),
+            variants,
+        });
+    }
+    let resolve = |name: &TypeName, span: Span| -> Result<Type, Diagnostic> {
+        match name {
+            TypeName::I64 => Ok(Type::I64),
+            TypeName::Bool => Ok(Type::Bool),
+            TypeName::Named(name) => data_names
+                .get(name)
+                .copied()
+                .map(Type::Data)
+                .ok_or_else(|| Diagnostic::new(span, format!("unknown data type {name}"))),
+        }
+    };
     let mut functions = HashMap::new();
     for (index, function) in ast.functions.iter().enumerate() {
         if function.params.len() > 4 {
@@ -559,9 +693,9 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
                     params: function
                         .params
                         .iter()
-                        .map(|param| (param.mode, param.ty.into()))
-                        .collect::<Vec<_>>(),
-                    return_type: function.return_type.into(),
+                        .map(|param| Ok((param.mode, resolve(&param.ty, param.span)?)))
+                        .collect::<Result<Vec<_>, Diagnostic>>()?,
+                    return_type: resolve(&function.return_type, function.name_span)?,
                 },
             )
             .is_some()
@@ -576,12 +710,14 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     for function in &ast.functions {
         let mut lowerer = Lowerer::new(
             &functions,
+            &data,
+            &data_names,
             function
                 .params
                 .iter()
-                .map(|param| (param.mode, param.ty.into()))
-                .collect(),
-            function.return_type.into(),
+                .map(|param| Ok((param.mode, resolve(&param.ty, param.span)?)))
+                .collect::<Result<Vec<_>, Diagnostic>>()?,
+            resolve(&function.return_type, function.name_span)?,
         );
         let mut locals = HashMap::new();
         for (index, param) in function.params.iter().enumerate() {
@@ -601,13 +737,16 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
             .expect("parser requires a function tail");
         lowerer.require(
             ty,
-            function.return_type.into(),
+            resolve(&function.return_type, function.name_span)?,
             function.body.tail.as_ref().expect("tail").span,
         )?;
         lowerer.terminate(Terminator::Return(value));
         lowered.push(lowerer.finish(function.name.clone())?);
     }
-    let program = Program { functions: lowered };
+    let program = Program {
+        data,
+        functions: lowered,
+    };
     verify(&program).map_err(|message| Diagnostic::new(Span { start: 0, end: 0 }, message))?;
     Ok(program)
 }
@@ -621,6 +760,16 @@ fn op_type(
     match operation {
         Operation::Const(_) => Ok(Some(Type::I64)),
         Operation::Bool(_) => Ok(Some(Type::Bool)),
+        Operation::Variant(data_id, tag) => {
+            let definition = program
+                .data
+                .get(data_id.0)
+                .ok_or_else(|| "invalid data ID".to_owned())?;
+            if *tag >= definition.variants.len() {
+                return Err("invalid variant tag".into());
+            }
+            Ok(Some(Type::Data(*data_id)))
+        }
         Operation::Neg(a) => {
             if ty(*a) != Type::I64 {
                 return Err("neg expects I64".into());
@@ -634,7 +783,7 @@ fn op_type(
             Ok(Some(Type::I64))
         }
         Operation::Eq(a, b) => {
-            if ty(*a) != ty(*b) || !matches!(ty(*a), Type::I64 | Type::Bool) {
+            if ty(*a) != ty(*b) || !matches!(ty(*a), Type::I64 | Type::Bool | Type::Data(_)) {
                 return Err("equality type mismatch".into());
             }
             Ok(Some(Type::Bool))
@@ -720,7 +869,7 @@ fn op_type(
 
 fn operands(operation: &Operation) -> Vec<ValueId> {
     match operation {
-        Operation::Const(_) | Operation::Bool(_) => vec![],
+        Operation::Const(_) | Operation::Bool(_) | Operation::Variant(_, _) => vec![],
         Operation::Neg(a)
         | Operation::PlaceInit(_, a)
         | Operation::Store(_, a)
@@ -746,8 +895,34 @@ pub fn verify(program: &Program) -> Result<(), String> {
     if program.functions.is_empty() {
         return Err("empty Core IR program".into());
     }
+    let mut data_names = std::collections::HashSet::new();
+    for definition in &program.data {
+        if !data_names.insert(&definition.name) || definition.variants.is_empty() {
+            return Err("invalid data declaration".into());
+        }
+        let mut variants = std::collections::HashSet::new();
+        if definition
+            .variants
+            .iter()
+            .any(|variant| !variants.insert(variant))
+        {
+            return Err("duplicate data variant".into());
+        }
+    }
     for function in &program.functions {
-        if !matches!(function.return_type, Type::I64 | Type::Bool) {
+        for ty in function
+            .value_types
+            .iter()
+            .chain(&function.place_types)
+            .chain(std::iter::once(&function.return_type))
+        {
+            if let Type::Data(id) = ty
+                && id.0 >= program.data.len()
+            {
+                return Err(format!("{}: invalid data type ID", function.name));
+            }
+        }
+        if !matches!(function.return_type, Type::I64 | Type::Bool | Type::Data(_)) {
             return Err(format!("{}: invalid return type", function.name));
         }
         if function.blocks.is_empty() {
@@ -765,7 +940,7 @@ pub fn verify(program: &Program) -> Result<(), String> {
         if function
             .place_types
             .iter()
-            .any(|ty| !matches!(ty, Type::I64 | Type::Bool))
+            .any(|ty| !matches!(ty, Type::I64 | Type::Bool | Type::Data(_)))
         {
             return Err(format!(
                 "{}: references cannot be stored in places",
@@ -792,7 +967,7 @@ pub fn verify(program: &Program) -> Result<(), String> {
                     if param_index != param.0
                         || function.value_types[param.0] != expected
                         || (function.param_modes[param_index] == ParamMode::Own
-                            && !matches!(expected, Type::I64 | Type::Bool))
+                            && !matches!(expected, Type::I64 | Type::Bool | Type::Data(_)))
                     {
                         return Err(format!("{}: invalid function parameter", function.name));
                     }
@@ -1094,6 +1269,7 @@ impl Program {
                 let value = match &instruction.operation {
                     Operation::Const(x) => Some(Value::I64(*x)),
                     Operation::Bool(x) => Some(Value::Bool(*x)),
+                    Operation::Variant(data_id, tag) => Some(Value::Data(*data_id, *tag)),
                     Operation::Neg(a) => Some(Value::I64(as_i64(get(*a)).wrapping_neg())),
                     Operation::Add(a, b) => {
                         Some(Value::I64(as_i64(get(*a)).wrapping_add(as_i64(get(*b)))))
@@ -1174,14 +1350,14 @@ impl Program {
 fn as_i64(value: Value) -> i64 {
     match value {
         Value::I64(x) => x,
-        Value::Bool(_) | Value::Ref(_) => unreachable!("verified I64 operand"),
+        Value::Bool(_) | Value::Data(_, _) | Value::Ref(_) => unreachable!("verified I64 operand"),
     }
 }
 
 fn as_bool(value: Value) -> bool {
     match value {
         Value::Bool(x) => x,
-        Value::I64(_) | Value::Ref(_) => unreachable!("verified Bool operand"),
+        Value::I64(_) | Value::Data(_, _) | Value::Ref(_) => unreachable!("verified Bool operand"),
     }
 }
 
@@ -1218,6 +1394,11 @@ impl fmt::Display for Program {
                     match &instruction.operation {
                         Operation::Const(x) => write!(f, "const {x}")?,
                         Operation::Bool(x) => write!(f, "bool {x}")?,
+                        Operation::Variant(id, tag) => write!(
+                            f,
+                            "variant {}.{}",
+                            self.data[id.0].name, self.data[id.0].variants[*tag]
+                        )?,
                         Operation::Neg(a) => write!(f, "neg v{}", a.0)?,
                         Operation::Add(a, b) => write!(f, "add v{}, v{}", a.0, b.0)?,
                         Operation::Sub(a, b) => write!(f, "sub v{}, v{}", a.0, b.0)?,
