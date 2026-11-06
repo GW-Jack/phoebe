@@ -15,13 +15,15 @@ Nullary nominal data variants have a distinct `Data(id)` type and an explicit
 `variant` instruction. Their native value is one I64 tag; the interpreter
 retains both type ID and tag. Source `when` checks every variant exactly once,
 then lowers to comparisons and a final unconditional arm. The verifier checks
-valid data IDs and tag bounds. Payload-bearing variants and products still
-need a value-layout design.
+valid data IDs and tag bounds. Primitive-field products have `product` and
+`field` operations. Their fields remain separate SSA components through native
+calls, returns, and joins; `docs/abi-shapes.md` specifies the current shape.
+Payload-bearing variants still need a value-layout design.
 
 `val` binds an SSA value. `var` creates a task-local scalar place. The current
 place operations are `place.init`, `place.load`, and `place.store`. An
 initializer dominates every use, including on a loop backedge. A place can
-hold `I64` or `Bool`. A synchronous call can borrow an `I64` place through
+hold `I64`, `Bool`, nullary sums, or primitive-field products. A synchronous call can borrow an `I64` place through
 `&I64` or `&mut I64`; the callee uses `ref.load` and, for an exclusive loan,
 `ref.store`. The interpreter stores a value per place and resolves the call
 borrow to the caller's slot. Cranelift lowers places to typed stack slots and

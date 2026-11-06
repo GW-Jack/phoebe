@@ -185,6 +185,14 @@ pub struct Data {
     pub name: String,
     pub span: Span,
     pub variants: Vec<(String, Span)>,
+    pub fields: Vec<Field>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Field {
+    pub name: String,
+    pub ty: TypeName,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
@@ -261,7 +269,7 @@ pub enum ExprKind {
     Eq(Box<Expr>, Box<Expr>),
     Lt(Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Body>, Box<Body>),
-    Variant(String, String),
+    Member(String, String),
     When(Box<Expr>, Vec<WhenArm>),
     Call(String, Vec<CallArgument>),
 }
@@ -296,9 +304,28 @@ impl Parser {
         let (name, span) = self.name()?;
         self.expect(&TokenKind::LBrace, "{")?;
         let mut variants = Vec::new();
+        let mut fields = Vec::new();
+        let mut product = None;
         loop {
-            let (variant, variant_span) = self.name()?;
-            variants.push((variant, variant_span));
+            let (member, member_span) = self.name()?;
+            let field = self.eat(&TokenKind::Colon).is_some();
+            if product.is_some_and(|prior| prior != field) {
+                return Err(Diagnostic::new(
+                    member_span,
+                    "cannot mix fields and variants",
+                ));
+            }
+            product = Some(field);
+            if field {
+                let ty = self.type_name(false)?;
+                fields.push(Field {
+                    name: member,
+                    ty,
+                    span: member_span,
+                });
+            } else {
+                variants.push((member, member_span));
+            }
             if self.eat(&TokenKind::Comma).is_none() {
                 self.expect(&TokenKind::RBrace, "}")?;
                 break;
@@ -311,6 +338,7 @@ impl Parser {
             name,
             span,
             variants,
+            fields,
         })
     }
 
@@ -560,7 +588,7 @@ impl Parser {
                 if self.eat(&TokenKind::Dot).is_some() {
                     let (variant, end) = self.name()?;
                     Expr {
-                        kind: ExprKind::Variant(name, variant),
+                        kind: ExprKind::Member(name, variant),
                         span: span.join(end),
                     }
                 } else if self.eat(&TokenKind::LParen).is_some() {

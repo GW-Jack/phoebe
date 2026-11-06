@@ -28,11 +28,12 @@ pub enum Type {
     RefMutI64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
     I64(i64),
     Bool(bool),
     Data(DataId, usize),
+    Product(DataId, Vec<Value>),
     Ref(usize),
 }
 
@@ -73,6 +74,8 @@ pub enum Operation {
     Const(i64),
     Bool(bool),
     Variant(DataId, usize),
+    Product(DataId, Vec<ValueId>),
+    Field(ValueId, usize),
     Neg(ValueId),
     Add(ValueId, ValueId),
     Sub(ValueId, ValueId),
@@ -132,6 +135,7 @@ pub struct Program {
 pub struct DataDef {
     pub name: String,
     pub variants: Vec<String>,
+    pub fields: Vec<(String, Type)>,
 }
 
 struct DraftBlock {
@@ -353,18 +357,41 @@ impl<'a> Lowerer<'a> {
         let (operation, ty) = match &expr.kind {
             ExprKind::Int(value) => (Operation::Const(*value), Type::I64),
             ExprKind::Bool(value) => (Operation::Bool(*value), Type::Bool),
-            ExprKind::Variant(name, variant) => {
-                let id = self.data_names.get(name).copied().ok_or_else(|| {
-                    Diagnostic::new(expr.span, format!("unknown data type {name}"))
-                })?;
-                let tag = self.data[id.0]
-                    .variants
-                    .iter()
-                    .position(|candidate| candidate == variant)
-                    .ok_or_else(|| {
-                        Diagnostic::new(expr.span, format!("unknown variant {name}.{variant}"))
+            ExprKind::Member(name, variant) => {
+                if locals.contains_key(name) {
+                    let owner = Expr {
+                        kind: ExprKind::Name(name.clone()),
+                        span: expr.span,
+                    };
+                    let (value, ty) = self.expr(&owner, locals)?;
+                    let Type::Data(id) = ty else {
+                        return Err(Diagnostic::new(
+                            expr.span,
+                            "field access requires a product",
+                        ));
+                    };
+                    let index = self.data[id.0]
+                        .fields
+                        .iter()
+                        .position(|(field, _)| field == variant)
+                        .ok_or_else(|| {
+                            Diagnostic::new(expr.span, format!("unknown field {variant}"))
+                        })?;
+                    let field_type = self.data[id.0].fields[index].1;
+                    (Operation::Field(value, index), field_type)
+                } else {
+                    let id = self.data_names.get(name).copied().ok_or_else(|| {
+                        Diagnostic::new(expr.span, format!("unknown data type {name}"))
                     })?;
-                (Operation::Variant(id, tag), Type::Data(id))
+                    let tag = self.data[id.0]
+                        .variants
+                        .iter()
+                        .position(|candidate| candidate == variant)
+                        .ok_or_else(|| {
+                            Diagnostic::new(expr.span, format!("unknown variant {name}.{variant}"))
+                        })?;
+                    (Operation::Variant(id, tag), Type::Data(id))
+                }
             }
             ExprKind::Name(name) => {
                 let binding = locals
@@ -414,6 +441,14 @@ impl<'a> Lowerer<'a> {
                         "equality operands must have the same type",
                     ));
                 }
+                if let Type::Data(id) = ta
+                    && !self.data[id.0].fields.is_empty()
+                {
+                    return Err(Diagnostic::new(
+                        expr.span,
+                        "product equality is not implemented",
+                    ));
+                }
                 (Operation::Eq(a, b), Type::Bool)
             }
             ExprKind::Lt(lhs, rhs) => {
@@ -423,6 +458,37 @@ impl<'a> Lowerer<'a> {
                 (Operation::Lt(a, b), Type::Bool)
             }
             ExprKind::Call(name, args) => {
+                if let Some(id) = self.data_names.get(name).copied() {
+                    let fields = &self.data[id.0].fields;
+                    if fields.is_empty() {
+                        return Err(Diagnostic::new(
+                            expr.span,
+                            "sum type is not a product constructor",
+                        ));
+                    }
+                    if args.len() != fields.len() {
+                        return Err(Diagnostic::new(
+                            expr.span,
+                            format!("{name} expects {} fields, got {}", fields.len(), args.len()),
+                        ));
+                    }
+                    let expected = fields.iter().map(|(_, ty)| *ty).collect::<Vec<_>>();
+                    let mut values = Vec::with_capacity(args.len());
+                    for (arg, ty) in args.iter().zip(expected) {
+                        let CallArgument::Value(value) = arg else {
+                            return Err(Diagnostic::new(
+                                expr.span,
+                                "product constructor requires owned fields",
+                            ));
+                        };
+                        let (id, actual) = self.expr(value, locals)?;
+                        self.require(actual, ty, value.span)?;
+                        values.push(id);
+                    }
+                    let result =
+                        self.emit(Operation::Product(id, values), Type::Data(id), expr.span);
+                    return Ok((result, Type::Data(id)));
+                }
                 let signature = self.functions.get(name).cloned().ok_or_else(|| {
                     Diagnostic::new(expr.span, format!("unknown function {name}"))
                 })?;
@@ -540,6 +606,9 @@ impl<'a> Lowerer<'a> {
                     return Err(Diagnostic::new(subject.span, "when requires a data value"));
                 };
                 let data = &self.data[data_id.0];
+                if data.variants.is_empty() {
+                    return Err(Diagnostic::new(subject.span, "when requires a sum type"));
+                }
                 let mut seen = vec![false; data.variants.len()];
                 let mut tags = Vec::with_capacity(arms.len());
                 for arm in arms {
@@ -660,10 +729,28 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
             }
             variants.push(variant.clone());
         }
+        let mut fields = Vec::with_capacity(declaration.fields.len());
+        for field in &declaration.fields {
+            if fields.iter().any(|(name, _)| name == &field.name) {
+                return Err(Diagnostic::new(field.span, "duplicate field"));
+            }
+            let ty = match field.ty {
+                TypeName::I64 => Type::I64,
+                TypeName::Bool => Type::Bool,
+                TypeName::Named(_) => {
+                    return Err(Diagnostic::new(
+                        field.span,
+                        "nested product fields are not implemented",
+                    ));
+                }
+            };
+            fields.push((field.name.clone(), ty));
+        }
         data_names.insert(declaration.name.clone(), DataId(data.len()));
         data.push(DataDef {
             name: declaration.name.clone(),
             variants,
+            fields,
         });
     }
     let resolve = |name: &TypeName, span: Span| -> Result<Type, Diagnostic> {
@@ -679,6 +766,12 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     };
     let mut functions = HashMap::new();
     for (index, function) in ast.functions.iter().enumerate() {
+        if data_names.contains_key(&function.name) {
+            return Err(Diagnostic::new(
+                function.name_span,
+                "function name conflicts with data type",
+            ));
+        }
         if function.params.len() > 4 {
             return Err(Diagnostic::new(
                 function.name_span,
@@ -765,10 +858,33 @@ fn op_type(
                 .data
                 .get(data_id.0)
                 .ok_or_else(|| "invalid data ID".to_owned())?;
-            if *tag >= definition.variants.len() {
+            if !definition.fields.is_empty() || *tag >= definition.variants.len() {
                 return Err("invalid variant tag".into());
             }
             Ok(Some(Type::Data(*data_id)))
+        }
+        Operation::Product(data_id, fields) => {
+            let definition = program.data.get(data_id.0).ok_or("invalid data ID")?;
+            if definition.fields.len() != fields.len() || fields.is_empty() {
+                return Err("product field count mismatch".into());
+            }
+            for (value, (_, expected)) in fields.iter().zip(&definition.fields) {
+                if ty(*value) != *expected {
+                    return Err("product field type mismatch".into());
+                }
+            }
+            Ok(Some(Type::Data(*data_id)))
+        }
+        Operation::Field(value, index) => {
+            let Type::Data(id) = ty(*value) else {
+                return Err("field access requires a product".into());
+            };
+            program
+                .data
+                .get(id.0)
+                .and_then(|definition| definition.fields.get(*index))
+                .map(|(_, ty)| Some(*ty))
+                .ok_or_else(|| "invalid field access".into())
         }
         Operation::Neg(a) => {
             if ty(*a) != Type::I64 {
@@ -785,6 +901,11 @@ fn op_type(
         Operation::Eq(a, b) => {
             if ty(*a) != ty(*b) || !matches!(ty(*a), Type::I64 | Type::Bool | Type::Data(_)) {
                 return Err("equality type mismatch".into());
+            }
+            if let Type::Data(id) = ty(*a)
+                && !program.data[id.0].fields.is_empty()
+            {
+                return Err("product equality is not implemented".into());
             }
             Ok(Some(Type::Bool))
         }
@@ -870,6 +991,8 @@ fn op_type(
 fn operands(operation: &Operation) -> Vec<ValueId> {
     match operation {
         Operation::Const(_) | Operation::Bool(_) | Operation::Variant(_, _) => vec![],
+        Operation::Product(_, fields) => fields.clone(),
+        Operation::Field(value, _) => vec![*value],
         Operation::Neg(a)
         | Operation::PlaceInit(_, a)
         | Operation::Store(_, a)
@@ -897,7 +1020,9 @@ pub fn verify(program: &Program) -> Result<(), String> {
     }
     let mut data_names = std::collections::HashSet::new();
     for definition in &program.data {
-        if !data_names.insert(&definition.name) || definition.variants.is_empty() {
+        if !data_names.insert(&definition.name)
+            || definition.variants.is_empty() == definition.fields.is_empty()
+        {
             return Err("invalid data declaration".into());
         }
         let mut variants = std::collections::HashSet::new();
@@ -907,6 +1032,12 @@ pub fn verify(program: &Program) -> Result<(), String> {
             .any(|variant| !variants.insert(variant))
         {
             return Err("duplicate data variant".into());
+        }
+        let mut fields = std::collections::HashSet::new();
+        for (name, ty) in &definition.fields {
+            if !fields.insert(name) || !matches!(ty, Type::I64 | Type::Bool) {
+                return Err("invalid product field".into());
+            }
         }
     }
     for function in &program.functions {
@@ -1259,17 +1390,27 @@ impl Program {
         let base = stores.len();
         stores.resize(base + function.place_types.len(), None);
         for (param, arg) in function.blocks[0].params.iter().zip(args) {
-            values[param.0] = Some(*arg);
+            values[param.0] = Some(arg.clone());
         }
         let mut current = 0usize;
         loop {
             let block = &function.blocks[current];
             for instruction in &block.instructions {
-                let get = |id: ValueId| values[id.0].expect("verified value is defined");
+                let get = |id: ValueId| values[id.0].clone().expect("verified value is defined");
                 let value = match &instruction.operation {
                     Operation::Const(x) => Some(Value::I64(*x)),
                     Operation::Bool(x) => Some(Value::Bool(*x)),
                     Operation::Variant(data_id, tag) => Some(Value::Data(*data_id, *tag)),
+                    Operation::Product(data_id, fields) => Some(Value::Product(
+                        *data_id,
+                        fields.iter().map(|field| get(*field)).collect(),
+                    )),
+                    Operation::Field(owner, index) => {
+                        let Value::Product(_, fields) = get(*owner) else {
+                            unreachable!("verified product")
+                        };
+                        Some(fields[*index].clone())
+                    }
                     Operation::Neg(a) => Some(Value::I64(as_i64(get(*a)).wrapping_neg())),
                     Operation::Add(a, b) => {
                         Some(Value::I64(as_i64(get(*a)).wrapping_add(as_i64(get(*b)))))
@@ -1296,14 +1437,16 @@ impl Program {
                         stores[base + place.0] = Some(get(*value));
                         None
                     }
-                    Operation::Load(place) => {
-                        Some(stores[base + place.0].expect("verified place is initialized"))
-                    }
+                    Operation::Load(place) => Some(
+                        stores[base + place.0]
+                            .clone()
+                            .expect("verified place is initialized"),
+                    ),
                     Operation::LoadRef(reference) => {
                         let Value::Ref(slot) = get(*reference) else {
                             unreachable!("verified reference")
                         };
-                        Some(stores[slot].expect("live borrowed place"))
+                        Some(stores[slot].clone().expect("live borrowed place"))
                     }
                     Operation::StoreRef(reference, value) => {
                         let Value::Ref(slot) = get(*reference) else {
@@ -1317,7 +1460,7 @@ impl Program {
                     values[result.0] = value;
                 }
             }
-            let get = |id: ValueId| values[id.0].expect("verified value is defined");
+            let get = |id: ValueId| values[id.0].clone().expect("verified value is defined");
             match &block.terminator {
                 Terminator::Return(value) => {
                     let result = get(*value);
@@ -1350,14 +1493,18 @@ impl Program {
 fn as_i64(value: Value) -> i64 {
     match value {
         Value::I64(x) => x,
-        Value::Bool(_) | Value::Data(_, _) | Value::Ref(_) => unreachable!("verified I64 operand"),
+        Value::Bool(_) | Value::Data(_, _) | Value::Product(_, _) | Value::Ref(_) => {
+            unreachable!("verified I64 operand")
+        }
     }
 }
 
 fn as_bool(value: Value) -> bool {
     match value {
         Value::Bool(x) => x,
-        Value::I64(_) | Value::Data(_, _) | Value::Ref(_) => unreachable!("verified Bool operand"),
+        Value::I64(_) | Value::Data(_, _) | Value::Product(_, _) | Value::Ref(_) => {
+            unreachable!("verified Bool operand")
+        }
     }
 }
 
@@ -1399,6 +1546,19 @@ impl fmt::Display for Program {
                             "variant {}.{}",
                             self.data[id.0].name, self.data[id.0].variants[*tag]
                         )?,
+                        Operation::Product(id, fields) => {
+                            write!(f, "product {}(", self.data[id.0].name)?;
+                            for (index, field) in fields.iter().enumerate() {
+                                if index > 0 {
+                                    write!(f, ", ")?;
+                                }
+                                write!(f, "v{}", field.0)?;
+                            }
+                            write!(f, ")")?;
+                        }
+                        Operation::Field(owner, index) => {
+                            write!(f, "field v{}, {}", owner.0, index)?
+                        }
                         Operation::Neg(a) => write!(f, "neg v{}", a.0)?,
                         Operation::Add(a, b) => write!(f, "add v{}, v{}", a.0, b.0)?,
                         Operation::Sub(a, b) => write!(f, "sub v{}, v{}", a.0, b.0)?,

@@ -8,7 +8,8 @@ use std::process::{Command, Stdio};
 use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
-    AbiParam, MemFlagsData, Signature, StackSlotData, StackSlotKind, UserFuncName, types,
+    AbiParam, MemFlagsData, Signature, StackSlotData, StackSlotKind, UserFuncName,
+    Value as ClValue, types,
 };
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -137,6 +138,34 @@ pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> 
     linked
 }
 
+fn abi_types(
+    program: &Program,
+    ty: Type,
+    pointer_type: cranelift_codegen::ir::Type,
+) -> Vec<cranelift_codegen::ir::Type> {
+    match ty {
+        Type::I64 => vec![types::I64],
+        Type::Bool => vec![types::I8],
+        Type::Data(id) => {
+            let definition = &program.data[id.0];
+            if definition.fields.is_empty() {
+                vec![types::I64]
+            } else {
+                definition
+                    .fields
+                    .iter()
+                    .map(|(_, ty)| match ty {
+                        Type::I64 => types::I64,
+                        Type::Bool => types::I8,
+                        _ => unreachable!("verified primitive product field"),
+                    })
+                    .collect()
+            }
+        }
+        Type::RefI64 | Type::RefMutI64 => vec![pointer_type],
+    }
+}
+
 fn compile_functions<M: Module>(
     module: &mut M,
     program: &Program,
@@ -147,24 +176,24 @@ fn compile_functions<M: Module>(
     for (index, function) in program.functions.iter().enumerate() {
         let mut signature = module.make_signature();
         for (index, mode) in function.param_modes.iter().enumerate() {
-            let ty = if *mode == ParamMode::Own {
-                match function.value_types[function.blocks[0].params[index].0] {
-                    Type::I64 | Type::Data(_) => types::I64,
-                    Type::Bool => types::I8,
-                    Type::RefI64 | Type::RefMutI64 => unreachable!("verified own parameter"),
-                }
+            let components = if *mode == ParamMode::Own {
+                abi_types(
+                    program,
+                    function.value_types[function.blocks[0].params[index].0],
+                    pointer_type,
+                )
             } else {
-                pointer_type
+                vec![pointer_type]
             };
-            signature.params.push(AbiParam::new(ty));
+            signature
+                .params
+                .extend(components.into_iter().map(AbiParam::new));
         }
-        signature
-            .returns
-            .push(AbiParam::new(match function.return_type {
-                Type::I64 | Type::Data(_) => types::I64,
-                Type::Bool => types::I8,
-                Type::RefI64 | Type::RefMutI64 => unreachable!("verified return type"),
-            }));
+        signature.returns.extend(
+            abi_types(program, function.return_type, pointer_type)
+                .into_iter()
+                .map(AbiParam::new),
+        );
         let symbol = if function.name == "main" {
             "phoebe_main".to_owned()
         } else {
@@ -197,39 +226,40 @@ fn compile_functions<M: Module>(
                 .place_types
                 .iter()
                 .map(|ty| {
-                    let (size, align_shift) = match ty {
-                        Type::I64 | Type::Data(_) => (8, 3),
-                        Type::Bool => (1, 0),
-                        Type::RefI64 | Type::RefMutI64 => {
-                            unreachable!("references cannot be stored in places")
-                        }
-                    };
-                    builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        size,
-                        align_shift,
-                    ))
+                    abi_types(program, *ty, pointer_type)
+                        .into_iter()
+                        .map(|component| {
+                            let (size, align_shift) = if component == types::I8 {
+                                (1, 0)
+                            } else {
+                                (8, 3)
+                            };
+                            builder.create_sized_stack_slot(StackSlotData::new(
+                                StackSlotKind::ExplicitSlot,
+                                size,
+                                align_shift,
+                            ))
+                        })
+                        .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>();
             builder.append_block_params_for_function_params(blocks[0]);
             for (block_id, block) in function.blocks.iter().enumerate().skip(1) {
                 for param in &block.params {
-                    let ty = match function.value_types[param.0] {
-                        Type::I64 | Type::Data(_) => types::I64,
-                        Type::Bool => types::I8,
-                        Type::RefI64 | Type::RefMutI64 => pointer_type,
-                    };
-                    builder.append_block_param(blocks[block_id], ty);
+                    for ty in abi_types(program, function.value_types[param.0], pointer_type) {
+                        builder.append_block_param(blocks[block_id], ty);
+                    }
                 }
             }
-            let mut values = vec![None; function.value_types.len()];
+            let mut values: Vec<Option<Vec<ClValue>>> = vec![None; function.value_types.len()];
             for (block_id, block) in function.blocks.iter().enumerate() {
-                for (param, value) in block
-                    .params
-                    .iter()
-                    .zip(builder.block_params(blocks[block_id]))
-                {
-                    values[param.0] = Some(*value);
+                let mut offset = 0;
+                let raw = builder.block_params(blocks[block_id]);
+                for param in &block.params {
+                    let count =
+                        abi_types(program, function.value_types[param.0], pointer_type).len();
+                    values[param.0] = Some(raw[offset..offset + count].to_vec());
+                    offset += count;
                 }
             }
             let mut order = Vec::with_capacity(function.blocks.len());
@@ -258,89 +288,101 @@ fn compile_functions<M: Module>(
                 let block = &function.blocks[block_id];
                 builder.switch_to_block(blocks[block_id]);
                 for instruction in &block.instructions {
-                    let get = |id: core::ValueId| values[id.0].expect("verified value is defined");
+                    let get = |id: core::ValueId| {
+                        values[id.0].clone().expect("verified value is defined")
+                    };
+                    let one = |id: core::ValueId| get(id)[0];
                     let value = match &instruction.operation {
-                        Operation::Const(value) => Some(builder.ins().iconst(types::I64, *value)),
+                        Operation::Const(value) => {
+                            Some(vec![builder.ins().iconst(types::I64, *value)])
+                        }
                         Operation::Bool(value) => {
-                            Some(builder.ins().iconst(types::I8, i64::from(*value)))
+                            Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
                         }
                         Operation::Variant(_, tag) => {
-                            Some(builder.ins().iconst(types::I64, *tag as i64))
+                            Some(vec![builder.ins().iconst(types::I64, *tag as i64)])
                         }
-                        Operation::Neg(a) => Some(builder.ins().ineg(get(*a))),
-                        Operation::Add(a, b) => Some(builder.ins().iadd(get(*a), get(*b))),
-                        Operation::Sub(a, b) => Some(builder.ins().isub(get(*a), get(*b))),
-                        Operation::Mul(a, b) => Some(builder.ins().imul(get(*a), get(*b))),
+                        Operation::Product(_, fields) => {
+                            Some(fields.iter().flat_map(|field| get(*field)).collect())
+                        }
+                        Operation::Field(owner, index) => Some(vec![get(*owner)[*index]]),
+                        Operation::Neg(a) => Some(vec![builder.ins().ineg(one(*a))]),
+                        Operation::Add(a, b) => Some(vec![builder.ins().iadd(one(*a), one(*b))]),
+                        Operation::Sub(a, b) => Some(vec![builder.ins().isub(one(*a), one(*b))]),
+                        Operation::Mul(a, b) => Some(vec![builder.ins().imul(one(*a), one(*b))]),
                         Operation::Eq(a, b) => {
-                            Some(builder.ins().icmp(IntCC::Equal, get(*a), get(*b)))
+                            Some(vec![builder.ins().icmp(IntCC::Equal, one(*a), one(*b))])
                         }
-                        Operation::Lt(a, b) => {
-                            Some(builder.ins().icmp(IntCC::SignedLessThan, get(*a), get(*b)))
-                        }
+                        Operation::Lt(a, b) => Some(vec![builder.ins().icmp(
+                            IntCC::SignedLessThan,
+                            one(*a),
+                            one(*b),
+                        )]),
                         Operation::Call(target, args) => {
                             let callee = module.declare_func_in_func(ids[target.0].0, builder.func);
                             let args = args
                                 .iter()
-                                .map(|arg| match arg {
+                                .flat_map(|arg| match arg {
                                     CallArg::Value(value) | CallArg::Ref(value, _) => get(*value),
                                     CallArg::Borrow(place, _) => {
-                                        builder.ins().stack_addr(pointer_type, places[place.0], 0)
+                                        vec![builder.ins().stack_addr(
+                                            pointer_type,
+                                            places[place.0][0],
+                                            0,
+                                        )]
                                     }
                                 })
                                 .collect::<Vec<_>>();
                             let call = builder.ins().call(callee, &args);
-                            Some(builder.inst_results(call)[0])
+                            Some(builder.inst_results(call).to_vec())
                         }
-                        Operation::LoadRef(reference) => Some(builder.ins().load(
+                        Operation::LoadRef(reference) => Some(vec![builder.ins().load(
                             types::I64,
                             MemFlagsData::new(),
-                            get(*reference),
+                            one(*reference),
                             0,
-                        )),
+                        )]),
                         Operation::StoreRef(reference, value) => {
                             builder.ins().store(
                                 MemFlagsData::new(),
-                                get(*value),
-                                get(*reference),
+                                one(*value),
+                                one(*reference),
                                 0,
                             );
                             None
                         }
                         Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
-                            builder.ins().stack_store(
-                                pointer_type,
-                                get(*value),
-                                places[place.0],
-                                0,
-                            );
+                            for (component, slot) in get(*value).into_iter().zip(&places[place.0]) {
+                                builder.ins().stack_store(pointer_type, component, *slot, 0);
+                            }
                             None
                         }
-                        Operation::Load(place) => {
-                            let ty = match function.place_types[place.0] {
-                                Type::I64 | Type::Data(_) => types::I64,
-                                Type::Bool => types::I8,
-                                Type::RefI64 | Type::RefMutI64 => {
-                                    unreachable!("references cannot be stored in places")
-                                }
-                            };
-                            Some(
-                                builder
-                                    .ins()
-                                    .stack_load(pointer_type, ty, places[place.0], 0),
-                            )
-                        }
+                        Operation::Load(place) => Some(
+                            abi_types(program, function.place_types[place.0], pointer_type)
+                                .into_iter()
+                                .zip(&places[place.0])
+                                .map(|(ty, slot)| {
+                                    builder.ins().stack_load(pointer_type, ty, *slot, 0)
+                                })
+                                .collect(),
+                        ),
                     };
                     if let Some(result) = instruction.result {
                         values[result.0] = value;
                     }
                 }
-                let get = |id: core::ValueId| values[id.0].expect("verified value is defined");
+                let get =
+                    |id: core::ValueId| values[id.0].clone().expect("verified value is defined");
                 match &block.terminator {
                     Terminator::Return(value) => {
-                        builder.ins().return_(&[get(*value)]);
+                        builder.ins().return_(&get(*value));
                     }
                     Terminator::Jump(target, args) => {
-                        let args = args.iter().map(|arg| get(*arg).into()).collect::<Vec<_>>();
+                        let args = args
+                            .iter()
+                            .flat_map(|arg| get(*arg))
+                            .map(Into::into)
+                            .collect::<Vec<_>>();
                         builder.ins().jump(blocks[target.0], &args);
                     }
                     Terminator::Branch {
@@ -349,7 +391,7 @@ fn compile_functions<M: Module>(
                         else_block,
                     } => {
                         builder.ins().brif(
-                            get(*condition),
+                            get(*condition)[0],
                             blocks[then_block.0],
                             &[],
                             blocks[else_block.0],

@@ -34,7 +34,8 @@ only by prose at release.
 
 ## Current executable slice
 
-The Rust crate currently parses I64, Bool, and nullary nominal data function
+The Rust crate currently parses I64, Bool, nullary nominal sums, and nominal
+products with I64/Bool fields in function
 signatures, up to four owned parameters (I64 borrows only), `val` and `var`
 bindings, assignment, `while` statements, integer
 and boolean literals, unary negation, `+`, `-`, `*`, `==`, `<`, `if` expressions
@@ -49,6 +50,9 @@ the host `cc`; `--interp` selects the reference interpreter. The built
 executable runs without the compiler process and prints the I64 returned by
 zero-argument `main`. External JIT and interpreter entries also require I64
 signatures; calls within Phoebe can pass and return Bool or nullary data.
+Primitive-field products also cross calls and returns by flattened scalar
+components, without native heap allocation. `docs/abi-shapes.md` records the
+current internal calling convention and its missing cost threshold.
 Core IR has typed values,
 conditional branches, block parameters, and task-local scalar places for
 `var`. Its verifier checks definition uniqueness, dominance, place
@@ -71,6 +75,7 @@ cargo run -- run examples/branch.phoebe
 cargo run -- run examples/loop.phoebe
 cargo run -- run examples/borrow.phoebe
 cargo run -- run examples/variant.phoebe
+cargo run -- run examples/product.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
 cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow

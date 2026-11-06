@@ -421,3 +421,96 @@ fn one_variant_and_mutable_nominal_place_agree() {
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
 }
+
+#[test]
+fn products_cross_calls_and_returns_without_place_storage() {
+    let program = compile(include_str!("../examples/product.phoebe"));
+    assert!(
+        program
+            .functions
+            .iter()
+            .all(|function| function.place_types.is_empty())
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-product-aot-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let result = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8(result.stdout).unwrap(), "42\n");
+}
+
+#[test]
+fn mixed_product_fields_survive_places_and_block_joins() {
+    let program = compile(
+        "data Item { count: I64, ready: Bool } fn choose(flag: Bool) -> Item = if (flag) { Item(41, true) } else { Item(0, false) } fn main() -> I64 { var item = choose(true); item = Item(item.count + 1, item.ready); if (item.ready) { item.count } else { 0 } }",
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
+fn products_reject_bad_fields_and_implicit_equality() {
+    let cases = [
+        (
+            "data Pair { x: I64, y: Bool } fn main() -> I64 { val p = Pair(1, 2); p.x }",
+            "expected Bool",
+        ),
+        (
+            "data Pair { x: I64, y: Bool } fn main() -> I64 { val p = Pair(1, true); p.z }",
+            "unknown field",
+        ),
+        (
+            "data Pair { x: I64, y: Bool } fn main() -> Bool = Pair(1, true) == Pair(1, true)",
+            "product equality",
+        ),
+        (
+            "data Pair { x: I64, x: Bool } fn main() -> I64 = 1",
+            "duplicate field",
+        ),
+    ];
+    for (source, expected) in cases {
+        let error = syntax::parse(source)
+            .and_then(|ast| core::lower(&ast))
+            .unwrap_err();
+        assert!(error.message.contains(expected), "{error:?}");
+    }
+}
+
+#[test]
+fn verifier_checks_product_shape_before_native_lowering() {
+    let mut program = compile(
+        "data Pair { left: I64, ready: Bool } fn main() -> I64 { val p = Pair(42, true); p.left }",
+    );
+    let product = program.functions[0].blocks[0]
+        .instructions
+        .iter_mut()
+        .find(|instruction| matches!(instruction.operation, core::Operation::Product(_, _)))
+        .unwrap();
+    if let core::Operation::Product(_, fields) = &mut product.operation {
+        fields.pop();
+    }
+    assert!(
+        core::verify(&program)
+            .unwrap_err()
+            .contains("product field count mismatch")
+    );
+
+    let mut program = compile(
+        "data Pair { left: I64, ready: Bool } fn main() -> I64 { val p = Pair(42, true); p.left }",
+    );
+    let field = program.functions[0].blocks[0]
+        .instructions
+        .iter_mut()
+        .find(|instruction| matches!(instruction.operation, core::Operation::Field(_, _)))
+        .unwrap();
+    if let core::Operation::Field(_, index) = &mut field.operation {
+        *index = 2;
+    }
+    assert!(
+        core::verify(&program)
+            .unwrap_err()
+            .contains("invalid field access")
+    );
+}
