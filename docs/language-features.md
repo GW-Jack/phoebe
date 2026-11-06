@@ -1,8 +1,8 @@
 # Language features — draft 0.5 design sketch
 
 Status: baseline accepted by Decision 0003, 2026-11-06; the listed details
-remain design questions. Syntax is illustrative; there is no parser, type
-checker, or runtime yet. Decision 0002 governs the concurrency core.
+remain design questions. Most syntax is illustrative; the executable subset
+is tracked in `version-0.0.1.md`. Decision 0002 governs the concurrency core.
 
 ## Types and values
 

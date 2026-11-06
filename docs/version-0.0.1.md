@@ -42,7 +42,9 @@ negation, `+`, `-`, `*`, `==`, `<`, `if` expressions with block arms, exhaustive
 `when` expressions, acyclic direct calls, call-site `&I64` and `&mut I64`
 arguments, `?` on concrete built-in `Result<T, E>` applications with
 primitive or existing nominal payloads,
-and a matching tail expression. Recursion is
+and a matching tail expression. Nominal values have affine move checking:
+owning uses consume them, product field reads preserve them, and CFG joins
+reject later reuse when any incoming path has moved the owner. Recursion is
 rejected until task stacks have safe growth limits. Arithmetic wraps at 64
 bits in both interpreter and native execution. `phoebe check`, `phoebe ir`,
 `phoebe run`, and `phoebe build <file> -o <output>` work on that subset.
@@ -54,10 +56,11 @@ signatures; calls within Phoebe can pass and return Bool or nominal data.
 Primitive-field products also cross calls and returns by flattened scalar
 components, without native heap allocation. `docs/abi-shapes.md` records the
 current internal calling convention and its missing cost threshold. Core IR
-has typed values, conditional branches, variant matches, block parameters, and task-local scalar places for
-`var`. Nested `Result` applications use a finite flattened ABI shape; see
-`examples/nested_result.phoebe`. Its verifier checks definition uniqueness, dominance, place
-initialization, block-argument types, call targets and modes, and return
+has typed values, conditional branches, variant matches, block parameters,
+and task-local places for `var`. Nested `Result` applications use a finite
+flattened ABI shape; see `examples/nested_result.phoebe`. Its verifier checks
+definition uniqueness, dominance, place initialization, affine moves,
+block-argument types, call targets and modes, and return
 types. Source spans survive parsing and lowering. `docs/core-ir.md` and
 `docs/call-borrows.md` explain the current operations and their evidence
 boundary. Borrows are confined to synchronous calls; general reference
@@ -66,7 +69,7 @@ current `?` rule and its missing user-declared nested payload, generic function,
 cleanup work.
 
 This slice establishes the parser → checked IR → interpreter/Cranelift path.
-It does not yet implement the ownership, concurrency, module, or release
+It does not yet implement general ownership, concurrency, module, or release
 gates above. The `examples/cost/` files other than scalar `identity` remain
 design fixtures, not executable acceptance tests.
 

@@ -317,6 +317,7 @@ fn compile_functions<M: Module>(
                         Operation::Bool(value) => {
                             Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
                         }
+                        Operation::Move(value) => Some(get(*value)),
                         Operation::Variant(id, tag, payload) => {
                             let mut components =
                                 vec![builder.ins().iconst(types::I64, *tag as i64)];
@@ -340,6 +341,15 @@ fn compile_functions<M: Module>(
                             Some(fields.iter().flat_map(|field| get(*field)).collect())
                         }
                         Operation::Field(owner, index) => Some(vec![get(*owner)[*index]]),
+                        Operation::ReadField(place, index) => {
+                            let ty = shapes.types(function.place_types[place.0])[*index];
+                            Some(vec![builder.ins().stack_load(
+                                pointer_type,
+                                ty,
+                                places[place.0][*index],
+                                0,
+                            )])
+                        }
                         Operation::Neg(a) => Some(vec![builder.ins().ineg(one(*a))]),
                         Operation::Add(a, b) => Some(vec![builder.ins().iadd(one(*a), one(*b))]),
                         Operation::Sub(a, b) => Some(vec![builder.ins().isub(one(*a), one(*b))]),
@@ -391,7 +401,7 @@ fn compile_functions<M: Module>(
                             }
                             None
                         }
-                        Operation::Load(place) => Some(
+                        Operation::Load(place) | Operation::Take(place) => Some(
                             shapes
                                 .types(function.place_types[place.0])
                                 .into_iter()

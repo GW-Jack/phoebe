@@ -712,3 +712,84 @@ fn verifier_rejects_recursive_result_payload_shape() {
             .contains("invalid variant payload type")
     );
 }
+
+#[test]
+fn nominal_owner_cannot_be_used_after_an_owning_call() {
+    let source = "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { val p = Pair(20, 22); val first = use(p); first + use(p) }";
+    let error = syntax::parse(source)
+        .and_then(|ast| core::lower(&ast))
+        .unwrap_err();
+    assert!(error.message.contains("use after move"), "{error:?}");
+    assert_eq!(&source[error.span.start..error.span.end], "p");
+}
+
+#[test]
+fn nominal_moves_follow_branch_and_loop_paths() {
+    let accepted = compile(
+        "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { val p = Pair(20, 22); if (true) { use(p) } else { use(p) } + 22 }",
+    );
+    assert_eq!(accepted.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&accepted, "main", &[]).unwrap(), 42);
+
+    let after_join = "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { val p = Pair(20, 22); val n = if (true) { use(p) } else { 0 }; n + use(p) }";
+    let error = syntax::parse(after_join)
+        .and_then(|ast| core::lower(&ast))
+        .unwrap_err();
+    assert!(error.message.contains("use after move"), "{error:?}");
+
+    let in_loop = "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { val p = Pair(20, 22); var i = 0; while (i < 2) { use(p); i = i + 1; } 42 }";
+    let error = syntax::parse(in_loop)
+        .and_then(|ast| core::lower(&ast))
+        .unwrap_err();
+    assert!(error.message.contains("use after move"), "{error:?}");
+}
+
+#[test]
+fn nominal_place_take_requires_reassignment_before_reuse() {
+    let source = "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { var p = Pair(20, 22); val n = use(p); p.left + n }";
+    let error = syntax::parse(source)
+        .and_then(|ast| core::lower(&ast))
+        .unwrap_err();
+    assert!(error.message.contains("use after move"), "{error:?}");
+    assert_eq!(&source[error.span.start..error.span.end], "p.left");
+
+    let accepted = compile(
+        "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { var p = Pair(20, 22); val n = use(p); p = Pair(n, 2); p.left + p.right + 20 }",
+    );
+    assert_eq!(accepted.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&accepted, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-move-aot-{}", std::process::id()));
+    native::build_executable(&accepted, &path).unwrap();
+    let result = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8(result.stdout).unwrap(), "42\n");
+}
+
+#[test]
+fn verifier_rejects_forged_second_nominal_move() {
+    let mut program = compile(
+        "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { val first = Pair(20, 22); val n = use(first); val second = Pair(1, 2); n + use(second) }",
+    );
+    let (main_id, _) = program.function("main").unwrap();
+    let moves = program.functions[main_id.0].blocks[0]
+        .instructions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, instruction)| {
+            if let core::Operation::Move(value) = instruction.operation {
+                Some((index, value))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(moves.len(), 2);
+    program.functions[main_id.0].blocks[0].instructions[moves[1].0].operation =
+        core::Operation::Move(moves[0].1);
+    assert!(
+        core::verify(&program)
+            .unwrap_err()
+            .contains("use after move")
+    );
+}

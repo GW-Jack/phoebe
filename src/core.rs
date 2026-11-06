@@ -73,9 +73,11 @@ pub enum CallArg {
 pub enum Operation {
     Const(i64),
     Bool(bool),
+    Move(ValueId),
     Variant(DataId, usize, Option<ValueId>),
     Product(DataId, Vec<ValueId>),
     Field(ValueId, usize),
+    ReadField(PlaceId, usize),
     Neg(ValueId),
     Add(ValueId, ValueId),
     Sub(ValueId, ValueId),
@@ -87,6 +89,7 @@ pub enum Operation {
     StoreRef(ValueId, ValueId),
     PlaceInit(PlaceId, ValueId),
     Load(PlaceId),
+    Take(PlaceId),
     Store(PlaceId, ValueId),
 }
 
@@ -376,12 +379,12 @@ impl<'a> Lowerer<'a> {
             ExprKind::Int(value) => (Operation::Const(*value), Type::I64),
             ExprKind::Bool(value) => (Operation::Bool(*value), Type::Bool),
             ExprKind::Member(name, variant) => {
-                if locals.contains_key(name) {
-                    let owner = Expr {
-                        kind: ExprKind::Name(name.clone()),
-                        span: expr.span,
+                if let Some(binding) = locals.get(name).copied() {
+                    let ty = match binding {
+                        Binding::Val(value) => self.value_types[value.0],
+                        Binding::Var(place) => self.place_types[place.0],
+                        Binding::Ref(_, _) => Type::RefI64,
                     };
-                    let (value, ty) = self.expr(&owner, locals)?;
                     let Type::Data(id) = ty else {
                         return Err(Diagnostic::new(
                             expr.span,
@@ -396,7 +399,12 @@ impl<'a> Lowerer<'a> {
                             Diagnostic::new(expr.span, format!("unknown field {variant}"))
                         })?;
                     let field_type = self.data[id.0].fields[index].1;
-                    (Operation::Field(value, index), field_type)
+                    let operation = match binding {
+                        Binding::Val(value) => Operation::Field(value, index),
+                        Binding::Var(place) => Operation::ReadField(place, index),
+                        Binding::Ref(_, _) => unreachable!("data reference is unsupported"),
+                    };
+                    (operation, field_type)
                 } else {
                     let id = self.data_names.get(name).copied().ok_or_else(|| {
                         Diagnostic::new(expr.span, format!("unknown data type {name}"))
@@ -495,10 +503,22 @@ impl<'a> Lowerer<'a> {
                     .copied()
                     .ok_or_else(|| Diagnostic::new(expr.span, format!("unknown local {name}")))?;
                 return Ok(match binding {
-                    Binding::Val(id) => (id, self.value_types[id.0]),
+                    Binding::Val(id) => {
+                        let ty = self.value_types[id.0];
+                        if matches!(ty, Type::Data(_)) {
+                            (self.emit(Operation::Move(id), ty, expr.span), ty)
+                        } else {
+                            (id, ty)
+                        }
+                    }
                     Binding::Var(place) => {
                         let ty = self.place_types[place.0];
-                        (self.emit(Operation::Load(place), ty, expr.span), ty)
+                        let operation = if matches!(ty, Type::Data(_)) {
+                            Operation::Take(place)
+                        } else {
+                            Operation::Load(place)
+                        };
+                        (self.emit(operation, ty, expr.span), ty)
                     }
                     Binding::Ref(reference, _) => (
                         self.emit(Operation::LoadRef(reference), Type::I64, expr.span),
@@ -1002,7 +1022,9 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         data,
         functions: lowered,
     };
-    verify(&program).map_err(|message| Diagnostic::new(Span { start: 0, end: 0 }, message))?;
+    verify_structure(&program)
+        .map_err(|message| Diagnostic::new(Span { start: 0, end: 0 }, message))?;
+    verify_ownership(&program).map_err(|error| Diagnostic::new(error.span, error.message))?;
     Ok(program)
 }
 
@@ -1015,6 +1037,12 @@ fn op_type(
     match operation {
         Operation::Const(_) => Ok(Some(Type::I64)),
         Operation::Bool(_) => Ok(Some(Type::Bool)),
+        Operation::Move(value) => {
+            if !matches!(ty(*value), Type::Data(_)) {
+                return Err("move requires a nominal value".into());
+            }
+            Ok(Some(ty(*value)))
+        }
         Operation::Variant(data_id, tag, payload) => {
             let definition = program
                 .data
@@ -1050,6 +1078,20 @@ fn op_type(
                 .and_then(|definition| definition.fields.get(*index))
                 .map(|(_, ty)| Some(*ty))
                 .ok_or_else(|| "invalid field access".into())
+        }
+        Operation::ReadField(place, index) => {
+            let Type::Data(id) = *function
+                .place_types
+                .get(place.0)
+                .ok_or("invalid place ID")?
+            else {
+                return Err("place field access requires a product".into());
+            };
+            program.data[id.0]
+                .fields
+                .get(*index)
+                .map(|(_, ty)| Some(*ty))
+                .ok_or_else(|| "invalid place field access".into())
         }
         Operation::Neg(a) => {
             if ty(*a) != Type::I64 {
@@ -1145,18 +1187,24 @@ fn op_type(
             }
             Ok(None)
         }
-        Operation::Load(place) => function
-            .place_types
-            .get(place.0)
-            .copied()
-            .map(Some)
-            .ok_or_else(|| "invalid place ID".to_owned()),
+        Operation::Load(place) => match function.place_types.get(place.0) {
+            Some(Type::I64) => Ok(Some(Type::I64)),
+            Some(Type::Bool) => Ok(Some(Type::Bool)),
+            Some(_) => Err("nominal place requires take or field read".into()),
+            None => Err("invalid place ID".into()),
+        },
+        Operation::Take(place) => match function.place_types.get(place.0) {
+            Some(ty @ Type::Data(_)) => Ok(Some(*ty)),
+            Some(_) => Err("take requires a nominal place".into()),
+            None => Err("invalid place ID".into()),
+        },
     }
 }
 
 fn operands(operation: &Operation) -> Vec<ValueId> {
     match operation {
         Operation::Const(_) | Operation::Bool(_) => vec![],
+        Operation::Move(value) => vec![*value],
         Operation::Variant(_, _, payload) => payload.iter().copied().collect(),
         Operation::Product(_, fields) => fields.clone(),
         Operation::Field(value, _) => vec![*value],
@@ -1165,7 +1213,7 @@ fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::Store(_, a)
         | Operation::LoadRef(a) => vec![*a],
         Operation::StoreRef(a, b) => vec![*a, *b],
-        Operation::Load(_) => vec![],
+        Operation::Load(_) | Operation::Take(_) | Operation::ReadField(_, _) => vec![],
         Operation::Add(a, b)
         | Operation::Sub(a, b)
         | Operation::Mul(a, b)
@@ -1181,7 +1229,182 @@ fn operands(operation: &Operation) -> Vec<ValueId> {
     }
 }
 
-pub fn verify(program: &Program) -> Result<(), String> {
+#[derive(Clone, PartialEq, Eq)]
+struct OwnershipState {
+    values: Vec<bool>,
+    places: Vec<bool>,
+}
+
+impl OwnershipState {
+    fn intersect(&mut self, other: &Self) -> bool {
+        let mut changed = false;
+        for (value, incoming) in self.values.iter_mut().zip(&other.values) {
+            let next = *value && *incoming;
+            changed |= next != *value;
+            *value = next;
+        }
+        for (place, incoming) in self.places.iter_mut().zip(&other.places) {
+            let next = *place && *incoming;
+            changed |= next != *place;
+            *place = next;
+        }
+        changed
+    }
+}
+
+struct OwnershipError {
+    span: Span,
+    message: String,
+}
+
+fn verify_ownership(program: &Program) -> Result<(), OwnershipError> {
+    for function in &program.functions {
+        let mut entry = OwnershipState {
+            values: vec![false; function.value_types.len()],
+            places: vec![false; function.place_types.len()],
+        };
+        for param in &function.blocks[0].params {
+            if matches!(function.value_types[param.0], Type::Data(_)) {
+                entry.values[param.0] = true;
+            }
+        }
+        let mut incoming = vec![None; function.blocks.len()];
+        incoming[0] = Some(entry);
+        let mut ready = VecDeque::from([0usize]);
+        while let Some(block_id) = ready.pop_front() {
+            let block = &function.blocks[block_id];
+            let mut state = incoming[block_id].clone().expect("queued block has state");
+            for param in &block.params {
+                if matches!(function.value_types[param.0], Type::Data(_)) {
+                    state.values[param.0] = true;
+                }
+            }
+            let value_use = |state: &mut OwnershipState,
+                             value: ValueId,
+                             consume: bool,
+                             span: Span| {
+                if matches!(function.value_types[value.0], Type::Data(_)) {
+                    if !state.values[value.0] {
+                        return Err(OwnershipError {
+                            span,
+                            message: format!("{}: use after move of v{}", function.name, value.0),
+                        });
+                    }
+                    if consume {
+                        state.values[value.0] = false;
+                    }
+                }
+                Ok(())
+            };
+            for instruction in &block.instructions {
+                let span = instruction.span;
+                match &instruction.operation {
+                    Operation::Move(value) => value_use(&mut state, *value, true, span)?,
+                    Operation::Variant(_, _, payload) => {
+                        if let Some(value) = payload {
+                            value_use(&mut state, *value, true, span)?;
+                        }
+                    }
+                    Operation::Product(_, fields) => {
+                        for field in fields {
+                            value_use(&mut state, *field, true, span)?;
+                        }
+                    }
+                    Operation::Call(_, args) => {
+                        for arg in args {
+                            if let CallArg::Value(value) = arg {
+                                value_use(&mut state, *value, true, span)?;
+                            }
+                        }
+                    }
+                    Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
+                        value_use(&mut state, *value, true, span)?;
+                        if matches!(function.place_types[place.0], Type::Data(_)) {
+                            state.places[place.0] = true;
+                        }
+                    }
+                    Operation::Take(place) => {
+                        if !state.places[place.0] {
+                            return Err(OwnershipError {
+                                span,
+                                message: format!(
+                                    "{}: use after move of p{}",
+                                    function.name, place.0
+                                ),
+                            });
+                        }
+                        state.places[place.0] = false;
+                    }
+                    Operation::ReadField(place, _) => {
+                        if !state.places[place.0] {
+                            return Err(OwnershipError {
+                                span,
+                                message: format!(
+                                    "{}: use after move of p{}",
+                                    function.name, place.0
+                                ),
+                            });
+                        }
+                    }
+                    other => {
+                        for value in operands(other) {
+                            value_use(&mut state, value, false, span)?;
+                        }
+                    }
+                }
+                if let Some(result) = instruction.result
+                    && matches!(function.value_types[result.0], Type::Data(_))
+                {
+                    state.values[result.0] = true;
+                }
+            }
+            let span = block
+                .instructions
+                .last()
+                .map(|item| item.span)
+                .unwrap_or(Span { start: 0, end: 0 });
+            let successors = match &block.terminator {
+                Terminator::Return(value) => {
+                    value_use(&mut state, *value, true, span)?;
+                    vec![]
+                }
+                Terminator::Jump(target, args) => {
+                    for value in args {
+                        value_use(&mut state, *value, true, span)?;
+                    }
+                    vec![target.0]
+                }
+                Terminator::Branch {
+                    then_block,
+                    else_block,
+                    ..
+                } => {
+                    vec![then_block.0, else_block.0]
+                }
+                Terminator::Match { subject, arms } => {
+                    value_use(&mut state, *subject, true, span)?;
+                    arms.iter().map(|arm| arm.target.0).collect()
+                }
+            };
+            for target in successors {
+                match &mut incoming[target] {
+                    None => {
+                        incoming[target] = Some(state.clone());
+                        ready.push_back(target);
+                    }
+                    Some(prior) => {
+                        if prior.intersect(&state) {
+                            ready.push_back(target);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_structure(program: &Program) -> Result<(), String> {
     if program.functions.is_empty() {
         return Err("empty Core IR program".into());
     }
@@ -1420,7 +1643,11 @@ pub fn verify(program: &Program) -> Result<(), String> {
                         function.name
                     ));
                 }
-                if let Operation::Load(place) | Operation::Store(place, _) = instruction.operation {
+                if let Operation::Load(place)
+                | Operation::Take(place)
+                | Operation::ReadField(place, _)
+                | Operation::Store(place, _) = instruction.operation
+                {
                     check_place(place, block_id, index)?;
                 }
                 if let Operation::Call(_, args) = &instruction.operation {
@@ -1540,6 +1767,11 @@ pub fn verify(program: &Program) -> Result<(), String> {
     Ok(())
 }
 
+pub fn verify(program: &Program) -> Result<(), String> {
+    verify_structure(program)?;
+    verify_ownership(program).map_err(|error| error.message)
+}
+
 impl Program {
     pub fn function(&self, name: &str) -> Option<(FunctionId, &Function)> {
         self.functions
@@ -1609,6 +1841,7 @@ impl Program {
                 let value = match &instruction.operation {
                     Operation::Const(x) => Some(Value::I64(*x)),
                     Operation::Bool(x) => Some(Value::Bool(*x)),
+                    Operation::Move(value) => Some(get(*value)),
                     Operation::Variant(data_id, tag, payload) => Some(Value::Data(
                         *data_id,
                         *tag,
@@ -1621,6 +1854,12 @@ impl Program {
                     Operation::Field(owner, index) => {
                         let Value::Product(_, fields) = get(*owner) else {
                             unreachable!("verified product")
+                        };
+                        Some(fields[*index].clone())
+                    }
+                    Operation::ReadField(place, index) => {
+                        let Some(Value::Product(_, fields)) = &stores[base + place.0] else {
+                            unreachable!("verified live product place")
                         };
                         Some(fields[*index].clone())
                     }
@@ -1655,6 +1894,9 @@ impl Program {
                             .clone()
                             .expect("verified place is initialized"),
                     ),
+                    Operation::Take(place) => {
+                        Some(stores[base + place.0].take().expect("verified owned place"))
+                    }
                     Operation::LoadRef(reference) => {
                         let Value::Ref(slot) = get(*reference) else {
                             unreachable!("verified reference")
@@ -1769,6 +2011,7 @@ impl fmt::Display for Program {
                     match &instruction.operation {
                         Operation::Const(x) => write!(f, "const {x}")?,
                         Operation::Bool(x) => write!(f, "bool {x}")?,
+                        Operation::Move(value) => write!(f, "move v{}", value.0)?,
                         Operation::Variant(id, tag, payload) => write!(
                             f,
                             "variant {}.{}",
@@ -1790,6 +2033,9 @@ impl fmt::Display for Program {
                         }
                         Operation::Field(owner, index) => {
                             write!(f, "field v{}, {}", owner.0, index)?
+                        }
+                        Operation::ReadField(place, index) => {
+                            write!(f, "place.field p{}, {}", place.0, index)?
                         }
                         Operation::Neg(a) => write!(f, "neg v{}", a.0)?,
                         Operation::Add(a, b) => write!(f, "add v{}, v{}", a.0, b.0)?,
@@ -1817,6 +2063,7 @@ impl fmt::Display for Program {
                             write!(f, "place.init p{}, v{}", place.0, value.0)?
                         }
                         Operation::Load(place) => write!(f, "place.load p{}", place.0)?,
+                        Operation::Take(place) => write!(f, "place.take p{}", place.0)?,
                         Operation::Store(place, value) => {
                             write!(f, "place.store p{}, v{}", place.0, value.0)?
                         }

@@ -12,13 +12,14 @@ currently runs. The Rust crate parses functions over I64, Bool, nominal sums
 with optional primitive payloads, and nominal products with primitive fields.
 It supports arithmetic, conditions, exhaustive `when`, mutable locals, loops,
 call-site scalar borrows, and `?` on concrete `Result<T, E>` applications
-with primitive or existing nominal payloads, then
+with primitive or existing nominal payloads. Nominal values have affine move
+checking across branches and loops. The compiler then
 lowers them to checked Core IR. Programs run
 through an interpreter or Cranelift JIT. The compiler can also
 build a standalone executable for a zero-argument `main` using Cranelift
 object output and the host C linker.
-`docs/core-ir.md` and `docs/call-borrows.md` describe the current IR and its
-limits.
+`docs/core-ir.md`, `docs/affine-ownership.md`, and `docs/call-borrows.md`
+describe the current IR and its limits.
 
 ```sh
 cargo run -- run examples/hello.phoebe
