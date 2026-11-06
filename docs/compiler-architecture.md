@@ -1,8 +1,8 @@
 # A hackable, efficient compiler — research plan
 
-Status: architectural proposal, 2026-11-06. Phoebe has no compiler yet.
-The cited research informs the design; it is not evidence that Phoebe has
-implemented or proved any compiler property.
+Status: principles accepted by Decision 0001, 2026-11-06. Phoebe has no
+compiler yet. The cited research informs the design; it is not evidence that
+Phoebe has implemented or proved any compiler property.
 
 ## 1. Proof boundary
 
@@ -27,11 +27,10 @@ the need to recognize its preconditions in each program.
 Keep proof search, model checking, and exhaustive IR validation in the
 compiler-development workflow. Ordinary compilation performs parsing,
 type/region/capability and suspension-liveness checking, plus simple local
-analyses, then applies
-already-vetted lowering rules. The cost ledger and full IR dumps are available
-on demand. Rust types and narrow constructors make it harder for an ordinary
-pass to create a cost event without a source reason; this is engineering
-defense, not by itself a mathematical proof.
+analyses, then applies already-vetted lowering rules. The cost ledger and full
+IR dumps are available on demand. Rust types and narrow constructors make it
+harder for an ordinary pass to create a cost event without a source reason;
+this is engineering defense, not by itself a mathematical proof.
 
 To claim a theorem about the *implemented* Rust lowering, the proof must be
 connected to that executable code. One possible route is to verify a small,

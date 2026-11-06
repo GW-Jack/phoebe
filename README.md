@@ -12,6 +12,9 @@ It does **not** contain a compiler or runtime.
 criteria for the future compiler.
 `docs/compiler-architecture.md` records the research-informed proof and
 hackability plan.
+`docs/decisions/0001-compiler-principles.md` records the accepted compiler
+principles. `docs/pony-actors.md` explores an actor model without GC; its
+semantics remain undecided.
 `formal/core.maude` explores one task with nested regions and a reference.
 `formal/two_task.maude` explores parent and child tasks, explicit handle fork,
 transfer at spawn, channel delivery, close, and child failure. Both have
