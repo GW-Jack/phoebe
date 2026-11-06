@@ -70,3 +70,5 @@ types enter this IR, those exits need structural cleanup or explicit transfer.
 General loan lifetimes, region begin/end, cleanup edges,
 and cost events remain next steps. The verifier will need to check those
 without turning ordinary compilation into proof search.
+`capability-ir.md` gives the intended edge accounting and suspension rules
+for the next implementation slice.
