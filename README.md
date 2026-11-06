@@ -8,6 +8,8 @@ It does **not** contain a compiler or runtime.
 ## Current milestone
 
 `docs/spec.md` states the proposed language contract and marks open decisions.
+`docs/non-pessimization.md` defines cost events and example IR acceptance
+criteria for the future compiler.
 `formal/core.maude` explores one task with nested regions and a reference.
 `formal/two_task.maude` explores parent and child tasks, explicit handle fork,
 transfer at spawn, channel delivery, close, and child failure. Both have

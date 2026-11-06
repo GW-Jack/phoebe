@@ -1,0 +1,5 @@
+fn send_value(tx: Sender<List<U8>>, msg: &List<U8>) -> Result<Unit, Closed> {
+  val result = tx.send(msg)
+  tx.close()
+  result
+}

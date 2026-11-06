@@ -1,0 +1,5 @@
+fn build_one() -> List<I64> {
+  val xs = List<I64>()
+  xs.push(7)
+  xs
+}

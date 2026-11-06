@@ -1,0 +1,4 @@
+fn empty_scope() -> I64 {
+  scope { }
+  7
+}

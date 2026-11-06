@@ -1,0 +1,1 @@
+fn checked_index(xs: &List<I64>, i: USize) -> I64 = xs[i]

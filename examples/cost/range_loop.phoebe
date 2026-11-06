@@ -1,0 +1,7 @@
+fn range_loop(xs: &List<I64>) -> I64 {
+  var total = 0
+  for (i in 0..<xs.length) {
+    total += xs[i]
+  }
+  total
+}

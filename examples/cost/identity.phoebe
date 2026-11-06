@@ -1,0 +1,1 @@
+fn identity(x: I64) -> I64 = x

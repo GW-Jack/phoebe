@@ -1,0 +1,1 @@
+fn borrow_length(xs: &List<I64>) -> USize = xs.length

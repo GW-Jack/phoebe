@@ -1,4 +1,4 @@
-# Phoebe language specification — draft 0.2
+# Phoebe language specification — draft 0.3
 
 Status: design proposal, 2026-11-06. Syntax examples are illustrative. Only the
 bounded machines in `formal/` have executable semantics so far.
@@ -61,7 +61,7 @@ lifetime annotations are required.
 Regions nest. A task's retained frames remain live while it is parked. An inner
 region may end only when no live reference can reach its objects. The compiler
 must reject any control-flow path that violates this rule. Exact treatment of
-resizable collection shrinkage is deferred; draft 0.2 offers grow-only lists
+resizable collection shrinkage is deferred; draft 0.3 offers grow-only lists
 whose elements remain stable until the owning list's region ends.
 
 Safe code cannot construct arbitrary pointers, reinterpret object types, or
@@ -70,16 +70,20 @@ safely without exposing invalid storage.
 
 ## 4. Tasks, scopes, and channels
 
-`spawn` starts a lightweight task. Arguments are copied if they are closed
-values, or transferred if they are linear capabilities. A child cannot outlive
-its enclosing `scope`; scope completion waits for all children and reports any
-failure. Blocking channel operations park a task, not an OS thread.
+`spawn` starts a lightweight task. Scalars and small fixed-size closed
+arguments copy by value. A variable-size or large fixed-size closed
+argument requires explicit `copy(x)` at the call site; linear capabilities
+transfer ownership. The threshold for a small fixed-size aggregate remains
+open and will be specified independently of backend accident. A child cannot
+outlive its enclosing `scope`; scope completion waits for all children and
+reports any failure. Blocking channel operations park a task, not an OS thread.
 
 A channel has a bounded FIFO queue. A `Sender<T>` or `Receiver<T>` handle has one
 owner. `fork` creates another handle explicitly while the original remains
 usable; `close` consumes a handle. A closed handle cannot be forked again.
-`send` copies a closed `T` into the queue. A closed type recursively contains no
-task-local references, channel handles, or other task-owned capabilities.
+`send` accepts a closed `T` or a same-task borrow of one and copies its value
+into the queue. A closed type recursively contains no task-local references,
+channel handles, or other task-owned capabilities.
 Each queued message is delivered to exactly one receiver. A receiver reports
 end after the last sender has closed and the queue is drained; an absent forked
 handle does not count as an open sender. Sending when all receivers have closed
@@ -105,7 +109,10 @@ region reachability, capability use, and live values across suspension.
 Lowering to physical task frames, stack segments, channel layouts, and
 Cranelift IR occurs after these checks. Each pass must preserve the observable
 behavior of the checked IR, allowing different schedules but not new memory
-errors or lost/duplicated channel messages.
+errors or unintended loss/duplication of channel messages. The checked IR also
+carries cost events and provenance under the non-pessimization contract in
+`docs/non-pessimization.md`. This contract constrains Phoebe's lowering; it does
+not assert a minimum machine-instruction count from Cranelift.
 
 ## 6. Formal obligations
 
@@ -138,4 +145,6 @@ encoded invariant violations. Their precise bounds are in `formal/README.md`.
 Next: combine regions and task transfer in a typed small-step IR semantics,
 prove preservation for its sequential core, build a checked IR verifier and
 interpreter, then compare interpreter traces with Cranelift-generated binaries.
-No compiler or runtime correctness theorem is claimed at this stage.
+No compiler or runtime correctness theorem is claimed at this stage. The
+non-pessimization examples are proposed compiler acceptance criteria, not
+tests that can run before an IR implementation exists.
