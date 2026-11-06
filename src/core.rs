@@ -32,7 +32,7 @@ pub enum Type {
 pub enum Value {
     I64(i64),
     Bool(bool),
-    Data(DataId, usize),
+    Data(DataId, usize, Option<Box<Value>>),
     Product(DataId, Vec<Value>),
     Ref(usize),
 }
@@ -73,7 +73,7 @@ pub enum CallArg {
 pub enum Operation {
     Const(i64),
     Bool(bool),
-    Variant(DataId, usize),
+    Variant(DataId, usize, Option<ValueId>),
     Product(DataId, Vec<ValueId>),
     Field(ValueId, usize),
     Neg(ValueId),
@@ -106,6 +106,10 @@ pub enum Terminator {
         then_block: BlockId,
         else_block: BlockId,
     },
+    Match {
+        subject: ValueId,
+        arms: Vec<BlockId>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -135,6 +139,7 @@ pub struct Program {
 pub struct DataDef {
     pub name: String,
     pub variants: Vec<String>,
+    pub payloads: Vec<Option<Type>>,
     pub fields: Vec<(String, Type)>,
 }
 
@@ -390,8 +395,28 @@ impl<'a> Lowerer<'a> {
                         .ok_or_else(|| {
                             Diagnostic::new(expr.span, format!("unknown variant {name}.{variant}"))
                         })?;
-                    (Operation::Variant(id, tag), Type::Data(id))
+                    if self.data[id.0].payloads[tag].is_some() {
+                        return Err(Diagnostic::new(expr.span, "variant requires a payload"));
+                    }
+                    (Operation::Variant(id, tag, None), Type::Data(id))
                 }
+            }
+            ExprKind::VariantCall(name, variant, payload) => {
+                let id = self.data_names.get(name).copied().ok_or_else(|| {
+                    Diagnostic::new(expr.span, format!("unknown data type {name}"))
+                })?;
+                let tag = self.data[id.0]
+                    .variants
+                    .iter()
+                    .position(|candidate| candidate == variant)
+                    .ok_or_else(|| {
+                        Diagnostic::new(expr.span, format!("unknown variant {name}.{variant}"))
+                    })?;
+                let expected = self.data[id.0].payloads[tag]
+                    .ok_or_else(|| Diagnostic::new(expr.span, "variant has no payload"))?;
+                let (value, actual) = self.expr(payload, locals)?;
+                self.require(actual, expected, payload.span)?;
+                (Operation::Variant(id, tag, Some(value)), Type::Data(id))
             }
             ExprKind::Name(name) => {
                 let binding = locals
@@ -442,11 +467,12 @@ impl<'a> Lowerer<'a> {
                     ));
                 }
                 if let Type::Data(id) = ta
-                    && !self.data[id.0].fields.is_empty()
+                    && (!self.data[id.0].fields.is_empty()
+                        || self.data[id.0].payloads.iter().any(Option::is_some))
                 {
                     return Err(Diagnostic::new(
                         expr.span,
-                        "product equality is not implemented",
+                        "product equality and payload sum equality are not implemented",
                     ));
                 }
                 (Operation::Eq(a, b), Type::Bool)
@@ -609,8 +635,7 @@ impl<'a> Lowerer<'a> {
                 if data.variants.is_empty() {
                     return Err(Diagnostic::new(subject.span, "when requires a sum type"));
                 }
-                let mut seen = vec![false; data.variants.len()];
-                let mut tags = Vec::with_capacity(arms.len());
+                let mut ordered = vec![None; data.variants.len()];
                 for arm in arms {
                     if arm.type_name != data.name {
                         return Err(Diagnostic::new(
@@ -621,50 +646,55 @@ impl<'a> Lowerer<'a> {
                     let tag = data
                         .variants
                         .iter()
-                        .position(|candidate| candidate == &arm.variant)
+                        .position(|name| name == &arm.variant)
                         .ok_or_else(|| Diagnostic::new(arm.span, "unknown when variant"))?;
-                    if seen[tag] {
+                    if ordered[tag].is_some() {
                         return Err(Diagnostic::new(arm.span, "duplicate when variant"));
                     }
-                    seen[tag] = true;
-                    tags.push(tag);
+                    if arm.binding.is_some() != data.payloads[tag].is_some() {
+                        return Err(Diagnostic::new(
+                            arm.span,
+                            "when payload binding does not match variant",
+                        ));
+                    }
+                    ordered[tag] = Some(arm);
                 }
-                if let Some(missing) = seen.iter().position(|covered| !covered) {
+                if let Some(tag) = ordered.iter().position(Option::is_none) {
                     return Err(Diagnostic::new(
                         expr.span,
                         format!(
                             "non-exhaustive when: missing {}.{}",
-                            data.name, data.variants[missing]
+                            data.name, data.variants[tag]
                         ),
                     ));
                 }
-                let mut arm_results = Vec::with_capacity(arms.len());
-                for (index, (arm, tag)) in arms.iter().zip(tags).enumerate() {
-                    let last = index + 1 == arms.len();
-                    let arm_block = if last { self.current } else { self.block() };
-                    let next_test = if last {
-                        None
-                    } else {
-                        let variant =
-                            self.emit(Operation::Variant(data_id, tag), subject_type, arm.span);
-                        let condition =
-                            self.emit(Operation::Eq(subject_value, variant), Type::Bool, arm.span);
-                        let next = self.block();
-                        self.terminate(Terminator::Branch {
-                            condition,
-                            then_block: arm_block,
-                            else_block: next,
-                        });
-                        Some(next)
-                    };
-                    self.current = arm_block;
+                let payload_types = data.payloads.clone();
+                let targets = (0..ordered.len()).map(|_| self.block()).collect::<Vec<_>>();
+                let payload_values = targets
+                    .iter()
+                    .zip(&payload_types)
+                    .map(|(target, payload)| payload.map(|ty| self.block_param(*target, ty)))
+                    .collect::<Vec<_>>();
+                self.terminate(Terminator::Match {
+                    subject: subject_value,
+                    arms: targets.clone(),
+                });
+                let mut arm_results = Vec::with_capacity(ordered.len());
+                for (tag, arm) in ordered.into_iter().enumerate() {
+                    let arm = arm.expect("coverage checked");
+                    self.current = targets[tag];
+                    let mut arm_locals = locals.clone();
+                    if let (Some((name, span)), Some(value)) = (&arm.binding, payload_values[tag])
+                        && arm_locals
+                            .insert(name.clone(), Binding::Val(value))
+                            .is_some()
+                    {
+                        return Err(Diagnostic::new(*span, "duplicate pattern binding"));
+                    }
                     let (value, ty) = self
-                        .body(&arm.body, &mut locals.clone())?
+                        .body(&arm.body, &mut arm_locals)?
                         .expect("parser requires when-arm tail");
                     arm_results.push((self.current, value, ty));
-                    if let Some(next) = next_test {
-                        self.current = next;
-                    }
                 }
                 let result_type = arm_results[0].2;
                 if arm_results.iter().any(|(_, _, ty)| *ty != result_type) {
@@ -723,11 +753,24 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
             return Err(Diagnostic::new(declaration.span, "duplicate data type"));
         }
         let mut variants = Vec::with_capacity(declaration.variants.len());
-        for (variant, span) in &declaration.variants {
-            if variants.contains(variant) {
-                return Err(Diagnostic::new(*span, "duplicate variant"));
+        let mut payloads = Vec::with_capacity(declaration.variants.len());
+        for variant in &declaration.variants {
+            if variants.contains(&variant.name) {
+                return Err(Diagnostic::new(variant.span, "duplicate variant"));
             }
-            variants.push(variant.clone());
+            let payload = match variant.payload.as_ref().map(|field| &field.ty) {
+                None => None,
+                Some(TypeName::I64) => Some(Type::I64),
+                Some(TypeName::Bool) => Some(Type::Bool),
+                Some(TypeName::Named(_)) => {
+                    return Err(Diagnostic::new(
+                        variant.span,
+                        "nested variant payloads are not implemented",
+                    ));
+                }
+            };
+            variants.push(variant.name.clone());
+            payloads.push(payload);
         }
         let mut fields = Vec::with_capacity(declaration.fields.len());
         for field in &declaration.fields {
@@ -750,6 +793,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         data.push(DataDef {
             name: declaration.name.clone(),
             variants,
+            payloads,
             fields,
         });
     }
@@ -853,13 +897,16 @@ fn op_type(
     match operation {
         Operation::Const(_) => Ok(Some(Type::I64)),
         Operation::Bool(_) => Ok(Some(Type::Bool)),
-        Operation::Variant(data_id, tag) => {
+        Operation::Variant(data_id, tag, payload) => {
             let definition = program
                 .data
                 .get(data_id.0)
                 .ok_or_else(|| "invalid data ID".to_owned())?;
             if !definition.fields.is_empty() || *tag >= definition.variants.len() {
                 return Err("invalid variant tag".into());
+            }
+            if definition.payloads[*tag] != payload.map(ty) {
+                return Err("variant payload type mismatch".into());
             }
             Ok(Some(Type::Data(*data_id)))
         }
@@ -903,9 +950,10 @@ fn op_type(
                 return Err("equality type mismatch".into());
             }
             if let Type::Data(id) = ty(*a)
-                && !program.data[id.0].fields.is_empty()
+                && (!program.data[id.0].fields.is_empty()
+                    || program.data[id.0].payloads.iter().any(Option::is_some))
             {
-                return Err("product equality is not implemented".into());
+                return Err("product equality and payload sum equality are not implemented".into());
             }
             Ok(Some(Type::Bool))
         }
@@ -990,7 +1038,8 @@ fn op_type(
 
 fn operands(operation: &Operation) -> Vec<ValueId> {
     match operation {
-        Operation::Const(_) | Operation::Bool(_) | Operation::Variant(_, _) => vec![],
+        Operation::Const(_) | Operation::Bool(_) => vec![],
+        Operation::Variant(_, _, payload) => payload.iter().copied().collect(),
         Operation::Product(_, fields) => fields.clone(),
         Operation::Field(value, _) => vec![*value],
         Operation::Neg(a)
@@ -1022,6 +1071,7 @@ pub fn verify(program: &Program) -> Result<(), String> {
     for definition in &program.data {
         if !data_names.insert(&definition.name)
             || definition.variants.is_empty() == definition.fields.is_empty()
+            || definition.payloads.len() != definition.variants.len()
         {
             return Err("invalid data declaration".into());
         }
@@ -1032,6 +1082,14 @@ pub fn verify(program: &Program) -> Result<(), String> {
             .any(|variant| !variants.insert(variant))
         {
             return Err("duplicate data variant".into());
+        }
+        if definition
+            .payloads
+            .iter()
+            .flatten()
+            .any(|ty| !matches!(ty, Type::I64 | Type::Bool))
+        {
+            return Err("invalid variant payload type".into());
         }
         let mut fields = std::collections::HashSet::new();
         for (name, ty) in &definition.fields {
@@ -1148,6 +1206,7 @@ pub fn verify(program: &Program) -> Result<(), String> {
                     else_block,
                     ..
                 } => vec![*then_block, *else_block],
+                Terminator::Match { arms, .. } => arms.clone(),
             };
             for target in targets {
                 if target.0 >= function.blocks.len() {
@@ -1293,6 +1352,32 @@ pub fn verify(program: &Program) -> Result<(), String> {
                         ));
                     }
                 }
+                Terminator::Match { subject, arms } => {
+                    check_use(*subject, block_id, end)?;
+                    let Type::Data(id) = function.value_types[subject.0] else {
+                        return Err(format!("{}: match requires a sum value", function.name));
+                    };
+                    let data = &program.data[id.0];
+                    if data.variants.is_empty() || arms.len() != data.variants.len() {
+                        return Err(format!("{}: match arm count mismatch", function.name));
+                    }
+                    let mut distinct = std::collections::HashSet::new();
+                    for (tag, target) in arms.iter().enumerate() {
+                        if !distinct.insert(target.0) {
+                            return Err(format!("{}: duplicate match target", function.name));
+                        }
+                        let expected = data.payloads[tag];
+                        let params = &function.blocks[target.0].params;
+                        if params.len() != usize::from(expected.is_some())
+                            || expected.is_some_and(|ty| function.value_types[params[0].0] != ty)
+                        {
+                            return Err(format!(
+                                "{}: match payload parameter mismatch",
+                                function.name
+                            ));
+                        }
+                    }
+                }
             }
         }
     }
@@ -1400,7 +1485,11 @@ impl Program {
                 let value = match &instruction.operation {
                     Operation::Const(x) => Some(Value::I64(*x)),
                     Operation::Bool(x) => Some(Value::Bool(*x)),
-                    Operation::Variant(data_id, tag) => Some(Value::Data(*data_id, *tag)),
+                    Operation::Variant(data_id, tag, payload) => Some(Value::Data(
+                        *data_id,
+                        *tag,
+                        payload.map(|value| Box::new(get(value))),
+                    )),
                     Operation::Product(data_id, fields) => Some(Value::Product(
                         *data_id,
                         fields.iter().map(|field| get(*field)).collect(),
@@ -1485,6 +1574,17 @@ impl Program {
                         else_block.0
                     };
                 }
+                Terminator::Match { subject, arms } => {
+                    let Value::Data(_, tag, payload) = get(*subject) else {
+                        unreachable!("verified sum value")
+                    };
+                    let target = arms[tag];
+                    if let Some(payload) = payload {
+                        let param = function.blocks[target.0].params[0];
+                        values[param.0] = Some(*payload);
+                    }
+                    current = target.0;
+                }
             }
         }
     }
@@ -1493,7 +1593,7 @@ impl Program {
 fn as_i64(value: Value) -> i64 {
     match value {
         Value::I64(x) => x,
-        Value::Bool(_) | Value::Data(_, _) | Value::Product(_, _) | Value::Ref(_) => {
+        Value::Bool(_) | Value::Data(_, _, _) | Value::Product(_, _) | Value::Ref(_) => {
             unreachable!("verified I64 operand")
         }
     }
@@ -1502,7 +1602,7 @@ fn as_i64(value: Value) -> i64 {
 fn as_bool(value: Value) -> bool {
     match value {
         Value::Bool(x) => x,
-        Value::I64(_) | Value::Data(_, _) | Value::Product(_, _) | Value::Ref(_) => {
+        Value::I64(_) | Value::Data(_, _, _) | Value::Product(_, _) | Value::Ref(_) => {
             unreachable!("verified Bool operand")
         }
     }
@@ -1541,11 +1641,15 @@ impl fmt::Display for Program {
                     match &instruction.operation {
                         Operation::Const(x) => write!(f, "const {x}")?,
                         Operation::Bool(x) => write!(f, "bool {x}")?,
-                        Operation::Variant(id, tag) => write!(
+                        Operation::Variant(id, tag, payload) => write!(
                             f,
                             "variant {}.{}",
                             self.data[id.0].name, self.data[id.0].variants[*tag]
-                        )?,
+                        )
+                        .and_then(|()| match payload {
+                            Some(value) => write!(f, "(v{})", value.0),
+                            None => Ok(()),
+                        })?,
                         Operation::Product(id, fields) => {
                             write!(f, "product {}(", self.data[id.0].name)?;
                             for (index, field) in fields.iter().enumerate() {
@@ -1617,6 +1721,13 @@ impl fmt::Display for Program {
                             "    branch v{}, block{}, block{}",
                             condition.0, then_block.0, else_block.0
                         )?;
+                    }
+                    Terminator::Match { subject, arms } => {
+                        write!(f, "    match v{}", subject.0)?;
+                        for (tag, target) in arms.iter().enumerate() {
+                            write!(f, ", {}->block{}", tag, target.0)?;
+                        }
+                        writeln!(f)?;
                     }
                 }
             }

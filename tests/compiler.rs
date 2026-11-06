@@ -343,14 +343,15 @@ fn nominal_variants_and_exhaustive_when_agree_across_backends() {
         .flat_map(|block| &block.instructions)
         .filter(|instruction| matches!(instruction.operation, core::Operation::Eq(_, _)))
         .count();
-    assert_eq!(
-        comparisons, 2,
-        "three variants need only two tag comparisons"
-    );
+    assert_eq!(comparisons, 0, "tag dispatch belongs in the backend");
+    assert!(matches!(
+        &program.functions[0].blocks[0].terminator,
+        core::Terminator::Match { arms, .. } if arms.len() == 3
+    ));
     assert_eq!(
         program.functions[0].blocks.len(),
-        6,
-        "the final arm needs no extra jump block"
+        5,
+        "one dispatch, three arms, and one join"
     );
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
@@ -398,7 +399,7 @@ fn verifier_rejects_invalid_data_tag() {
         "data Light { Red, Green } fn main() -> I64 = when (Light.Red) { Light.Red -> { 1 }, Light.Green -> { 2 } }",
     );
     let instruction = &mut program.functions[0].blocks[0].instructions[0];
-    instruction.operation = core::Operation::Variant(core::DataId(0), 2);
+    instruction.operation = core::Operation::Variant(core::DataId(0), 2, None);
     assert!(
         core::verify(&program)
             .unwrap_err()
@@ -512,5 +513,79 @@ fn verifier_checks_product_shape_before_native_lowering() {
         core::verify(&program)
             .unwrap_err()
             .contains("invalid field access")
+    );
+}
+
+#[test]
+fn payload_sum_uses_variant_aware_match_across_backends() {
+    let program = compile(include_str!("../examples/payload.phoebe"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-payload-aot-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let result = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8(result.stdout).unwrap(), "42\n");
+    let matcher = &program.functions[0].blocks[0].terminator;
+    assert!(matches!(matcher, core::Terminator::Match { arms, .. } if arms.len() == 2));
+}
+
+#[test]
+fn bool_payload_and_different_variant_payload_types_agree() {
+    let program = compile(
+        "data Outcome { No(error: Bool), Yes(value: I64) } fn value(outcome: Outcome) -> I64 = when (outcome) { Outcome.Yes(number) -> { number }, Outcome.No(error) -> { if (error) { -1 } else { 0 } } } fn main() -> I64 = value(Outcome.Yes(42)) + value(Outcome.No(false)) + value(Outcome.No(true)) + 1",
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
+fn payload_forms_reject_type_and_binding_mismatches() {
+    let cases = [
+        (
+            "data Maybe { None, Some(value: I64) } fn main() -> I64 = when (Maybe.Some(1)) { Maybe.None -> { 0 }, Maybe.Some -> { 1 } }",
+            "payload binding",
+        ),
+        (
+            "data Maybe { None, Some(value: I64) } fn main() -> I64 = when (Maybe.None) { Maybe.None(x) -> { 0 }, Maybe.Some(y) -> { y } }",
+            "payload binding",
+        ),
+        (
+            "data Maybe { None, Some(value: I64) } fn main() -> I64 = when (Maybe.Some(true)) { Maybe.None -> { 0 }, Maybe.Some(x) -> { x } }",
+            "expected I64",
+        ),
+        (
+            "data Maybe { None, Some(value: I64) } fn main() -> I64 = when (Maybe.Some(1)) { Maybe.None -> { 0 }, Maybe.Some(x) -> { false } }",
+            "same type",
+        ),
+        (
+            "data Maybe { None, Some(value: I64) } fn main() -> I64 = when (Maybe.None(1)) { Maybe.None -> { 0 }, Maybe.Some(x) -> { x } }",
+            "no payload",
+        ),
+    ];
+    for (source, expected) in cases {
+        let error = syntax::parse(source)
+            .and_then(|ast| core::lower(&ast))
+            .unwrap_err();
+        assert!(error.message.contains(expected), "{error:?}");
+    }
+}
+
+#[test]
+fn verifier_rejects_forged_match_payload_parameter() {
+    let mut program = compile(include_str!("../examples/payload.phoebe"));
+    let target =
+        if let core::Terminator::Match { arms, .. } = &program.functions[0].blocks[0].terminator {
+            arms[1]
+        } else {
+            panic!("expected match")
+        };
+    let param = program.functions[0].blocks[target.0].params[0];
+    program.functions[0].value_types[param.0] = core::Type::Bool;
+    assert!(
+        core::verify(&program)
+            .unwrap_err()
+            .contains("match payload parameter mismatch")
     );
 }

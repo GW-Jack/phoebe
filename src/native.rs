@@ -148,9 +148,7 @@ fn abi_types(
         Type::Bool => vec![types::I8],
         Type::Data(id) => {
             let definition = &program.data[id.0];
-            if definition.fields.is_empty() {
-                vec![types::I64]
-            } else {
+            if !definition.fields.is_empty() {
                 definition
                     .fields
                     .iter()
@@ -160,6 +158,10 @@ fn abi_types(
                         _ => unreachable!("verified primitive product field"),
                     })
                     .collect()
+            } else if definition.payloads.iter().any(Option::is_some) {
+                vec![types::I64, types::I64]
+            } else {
+                vec![types::I64]
             }
         }
         Type::RefI64 | Type::RefMutI64 => vec![pointer_type],
@@ -276,6 +278,7 @@ fn compile_functions<M: Module>(
                         else_block,
                         ..
                     } => vec![then_block.0, else_block.0],
+                    Terminator::Match { arms, .. } => arms.iter().map(|target| target.0).collect(),
                 };
                 for target in successors {
                     if !seen[target] {
@@ -299,8 +302,20 @@ fn compile_functions<M: Module>(
                         Operation::Bool(value) => {
                             Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
                         }
-                        Operation::Variant(_, tag) => {
-                            Some(vec![builder.ins().iconst(types::I64, *tag as i64)])
+                        Operation::Variant(id, tag, payload) => {
+                            let mut components =
+                                vec![builder.ins().iconst(types::I64, *tag as i64)];
+                            if program.data[id.0].payloads.iter().any(Option::is_some) {
+                                let word = match payload {
+                                    Some(value) if function.value_types[value.0] == Type::Bool => {
+                                        builder.ins().uextend(types::I64, one(*value))
+                                    }
+                                    Some(value) => one(*value),
+                                    None => builder.ins().iconst(types::I64, 0),
+                                };
+                                components.push(word);
+                            }
+                            Some(components)
                         }
                         Operation::Product(_, fields) => {
                             Some(fields.iter().flat_map(|field| get(*field)).collect())
@@ -397,6 +412,35 @@ fn compile_functions<M: Module>(
                             blocks[else_block.0],
                             &[],
                         );
+                    }
+                    Terminator::Match { subject, arms } => {
+                        let Type::Data(id) = function.value_types[subject.0] else {
+                            unreachable!("verified match subject")
+                        };
+                        let data = &program.data[id.0];
+                        let components = get(*subject);
+                        for (tag, target) in arms.iter().enumerate() {
+                            let args = match data.payloads[tag] {
+                                None => vec![],
+                                Some(Type::I64) => vec![components[1].into()],
+                                Some(Type::Bool) => {
+                                    vec![builder.ins().ireduce(types::I8, components[1]).into()]
+                                }
+                                _ => unreachable!("verified primitive payload"),
+                            };
+                            if tag + 1 == arms.len() {
+                                builder.ins().jump(blocks[target.0], &args);
+                            } else {
+                                let next = builder.create_block();
+                                let expected = builder.ins().iconst(types::I64, tag as i64);
+                                let equal =
+                                    builder.ins().icmp(IntCC::Equal, components[0], expected);
+                                builder
+                                    .ins()
+                                    .brif(equal, blocks[target.0], &args, next, &[]);
+                                builder.switch_to_block(next);
+                            }
+                        }
                     }
                 }
             }

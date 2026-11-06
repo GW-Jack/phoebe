@@ -184,8 +184,15 @@ pub struct Program {
 pub struct Data {
     pub name: String,
     pub span: Span,
-    pub variants: Vec<(String, Span)>,
+    pub variants: Vec<Variant>,
     pub fields: Vec<Field>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Variant {
+    pub name: String,
+    pub span: Span,
+    pub payload: Option<Field>,
 }
 
 #[derive(Clone, Debug)]
@@ -270,6 +277,7 @@ pub enum ExprKind {
     Lt(Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Body>, Box<Body>),
     Member(String, String),
+    VariantCall(String, String, Box<Expr>),
     When(Box<Expr>, Vec<WhenArm>),
     Call(String, Vec<CallArgument>),
 }
@@ -279,6 +287,7 @@ pub struct WhenArm {
     pub type_name: String,
     pub variant: String,
     pub span: Span,
+    pub binding: Option<(String, Span)>,
     pub body: Body,
 }
 
@@ -324,7 +333,20 @@ impl Parser {
                     span: member_span,
                 });
             } else {
-                variants.push((member, member_span));
+                let payload = if self.eat(&TokenKind::LParen).is_some() {
+                    let (name, span) = self.name()?;
+                    self.expect(&TokenKind::Colon, ":")?;
+                    let ty = self.type_name(false)?;
+                    self.expect(&TokenKind::RParen, ")")?;
+                    Some(Field { name, ty, span })
+                } else {
+                    None
+                };
+                variants.push(Variant {
+                    name: member,
+                    span: member_span,
+                    payload,
+                });
             }
             if self.eat(&TokenKind::Comma).is_none() {
                 self.expect(&TokenKind::RBrace, "}")?;
@@ -557,12 +579,20 @@ impl Parser {
                     let (type_name, start) = self.name()?;
                     self.expect(&TokenKind::Dot, ".")?;
                     let (variant, end) = self.name()?;
+                    let binding = if self.eat(&TokenKind::LParen).is_some() {
+                        let name = self.name()?;
+                        self.expect(&TokenKind::RParen, ")")?;
+                        Some(name)
+                    } else {
+                        None
+                    };
                     self.expect(&TokenKind::Arrow, "->")?;
                     let body = self.block(true)?;
                     arms.push(WhenArm {
                         type_name,
                         variant,
                         span: start.join(end),
+                        binding,
                         body,
                     });
                     if self.eat(&TokenKind::Comma).is_none() {
@@ -587,9 +617,18 @@ impl Parser {
                 self.pos += 1;
                 if self.eat(&TokenKind::Dot).is_some() {
                     let (variant, end) = self.name()?;
-                    Expr {
-                        kind: ExprKind::Member(name, variant),
-                        span: span.join(end),
+                    if self.eat(&TokenKind::LParen).is_some() {
+                        let payload = self.expr(0)?;
+                        let close = self.expect(&TokenKind::RParen, ")")?;
+                        Expr {
+                            kind: ExprKind::VariantCall(name, variant, Box::new(payload)),
+                            span: span.join(close.span),
+                        }
+                    } else {
+                        Expr {
+                            kind: ExprKind::Member(name, variant),
+                            span: span.join(end),
+                        }
                     }
                 } else if self.eat(&TokenKind::LParen).is_some() {
                     let mut args = Vec::new();

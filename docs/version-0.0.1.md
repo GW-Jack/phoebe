@@ -34,14 +34,13 @@ only by prose at release.
 
 ## Current executable slice
 
-The Rust crate currently parses I64, Bool, nullary nominal sums, and nominal
-products with I64/Bool fields in function
-signatures, up to four owned parameters (I64 borrows only), `val` and `var`
-bindings, assignment, `while` statements, integer
-and boolean literals, unary negation, `+`, `-`, `*`, `==`, `<`, `if` expressions
-with block arms, exhaustive `when` expressions over qualified nullary data
-variants, acyclic direct function calls, call-site `&I64` and
-`&mut I64` arguments, and a matching tail expression. Recursion is
+The Rust crate currently parses functions over I64, Bool, nominal sums with
+at most one primitive payload per variant, and nominal products with I64/Bool
+fields. It supports up to four owned parameters (I64 borrows only), `val` and
+`var` bindings, assignment, `while`, integer and boolean literals, unary
+negation, `+`, `-`, `*`, `==`, `<`, `if` expressions with block arms, exhaustive
+`when` expressions, acyclic direct calls, call-site `&I64` and `&mut I64`
+arguments, and a matching tail expression. Recursion is
 rejected until task stacks have safe growth limits. Arithmetic wraps at 64
 bits in both interpreter and native execution. `phoebe check`, `phoebe ir`,
 `phoebe run`, and `phoebe build <file> -o <output>` work on that subset.
@@ -49,12 +48,11 @@ Native execution uses Cranelift JIT or Cranelift object emission linked with
 the host `cc`; `--interp` selects the reference interpreter. The built
 executable runs without the compiler process and prints the I64 returned by
 zero-argument `main`. External JIT and interpreter entries also require I64
-signatures; calls within Phoebe can pass and return Bool or nullary data.
+signatures; calls within Phoebe can pass and return Bool or nominal data.
 Primitive-field products also cross calls and returns by flattened scalar
 components, without native heap allocation. `docs/abi-shapes.md` records the
-current internal calling convention and its missing cost threshold.
-Core IR has typed values,
-conditional branches, block parameters, and task-local scalar places for
+current internal calling convention and its missing cost threshold. Core IR
+has typed values, conditional branches, variant matches, block parameters, and task-local scalar places for
 `var`. Its verifier checks definition uniqueness, dominance, place
 initialization, block-argument types, call targets and modes, and return
 types. Source spans survive parsing and lowering. `docs/core-ir.md` and
@@ -76,6 +74,7 @@ cargo run -- run examples/loop.phoebe
 cargo run -- run examples/borrow.phoebe
 cargo run -- run examples/variant.phoebe
 cargo run -- run examples/product.phoebe
+cargo run -- run examples/payload.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
 cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow

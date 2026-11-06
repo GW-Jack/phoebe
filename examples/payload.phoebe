@@ -1,0 +1,8 @@
+data Maybe { None, Some(value: I64) }
+
+fn unwrap(maybe: Maybe) -> I64 = when (maybe) {
+  Maybe.None -> { 0 },
+  Maybe.Some(value) -> { value },
+}
+
+fn main() -> I64 = unwrap(Maybe.Some(42)) + unwrap(Maybe.None)
