@@ -11,7 +11,8 @@ It does not yet have the language runtime or all features required for 0.0.1.
 currently runs. The Rust crate parses functions over I64, Bool, nominal sums
 with optional primitive payloads, and nominal products with primitive fields.
 It supports arithmetic, conditions, exhaustive `when`, mutable locals, loops,
-and call-site scalar borrows, then lowers them to checked Core IR. Programs run
+call-site scalar borrows, and `?` on a concrete scalar-payload `Result`, then
+lowers them to checked Core IR. Programs run
 through an interpreter or Cranelift JIT. The compiler can also
 build a standalone executable for a zero-argument `main` using Cranelift
 object output and the host C linker.
@@ -26,6 +27,7 @@ cargo run -- run examples/borrow.phoebe
 cargo run -- run examples/variant.phoebe
 cargo run -- run examples/product.phoebe
 cargo run -- run examples/payload.phoebe
+cargo run -- run examples/try.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
 cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow

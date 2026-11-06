@@ -31,6 +31,7 @@ enum TokenKind {
     Minus,
     Star,
     Amp,
+    Question,
     Eof,
 }
 
@@ -143,6 +144,10 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             b'&' => {
                 i += 1;
                 TokenKind::Amp
+            }
+            b'?' => {
+                i += 1;
+                TokenKind::Question
             }
             b'-' if bytes.get(i + 1) == Some(&b'>') => {
                 i += 2;
@@ -278,6 +283,7 @@ pub enum ExprKind {
     If(Box<Expr>, Box<Body>, Box<Body>),
     Member(String, String),
     VariantCall(String, String, Box<Expr>),
+    Try(Box<Expr>),
     When(Box<Expr>, Vec<WhenArm>),
     Call(String, Vec<CallArgument>),
 }
@@ -688,6 +694,15 @@ impl Parser {
         };
 
         loop {
+            if self.current().kind == TokenKind::Question && min_bp <= 9 {
+                let end = self.current().span;
+                self.pos += 1;
+                lhs = Expr {
+                    span: lhs.span.join(end),
+                    kind: ExprKind::Try(Box::new(lhs)),
+                };
+                continue;
+            }
             let (left_bp, right_bp) = match self.current().kind {
                 TokenKind::EqualEqual | TokenKind::Less => (1, 2),
                 TokenKind::Plus | TokenKind::Minus => (3, 4),

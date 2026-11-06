@@ -22,6 +22,10 @@ selects the matching arm directly. Primitive-field products have `product` and
 `field` operations. Their fields remain separate SSA components through native
 calls, returns, and joins; `docs/abi-shapes.md` specifies the current shape.
 
+The first `?` lowering uses this same `match` terminator. Its `Err` target
+returns the original sum value; its `Ok` target binds the payload. See
+`docs/result-try.md` for the executable rule and missing cleanup obligation.
+
 `val` binds an SSA value. `var` creates a task-local scalar place. The current
 place operations are `place.init`, `place.load`, and `place.store`. An
 initializer dominates every use, including on a loop backedge. A place can

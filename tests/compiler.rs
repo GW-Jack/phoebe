@@ -589,3 +589,67 @@ fn verifier_rejects_forged_match_payload_parameter() {
             .contains("match payload parameter mismatch")
     );
 }
+
+#[test]
+fn result_question_mark_propagates_original_error_across_backends() {
+    let program = compile(include_str!("../examples/try.phoebe"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-try-aot-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let result = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8(result.stdout).unwrap(), "42\n");
+
+    let (_, plus_one) = program.function("plus_one").unwrap();
+    let (subject, arms) = plus_one
+        .blocks
+        .iter()
+        .find_map(|block| {
+            if let core::Terminator::Match { subject, arms } = &block.terminator {
+                Some((*subject, arms))
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    assert!(
+        matches!(plus_one.blocks[arms[1].0].terminator, core::Terminator::Return(value) if value == subject)
+    );
+    assert!(plus_one.blocks[arms[1].0].params.is_empty());
+}
+
+#[test]
+fn question_mark_checks_result_shape_and_return_type() {
+    let cases = [
+        ("fn main() -> I64 = 1?", "? requires Result"),
+        (
+            "data Maybe { Ok(value: I64), Err(error: I64) } fn use(x: Maybe) -> Maybe { val y = x?; Maybe.Ok(y) } fn main() -> I64 = 1",
+            "? requires Result",
+        ),
+        (
+            "data Result { Ok(value: I64), Err(error: I64) } fn use(x: Result) -> I64 = x? fn main() -> I64 = 1",
+            "same Result type",
+        ),
+        (
+            "data Result { Ok(value: I64), Err } fn use(x: Result) -> Result { val y = x?; Result.Ok(y) } fn main() -> I64 = 1",
+            "Err requires a payload",
+        ),
+    ];
+    for (source, expected) in cases {
+        let error = syntax::parse(source)
+            .and_then(|ast| core::lower(&ast))
+            .unwrap_err();
+        assert!(error.message.contains(expected), "{error:?}");
+    }
+}
+
+#[test]
+fn nested_question_marks_handle_reversed_variants_and_bool_errors() {
+    let program = compile(
+        "data Result { Err(error: Bool), Ok(value: I64) } fn step(x: I64) -> Result = if (x < 0) { Result.Err(true) } else { Result.Ok(x) } fn twice(x: I64) -> Result { val first = step(x)?; val second = step(first)? + 1; Result.Ok(second * 2) } fn inspect(result: Result) -> I64 = when (result) { Result.Ok(value) -> { value }, Result.Err(error) -> { if (error) { -1 } else { 0 } } } fn main() -> I64 = inspect(twice(20)) + inspect(twice(-1)) + 1",
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}

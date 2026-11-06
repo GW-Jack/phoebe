@@ -418,6 +418,54 @@ impl<'a> Lowerer<'a> {
                 self.require(actual, expected, payload.span)?;
                 (Operation::Variant(id, tag, Some(value)), Type::Data(id))
             }
+            ExprKind::Try(inner) => {
+                let (value, ty) = self.expr(inner, locals)?;
+                let Type::Data(id) = ty else {
+                    return Err(Diagnostic::new(inner.span, "? requires Result"));
+                };
+                let data = &self.data[id.0];
+                if data.name != "Result" || data.variants.len() != 2 {
+                    return Err(Diagnostic::new(inner.span, "? requires Result"));
+                }
+                let ok_tag = data
+                    .variants
+                    .iter()
+                    .position(|name| name == "Ok")
+                    .ok_or_else(|| {
+                        Diagnostic::new(inner.span, "Result requires Ok and Err variants")
+                    })?;
+                let err_tag = data
+                    .variants
+                    .iter()
+                    .position(|name| name == "Err")
+                    .ok_or_else(|| {
+                        Diagnostic::new(inner.span, "Result requires Ok and Err variants")
+                    })?;
+                let ok_ty = data.payloads[ok_tag]
+                    .ok_or_else(|| Diagnostic::new(inner.span, "Result.Ok requires a payload"))?;
+                if data.payloads[err_tag].is_none() {
+                    return Err(Diagnostic::new(inner.span, "Result.Err requires a payload"));
+                }
+                if self.return_type != ty {
+                    return Err(Diagnostic::new(
+                        expr.span,
+                        "? requires the function to return the same Result type",
+                    ));
+                }
+                let success = self.block();
+                let payload = self.block_param(success, ok_ty);
+                let failure = self.block();
+                let mut arms = vec![failure; 2];
+                arms[ok_tag] = success;
+                self.terminate(Terminator::Match {
+                    subject: value,
+                    arms,
+                });
+                self.current = failure;
+                self.terminate(Terminator::Return(value));
+                self.current = success;
+                return Ok((payload, ok_ty));
+            }
             ExprKind::Name(name) => {
                 let binding = locals
                     .get(name)
@@ -1368,8 +1416,10 @@ pub fn verify(program: &Program) -> Result<(), String> {
                         }
                         let expected = data.payloads[tag];
                         let params = &function.blocks[target.0].params;
-                        if params.len() != usize::from(expected.is_some())
-                            || expected.is_some_and(|ty| function.value_types[params[0].0] != ty)
+                        if params.len() > usize::from(expected.is_some())
+                            || (params.len() == 1
+                                && expected
+                                    .is_some_and(|ty| function.value_types[params[0].0] != ty))
                         {
                             return Err(format!(
                                 "{}: match payload parameter mismatch",
@@ -1579,7 +1629,9 @@ impl Program {
                         unreachable!("verified sum value")
                     };
                     let target = arms[tag];
-                    if let Some(payload) = payload {
+                    if let Some(payload) = payload
+                        && !function.blocks[target.0].params.is_empty()
+                    {
                         let param = function.blocks[target.0].params[0];
                         values[param.0] = Some(*payload);
                     }

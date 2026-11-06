@@ -1,0 +1,16 @@
+data Result { Ok(value: I64), Err(error: I64) }
+
+fn read(x: I64) -> Result =
+  if (x < 0) { Result.Err(x) } else { Result.Ok(x) }
+
+fn plus_one(x: I64) -> Result {
+  val value = read(x)?;
+  Result.Ok(value + 1)
+}
+
+fn consume(result: Result) -> I64 = when (result) {
+  Result.Ok(value) -> { value },
+  Result.Err(error) -> { error },
+}
+
+fn main() -> I64 = consume(plus_one(41)) + consume(plus_one(-1)) + 1

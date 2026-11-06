@@ -40,7 +40,8 @@ fields. It supports up to four owned parameters (I64 borrows only), `val` and
 `var` bindings, assignment, `while`, integer and boolean literals, unary
 negation, `+`, `-`, `*`, `==`, `<`, `if` expressions with block arms, exhaustive
 `when` expressions, acyclic direct calls, call-site `&I64` and `&mut I64`
-arguments, and a matching tail expression. Recursion is
+arguments, `?` on a concrete `data Result` with scalar `Ok`/`Err` payloads,
+and a matching tail expression. Recursion is
 rejected until task stacks have safe growth limits. Arithmetic wraps at 64
 bits in both interpreter and native execution. `phoebe check`, `phoebe ir`,
 `phoebe run`, and `phoebe build <file> -o <output>` work on that subset.
@@ -58,7 +59,8 @@ initialization, block-argument types, call targets and modes, and return
 types. Source spans survive parsing and lowering. `docs/core-ir.md` and
 `docs/call-borrows.md` explain the current operations and their evidence
 boundary. Borrows are confined to synchronous calls; general reference
-lifetimes and regions are not implemented.
+lifetimes and regions are not implemented. `docs/result-try.md` states the
+current `?` rule and its missing generic and cleanup work.
 
 This slice establishes the parser → checked IR → interpreter/Cranelift path.
 It does not yet implement the ownership, concurrency, module, or release
@@ -75,6 +77,7 @@ cargo run -- run examples/borrow.phoebe
 cargo run -- run examples/variant.phoebe
 cargo run -- run examples/product.phoebe
 cargo run -- run examples/payload.phoebe
+cargo run -- run examples/try.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
 cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow

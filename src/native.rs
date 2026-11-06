@@ -420,7 +420,9 @@ fn compile_functions<M: Module>(
                         let data = &program.data[id.0];
                         let components = get(*subject);
                         for (tag, target) in arms.iter().enumerate() {
-                            let args = match data.payloads[tag] {
+                            let args = match data.payloads[tag]
+                                .filter(|_| !function.blocks[target.0].params.is_empty())
+                            {
                                 None => vec![],
                                 Some(Type::I64) => vec![components[1].into()],
                                 Some(Type::Bool) => {
