@@ -1,0 +1,214 @@
+# Language features — draft 0.5 design sketch
+
+Status: baseline accepted by Decision 0003, 2026-11-06; the listed details
+remain design questions. Syntax is illustrative; there is no parser, type
+checker, or runtime yet. Decision 0002 governs the concurrency core.
+
+## Types and values
+
+Types are nominal. `data` defines product and sum types; `when` must cover
+every variant. Generic type and function parameters are explicit in public
+signatures, while local expression types may be inferred. Tuples and function
+types are built in. There is no class inheritance, implicit numeric
+conversion, or general subtyping. `Option<T>` represents absence;
+`Result<T, E>` represents expected failure. Neither is implicitly converted
+to the other.
+
+`trait` describes a small set of named operations. Implementations obey a
+coherence rule: one implementation for a given trait and nominal type in the
+resolved package graph. Initially, a package may implement a trait only if it
+defines that trait or the type. There are no overlapping implementations,
+specialization, or trait inheritance in the first version. These restrictions
+make method lookup local and deterministic and keep generic interfaces small.
+
+```text
+pub data ParseError { Missing(name: String), Invalid(text: String) }
+pub data Config { port: U16, label: String }
+
+pub trait Show {
+  fn show(self: &Self) -> String
+}
+
+impl Show for Config {
+  fn show(self: &Config) -> String {
+    "Config(port = ${self.port})"
+  }
+}
+```
+
+`val` fixes a binding; `var` permits reassignment. Either may own mutable
+task-local storage. Mutation needs an exclusive access path; a `val` owner may
+mutate its object without rebinding the name. A deeply immutable value is a
+separate type property, not inferred from `val`. Closed values can be copied
+across tasks, while mutable task-local references cannot cross tasks.
+
+## Borrow and ownership syntax
+
+Function parameters show the ownership transition:
+
+| Parameter | Meaning |
+| --- | --- |
+| `x: T` | Callee owns `T`; a linear or large value moves. Small `Copy` values copy. |
+| `x: &T` | Read-only borrow rooted in the caller's region. |
+| `x: &mut T` | Exclusive mutable borrow rooted in the caller's region. |
+
+Call sites write `&x` or `&mut x` for borrows. `copy(x)` requests an independent
+copy and is required for a large closed value if the caller must keep it after
+an owning call. Borrow lifetimes are inferred from use and constrained by
+regions; no source lifetime parameter is required initially. A borrow may
+survive a task's suspension if its root remains in that task's retained frame.
+No borrow may enter a child task or channel message. Distinct named fields may
+be borrowed separately; dynamic indices are conservatively treated as
+possibly overlapping until a cheap local proof establishes otherwise.
+
+```text
+fn rename(config: &mut Config, label: &String) {
+  config.label = copy(label)
+}
+
+val config = Config(8000, "old")
+val next = "new"
+rename(&mut config, &next) // legal: config is not rebound
+```
+
+This supersedes the earlier shorthand that same-task calls implicitly borrow
+variable-size values. Explicit parameter modes are the source rule;
+the checked IR still records the same borrow, move, and copy operations.
+
+## Operator policy
+
+Only a fixed, documented set of operators may be overloaded. Each maps to a
+named trait method with the same ownership and failure rules as a normal call:
+for example `+` to `Add.add`, `==` to `Eq.eq`, and `<` to `Compare.lt`.
+Implementations cannot define new operator tokens or precedence. There are no
+implicit conversions in operator lookup. The compiler reports the selected
+method and any required copy or move in diagnostics and IR dumps. An operator
+cannot hide a parking operation; fallible operations should use named methods
+returning `Result` initially. Index syntax is deferred until its bounds,
+borrow, and failure behavior are specified.
+
+## Errors and capability cleanup
+
+Expected failure is a return value. `expr?` inside a function returning
+`Result<T, E>` unwraps `Ok` or returns the same `Err<E>` after normal-exit
+cleanup. It does not convert `Option` to `Result`, choose a new error type, or
+catch task failure. Conversions use an explicit operation such as
+`option.ok_or(ParseError.Missing("port"))?` or `error.map_err(...)`.
+
+Linear values must be consumed, returned, transferred, or covered by a lexical
+cleanup owner on every normal exit. `with name = capability { ... }` owns a
+built-in closable capability until it is explicitly moved or closed. On fall-
+through, `return`, or `?`, the compiler closes any still-owned capability in
+reverse lexical order. An explicit `close()` consumes it and suppresses that
+cleanup. A move transfers responsibility to the destination. The initial
+`with` mechanism covers built-in channel and reply capabilities; user-defined
+destructors and fallible cleanup are outside this slice.
+
+```text
+fn publish(out: Sender<Count>, input: &String)
+    -> Result<Unit, PublishError> {
+  with sender = out {
+    val count = parse_count(input).map_err(PublishError.Parse)?
+    when (sender.send(Count(count))) {
+      Sent -> Ok(())
+      Closed(_) -> Err(PublishError.OutputClosed)
+    }
+  }
+}
+```
+
+If a rejected request send returns a message containing a `ReplyTo` right,
+that right must be closed or otherwise consumed before `?` may return.
+`map_err` alone does not silently discard that right. A
+convenience `send_or_close` may make this common path short, but it must be
+an explicit library operation with visible discard semantics.
+
+Task failure is distinct from `Err`: the runtime closes owned built-in
+capabilities, wakes peers, and reports failure to the scope. It does not run
+user code or user destructors. This means `with` has a static normal-exit
+lowering plus runtime-known failure cleanup, not an arbitrary unwind stack.
+
+## Modules and package builds
+
+One source file declares one module. Imports and exported names are explicit;
+declarations are private by default. Modules have no executable initialization
+at import time. Public type signatures and visibility make a compact interface
+that can be checked without compiling a dependency's body. The import graph
+is acyclic initially; mutually recursive functions stay within one module.
+
+```text
+// src/config.ph
+module app.config
+import std.text.parse_u16
+pub fn parse(input: &String) -> Result<Config, ParseError> { ... }
+```
+
+A package has `phoebe.toml`, a committed `phoebe.lock`, `src/`, and `tests/`.
+The manifest names direct dependencies and version requirements. The lockfile
+pins exact versions and content hashes; builds do not resolve versions while
+compiling source. The compiler builds a deterministic module dependency graph
+and caches each module's checked interface and native object by input hash.
+Private body edits do not rebuild dependents when their needed interface and
+codegen facts are unchanged. Cross-module inlining is off by default.
+
+An interface fingerprint includes exported signatures, visibility, trait
+implementations, and representation facts needed by dependents. It is a build
+invalidation key, not a promise of semantic compatibility. Package version
+policy can follow semantic versioning, but the compiler can only report
+detectable source changes, such as removed exports or changed signatures.
+Phoebe makes no stable native ABI promise in its first version. A dependency
+upgrade is an explicit lockfile operation; existing builds remain reproducible
+from the pinned graph.
+
+`core` contains primitive types, `Option`, `Result`, and fundamental traits.
+`std` is split into opt-in modules for collections, text, channels, files,
+networking, and process interaction. FFI resides behind an explicit unsafe
+boundary. Library signatures should reveal allocation, copies, parking, and
+capability transfer; compiler cost events record their source reasons.
+
+## Generic compilation policy
+
+Concrete functions use direct calls. A generic function gets a canonical
+body shared by compatible ABI shapes, with type/operation dictionaries for
+facts that the body cannot know statically. A trait call through a dictionary
+is an explicit `call.indirect` event attributed to the source trait bound.
+This avoids making every type instantiation a new compiler job. A later
+runtime-optimized compilation mode may specialize selected hot generic
+functions after measurement; specialization cannot change behavior or
+ownership effects. The initial mode does not expose a specialization
+annotation. Exact shape classes and the dictionary ABI remain open.
+
+This policy favors predictable incremental compilation. It does not claim
+that every generic call is as fast as a hand-written concrete call. The cost
+ledger and native benchmarks must expose that tradeoff.
+
+## IR obligations added by this sketch
+
+The checked IR needs explicit `borrow_shared`, `borrow_exclusive`, `move`,
+`copy`, `close`, and `return_err` operations. Every control-flow edge leaving
+a lexical cleanup region carries the required closes. For an owning place
+`p`, its abstract state is exactly one of `Owned`, `Moved`, or `Closed` at each
+program point; active shared or exclusive loans are tracked separately.
+Joins reject incompatible states unless control flow resolves them
+explicitly. A mutable borrow excludes all
+overlapping accesses until its last use. A `?` edge must preserve the same
+ownership and region invariants as an ordinary return edge.
+
+The build system needs a separate interface hash and implementation hash.
+The former controls downstream invalidation; the latter controls rebuilding
+the defining module's object. A proof of interface extraction should show
+that equal interface hashes imply equal facts observed by a downstream type
+check and code generation, subject to collision-resistant hashing of a
+canonical serialization. Native ABI stability across compiler versions is
+not part of this obligation.
+
+## Questions to test next
+
+1. Can `with` cover a rejected send without hiding ownership of the returned
+   message, especially when the message contains multiple capabilities?
+2. Which ABI shapes can share a body, and which generic collection operations
+   need a runtime-optimized mode to reach their performance goals?
+3. Can field-sensitive borrows remain a small, local analysis when a task
+   suspends inside a nested region?
+4. Which public representation facts must be fingerprinted so private edits
+   never produce stale downstream machine code?

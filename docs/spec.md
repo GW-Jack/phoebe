@@ -1,4 +1,4 @@
-# Phoebe language specification — draft 0.4
+# Phoebe language specification — draft 0.5
 
 Status: design proposal, 2026-11-06. Syntax examples are illustrative. Only the
 bounded machines in `formal/` have executable semantics so far.
@@ -44,11 +44,14 @@ fn main() {
 }
 ```
 
-`val` binds once; mutable local storage uses `var`. `data` defines algebraic data
-types. `when` is exhaustive. Functions and public type signatures are explicit;
-local expression types may be inferred. Error returns use `Result<T, E>`.
-Precise grammar, numeric behavior, strings, generics, and module syntax remain
-open. The example illustrates the proposed rules; no compiler exists yet.
+`val` fixes a binding; `var` permits rebinding. Either may own mutable local
+storage, whose mutation requires exclusive access. `data` defines nominal
+product and sum types; `when` is exhaustive. Function and public type
+signatures are explicit; local expression types may be inferred. `Option<T>`
+represents absence and `Result<T, E>` represents expected failure. The type,
+trait, operator, error, and package baseline is in `docs/language-features.md`
+and Decision 0003. Precise grammar and several ABI details remain open. The
+example illustrates proposed rules; no compiler exists yet.
 
 ## 3. Storage and references
 
@@ -61,12 +64,19 @@ lifetime annotations are required.
 Regions nest. A task's retained frames remain live while it is parked. An inner
 region may end only when no live reference can reach its objects. The compiler
 must reject any control-flow path that violates this rule. Exact treatment of
-resizable collection shrinkage is deferred; draft 0.4 offers grow-only lists
+resizable collection shrinkage is deferred; draft 0.5 offers grow-only lists
 whose elements remain stable until the owning list's region ends.
 
 Safe code cannot construct arbitrary pointers, reinterpret object types, or
 send task-local references to another task. Allocation failure stops a task
 safely without exposing invalid storage.
+
+Function parameters use `T` for ownership, `&T` for a shared borrow, and
+`&mut T` for an exclusive borrow. Small `Copy` values copy by value; a larger
+value moves into an owning parameter. An independent large copy is explicit
+as `copy(x)`. A `val` owner may mutate its object through an exclusive borrow
+without rebinding its name. Borrow roots and last uses are inferred, but
+borrows cannot enter a child task or message.
 
 ## 4. Tasks, scopes, and channels
 
@@ -120,18 +130,38 @@ the runtime closes its handles and wakes affected peers; scope observes the
 failure. Failure does not run user destructors. The exact failure payload and
 selection policy among multiple receivers remain open.
 
-## 5. Middle IR contract
+`?` propagates an existing `Err` as a normal early return; it performs no
+implicit `Option` or error-type conversion. A lexical `with` owns a built-in
+closable capability and closes it on every normal exit, including `?`, unless
+it has already moved or closed. A rejected send returns its unsent message;
+any capabilities in that message remain the caller's responsibility.
+
+## 5. Modules, generics, and operators
+
+Modules use explicit imports and exports, private declarations by default,
+and no executable import-time initialization. Packages have a manifest and
+pinned lockfile. A canonical interface fingerprint controls downstream
+recompilation but does not promise semantic compatibility or native ABI
+stability. Generic functions compile once per compatible ABI shape, with
+dictionaries for trait operations unavailable statically; concrete functions
+use direct calls. A later runtime-optimized mode may specialize measured hot
+paths. Only fixed operator symbols may map to named traits, without implicit
+conversions or hidden parking. See `docs/language-features.md` for the full
+design sketch and remaining questions.
+
+## 6. Middle IR contract
 
 The first checked IR is a typed control-flow graph with block parameters and
 separate *values* (computed data) and *places* (stored objects with identity).
-Its operations include region begin/end, place allocation, reference creation,
-load/store, typed copy, spawn, channel fork/send/receive/close, park/resume,
-and scope join, plus capability moves into and out of messages. Region
-parameters are inferred by the frontend and explicit
-only in the IR. The frontend and lowering must check type, definite
-initialization, region reachability, capability use, message ownership at
-enqueue/dequeue/discard, and values live across
-suspension for each program. A full IR verifier rechecks dominance and these
+Its operations include region begin/end, place allocation, shared and
+exclusive borrow, load/store, typed move/copy, lexical close, error return,
+spawn, channel fork/send/receive/close, park/resume, and scope join, plus
+capability moves into and out of messages. Region parameters are inferred by
+the frontend and explicit only in the IR. The frontend and lowering must check
+type, definite initialization, region reachability, borrow exclusivity,
+capability use, message ownership at enqueue/dequeue/discard, cleanup on all
+normal exit edges, and values live across suspension for each program. A full
+IR verifier rechecks dominance and these
 invariants during compiler development and CI; release builds may omit that
 redundant pass when IR is created by trusted, proved lowering operations.
 
@@ -139,13 +169,12 @@ Lowering to physical task frames, stack segments, channel layouts, and
 Cranelift IR occurs after these checks. Each pass must preserve the observable
 behavior of the checked IR, allowing different schedules but not new memory
 errors or unintended loss/duplication of channel messages or capabilities. The
-checked IR also
-carries cost events and provenance under the non-pessimization contract in
+checked IR also carries cost events and provenance under the non-pessimization contract in
 `docs/non-pessimization.md`. This contract constrains Phoebe's lowering; it does
 not assert a minimum machine-instruction count from Cranelift. The intended
 proof-once architecture is described in `docs/compiler-architecture.md`.
 
-## 6. Formal obligations
+## 7. Formal obligations
 
 Let `S -> S'` be one abstract-machine transition and `WF(S)` mean all storage,
 reference, channel, and capability invariants hold. The primary obligation is:
@@ -167,7 +196,7 @@ The event trace is an append-only *observation* of transitions for debugging
 and model checking, not a required persistent production log. Deterministic
 replay needs scheduler choices and external inputs in addition to IR events.
 
-## 7. Verification plan and evidence boundary
+## 8. Verification plan and evidence boundary
 
 The first Maude model checks one task, two nested regions, one reference, one
 sender, one receiver, and a one-slot queue. The second checks two tasks,

@@ -20,7 +20,7 @@ memory instructions:
 | `task.create` | Create a child task and retained frame | Executed `spawn` |
 | `task.park` | Yield a task waiting for a channel or scope | Blocking operation that was not immediately ready |
 | `channel.op` | Create, fork, send, receive, or close a channel capability | Corresponding source operation |
-| `call.indirect` | Call through a dynamic function value | Source-level dynamic call or dispatch |
+| `call.indirect` | Call through a dynamic function value or generic trait dictionary | Source-level dynamic call or trait bound |
 
 Every event has a source span, a semantic reason, and the owning task/region
 where relevant. Costful IR constructors require a reason derived from a source
@@ -43,13 +43,17 @@ instructions for one event or eliminate instructions when semantics allow it.
    parameter. The small-aggregate threshold is still open. Cranelift may
    remove redundant machine moves.
 2. Variable-size values do not copy at assignment, ordinary call, or return.
-   Same-task calls borrow them, and fresh results are constructed in the
-   destination. An intentional independent copy uses `copy(x)`.
-3. `send` is an explicit value-copy boundary. Buffered send constructs or
-   copies directly into queue storage; receive copies into the receiver's
-   task-owned storage. There is no intermediate variable-size temporary.
-   A direct handoff may copy straight to the receiver once. A rejected send
-   queues nothing. This is a lowering target, subject to runtime validation.
+   An owning parameter moves them; `&T` and `&mut T` borrow them explicitly.
+   Fresh results are constructed in the destination. An independent copy uses
+   `copy(x)`.
+3. `send` copies closed value components and moves linear communication
+   capabilities into queue ownership. Buffered send constructs or copies
+   closed data directly into queue storage; receive copies that data into
+   the receiver's task-owned storage. There is no intermediate variable-size
+   temporary. A direct handoff may copy straight to the receiver once. A
+   rejected send queues nothing and returns the message with its capabilities
+   still owned by the caller. This is a lowering target, subject to runtime
+   validation.
 4. A reference is just an address plus any representation metadata required
    for safety. Creating or passing one does not register it, increment a
    reference count, or call the runtime.
@@ -61,6 +65,12 @@ instructions for one event or eliminate instructions when semantics allow it.
 7. No universal bookkeeping is inserted on every function entry, object
    access, or task-local assignment. Runtime work belongs at the operation
    that needs it.
+8. `?` emits only the normal return and lexically required closes. A `with`
+   cleanup has a source-level scope reason for each `channel.op` close;
+   already moved or closed capabilities require no second close.
+9. Generic bodies are shared by ABI shape initially. Trait calls that require
+   dictionaries are visible as `call.indirect`; concrete calls remain direct.
+   A later runtime-optimized mode may specialize selected generic calls.
 
 ## 3. Acceptance examples
 

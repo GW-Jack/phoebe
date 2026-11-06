@@ -1,7 +1,7 @@
 # Concurrency pressure tests
 
 Status: design exploration, 2026-11-06. The syntax below is illustrative.
-`! proposed` marks syntax or behavior not yet fully specified in draft 0.4.
+`! proposed` marks syntax or behavior not yet fully specified in draft 0.5.
 These examples compare APIs, not measured performance or formal proofs.
 
 ## 1. Request/reply across an independently owned service
@@ -24,7 +24,7 @@ fn cache(inbox: Receiver<Query>) {
 }
 ```
 
-Draft 0.4 permits the one-shot `ReplyTo` to move through a request message.
+Draft 0.5 permits the one-shot `ReplyTo` to move through a request message.
 The earlier closed-values-only rule required request IDs and a shared reply
 channel with routing code for this basic interaction.
 
@@ -171,7 +171,7 @@ needs retained suspension storage even if actor handlers do not.
 A single task or actor that owns a map serializes every lookup. Sending a
 whole snapshot to each reader copies it. Replicating a snapshot per worker
 trades memory and update cost for read throughput. Sharing one immutable
-region across workers would need a lifetime mechanism absent from draft 0.4;
+region across workers would need a lifetime mechanism absent from draft 0.5;
 a managed heap or scoped immutable-region ownership could provide one. Actor
 syntax alone does not solve the read bottleneck.
 
@@ -186,7 +186,7 @@ syntax alone does not solve the read bottleneck.
 | Read-heavy shared state | Neither alone | Snapshot replication or shared immutable lifetime |
 
 The first design gate, **move-only communication capabilities in messages**,
-is adopted in draft 0.4 and modeled for one `ReplyTo`. General handle transfer,
+is adopted in draft 0.5 and modeled for one `ReplyTo`. General handle transfer,
 including the `Sender<RoomEvent>` in the chat-room sketch, needs a further
 model. The remaining gates are a precise bounded-mailbox policy for sends
 from actor handlers and an ownership and cost model for long-lived maps and
