@@ -629,12 +629,20 @@ fn question_mark_checks_result_shape_and_return_type() {
             "? requires Result",
         ),
         (
-            "data Result { Ok(value: I64), Err(error: I64) } fn use(x: Result) -> I64 = x? fn main() -> I64 = 1",
+            "fn use(x: Result<I64,I64>) -> I64 = x? fn main() -> I64 = 1",
             "same Result type",
         ),
         (
-            "data Result { Ok(value: I64), Err } fn use(x: Result) -> Result { val y = x?; Result.Ok(y) } fn main() -> I64 = 1",
-            "Err requires a payload",
+            "data Thing { Value } fn use(x: Result<Thing,I64>) -> Result<Thing,I64> = x fn main() -> I64 = 1",
+            "Result currently requires I64 or Bool",
+        ),
+        (
+            "data Result { Ok(value: I64), Err(error: I64) } fn main() -> I64 = 1",
+            "duplicate data type",
+        ),
+        (
+            "fn use(x: Result<I64,Bool>) -> Result<I64,I64> { val y = x?; Result<I64,I64>.Ok(y) } fn main() -> I64 = 1",
+            "same Result type",
         ),
     ];
     for (source, expected) in cases {
@@ -646,9 +654,9 @@ fn question_mark_checks_result_shape_and_return_type() {
 }
 
 #[test]
-fn nested_question_marks_handle_reversed_variants_and_bool_errors() {
+fn nested_question_marks_handle_bool_errors_and_reversed_arms() {
     let program = compile(
-        "data Result { Err(error: Bool), Ok(value: I64) } fn step(x: I64) -> Result = if (x < 0) { Result.Err(true) } else { Result.Ok(x) } fn twice(x: I64) -> Result { val first = step(x)?; val second = step(first)? + 1; Result.Ok(second * 2) } fn inspect(result: Result) -> I64 = when (result) { Result.Ok(value) -> { value }, Result.Err(error) -> { if (error) { -1 } else { 0 } } } fn main() -> I64 = inspect(twice(20)) + inspect(twice(-1)) + 1",
+        "fn step(x: I64) -> Result<I64,Bool> = if (x < 0) { Result<I64,Bool>.Err(true) } else { Result<I64,Bool>.Ok(x) } fn twice(x: I64) -> Result<I64,Bool> { val first = step(x)?; val second = step(first)? + 1; Result<I64,Bool>.Ok(second * 2) } fn inspect(result: Result<I64,Bool>) -> I64 = when (result) { Result<I64,Bool>.Err(error) -> { if (error) { -1 } else { 0 } }, Result<I64,Bool>.Ok(value) -> { value } } fn main() -> I64 = inspect(twice(20)) + inspect(twice(-1)) + 1",
     );
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);

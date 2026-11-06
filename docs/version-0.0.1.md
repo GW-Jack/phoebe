@@ -40,7 +40,8 @@ fields. It supports up to four owned parameters (I64 borrows only), `val` and
 `var` bindings, assignment, `while`, integer and boolean literals, unary
 negation, `+`, `-`, `*`, `==`, `<`, `if` expressions with block arms, exhaustive
 `when` expressions, acyclic direct calls, call-site `&I64` and `&mut I64`
-arguments, `?` on a concrete `data Result` with scalar `Ok`/`Err` payloads,
+arguments, `?` on concrete built-in `Result<T, E>` applications where both
+type arguments are `I64` or `Bool`,
 and a matching tail expression. Recursion is
 rejected until task stacks have safe growth limits. Arithmetic wraps at 64
 bits in both interpreter and native execution. `phoebe check`, `phoebe ir`,
@@ -60,7 +61,8 @@ types. Source spans survive parsing and lowering. `docs/core-ir.md` and
 `docs/call-borrows.md` explain the current operations and their evidence
 boundary. Borrows are confined to synchronous calls; general reference
 lifetimes and regions are not implemented. `docs/result-try.md` states the
-current `?` rule and its missing generic and cleanup work.
+current `?` rule and its missing general payload, generic function, and
+cleanup work.
 
 This slice establishes the parser → checked IR → interpreter/Cranelift path.
 It does not yet implement the ownership, concurrency, module, or release

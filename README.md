@@ -11,7 +11,8 @@ It does not yet have the language runtime or all features required for 0.0.1.
 currently runs. The Rust crate parses functions over I64, Bool, nominal sums
 with optional primitive payloads, and nominal products with primitive fields.
 It supports arithmetic, conditions, exhaustive `when`, mutable locals, loops,
-call-site scalar borrows, and `?` on a concrete scalar-payload `Result`, then
+call-site scalar borrows, and `?` on concrete `Result<I64, Bool>`-shaped
+applications using `I64` or `Bool` for each type argument, then
 lowers them to checked Core IR. Programs run
 through an interpreter or Cranelift JIT. The compiler can also
 build a standalone executable for a zero-argument `main` using Cranelift

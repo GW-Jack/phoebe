@@ -424,7 +424,7 @@ impl<'a> Lowerer<'a> {
                     return Err(Diagnostic::new(inner.span, "? requires Result"));
                 };
                 let data = &self.data[id.0];
-                if data.name != "Result" || data.variants.len() != 2 {
+                if !data.name.starts_with("Result<") || data.variants.len() != 2 {
                     return Err(Diagnostic::new(inner.span, "? requires Result"));
                 }
                 let ok_tag = data
@@ -795,7 +795,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     let mut data = Vec::with_capacity(ast.data.len());
     let mut data_names = HashMap::new();
     for declaration in &ast.data {
-        if matches!(declaration.name.as_str(), "I64" | "Bool")
+        if matches!(declaration.name.as_str(), "I64" | "Bool" | "Result")
             || data_names.contains_key(&declaration.name)
         {
             return Err(Diagnostic::new(declaration.span, "duplicate data type"));
@@ -810,7 +810,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
                 None => None,
                 Some(TypeName::I64) => Some(Type::I64),
                 Some(TypeName::Bool) => Some(Type::Bool),
-                Some(TypeName::Named(_)) => {
+                Some(TypeName::Named(_) | TypeName::Result(_, _)) => {
                     return Err(Diagnostic::new(
                         variant.span,
                         "nested variant payloads are not implemented",
@@ -828,7 +828,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
             let ty = match field.ty {
                 TypeName::I64 => Type::I64,
                 TypeName::Bool => Type::Bool,
-                TypeName::Named(_) => {
+                TypeName::Named(_) | TypeName::Result(_, _) => {
                     return Err(Diagnostic::new(
                         field.span,
                         "nested product fields are not implemented",
@@ -845,6 +845,31 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
             fields,
         });
     }
+    for (application, span) in &ast.applied_results {
+        let TypeName::Result(ok, err) = application else {
+            unreachable!("parser only records Result applications")
+        };
+        let name = application.key();
+        if data_names.contains_key(&name) {
+            continue;
+        }
+        let scalar = |ty: &TypeName| match ty {
+            TypeName::I64 => Ok(Type::I64),
+            TypeName::Bool => Ok(Type::Bool),
+            _ => Err(Diagnostic::new(
+                *span,
+                "Result currently requires I64 or Bool type arguments",
+            )),
+        };
+        let payloads = vec![Some(scalar(ok)?), Some(scalar(err)?)];
+        data_names.insert(name.clone(), DataId(data.len()));
+        data.push(DataDef {
+            name,
+            variants: vec!["Ok".into(), "Err".into()],
+            payloads,
+            fields: vec![],
+        });
+    }
     let resolve = |name: &TypeName, span: Span| -> Result<Type, Diagnostic> {
         match name {
             TypeName::I64 => Ok(Type::I64),
@@ -854,6 +879,11 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
                 .copied()
                 .map(Type::Data)
                 .ok_or_else(|| Diagnostic::new(span, format!("unknown data type {name}"))),
+            TypeName::Result(_, _) => data_names
+                .get(&name.key())
+                .copied()
+                .map(Type::Data)
+                .ok_or_else(|| Diagnostic::new(span, "unknown Result application")),
         }
     };
     let mut functions = HashMap::new();

@@ -27,6 +27,7 @@ enum TokenKind {
     Equal,
     EqualEqual,
     Less,
+    Greater,
     Plus,
     Minus,
     Star,
@@ -133,6 +134,10 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 i += 1;
                 TokenKind::Less
             }
+            b'>' => {
+                i += 1;
+                TokenKind::Greater
+            }
             b'+' => {
                 i += 1;
                 TokenKind::Plus
@@ -183,6 +188,7 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
 pub struct Program {
     pub data: Vec<Data>,
     pub functions: Vec<Function>,
+    pub applied_results: Vec<(TypeName, Span)>,
 }
 
 #[derive(Clone, Debug)]
@@ -221,6 +227,18 @@ pub enum TypeName {
     I64,
     Bool,
     Named(String),
+    Result(Box<TypeName>, Box<TypeName>),
+}
+
+impl TypeName {
+    pub fn key(&self) -> String {
+        match self {
+            Self::I64 => "I64".into(),
+            Self::Bool => "Bool".into(),
+            Self::Named(name) => name.clone(),
+            Self::Result(ok, err) => format!("Result<{},{}>", ok.key(), err.key()),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -300,11 +318,30 @@ pub struct WhenArm {
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    applied_results: Vec<(TypeName, Span)>,
 }
 
 impl Parser {
     fn type_name(&mut self, borrowed: bool) -> Result<TypeName, Diagnostic> {
         let (name, span) = self.name()?;
+        if name == "Result" && self.eat(&TokenKind::Less).is_some() {
+            let ok = self.type_name(false)?;
+            self.expect(&TokenKind::Comma, ",")?;
+            let err = self.type_name(false)?;
+            let end = self.expect(&TokenKind::Greater, ">")?.span;
+            if borrowed {
+                return Err(Diagnostic::new(
+                    span.join(end),
+                    "Result borrows are not implemented",
+                ));
+            }
+            let ty = TypeName::Result(Box::new(ok), Box::new(err));
+            self.applied_results.push((ty.clone(), span.join(end)));
+            return Ok(ty);
+        }
+        if name == "Result" {
+            return Err(Diagnostic::new(span, "Result requires two type arguments"));
+        }
         match name.as_str() {
             "I64" => Ok(TypeName::I64),
             "Bool" if !borrowed => Ok(TypeName::Bool),
@@ -312,6 +349,17 @@ impl Parser {
             _ if !borrowed => Ok(TypeName::Named(name)),
             _ => Err(Diagnostic::new(span, "only I64 borrows are implemented")),
         }
+    }
+
+    fn result_type_after_name(&mut self, start: Span) -> Result<TypeName, Diagnostic> {
+        self.expect(&TokenKind::Less, "<")?;
+        let ok = self.type_name(false)?;
+        self.expect(&TokenKind::Comma, ",")?;
+        let err = self.type_name(false)?;
+        let end = self.expect(&TokenKind::Greater, ">")?.span;
+        let ty = TypeName::Result(Box::new(ok), Box::new(err));
+        self.applied_results.push((ty.clone(), start.join(end)));
+        Ok(ty)
     }
 
     fn data(&mut self) -> Result<Data, Diagnostic> {
@@ -583,6 +631,12 @@ impl Parser {
                 let mut arms = Vec::new();
                 loop {
                     let (type_name, start) = self.name()?;
+                    let type_name =
+                        if type_name == "Result" && self.current().kind == TokenKind::Less {
+                            self.result_type_after_name(start)?.key()
+                        } else {
+                            type_name
+                        };
                     self.expect(&TokenKind::Dot, ".")?;
                     let (variant, end) = self.name()?;
                     let binding = if self.eat(&TokenKind::LParen).is_some() {
@@ -621,6 +675,11 @@ impl Parser {
                 span,
             } => {
                 self.pos += 1;
+                let name = if name == "Result" && self.current().kind == TokenKind::Less {
+                    self.result_type_after_name(span)?.key()
+                } else {
+                    name
+                };
                 if self.eat(&TokenKind::Dot).is_some() {
                     let (variant, end) = self.name()?;
                     if self.eat(&TokenKind::LParen).is_some() {
@@ -734,6 +793,7 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
     let mut parser = Parser {
         tokens: lex(source)?,
         pos: 0,
+        applied_results: Vec::new(),
     };
     let mut functions = Vec::new();
     let mut data = Vec::new();
@@ -750,5 +810,9 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
             "expected a function",
         ));
     }
-    Ok(Program { data, functions })
+    Ok(Program {
+        data,
+        functions,
+        applied_results: parser.applied_results,
+    })
 }
