@@ -1,0 +1,195 @@
+--- Bounded two-task channel model. Parent owns handles 0, forks handles 1,
+--- then transfers handles 1 to a child at spawn. Each task may send one
+--- distinct, closed value. The queue holds at most one value.
+mod PHOEBE-TWO-TASK is
+  protecting BOOL .
+
+  sorts Parent Child Handle Queue Mark Scope State .
+  ops pRunning pDone : -> Parent [ctor] .
+  ops cDormant cRunning cDone cFailed : -> Child [ctor] .
+  ops absent heldParent heldChild endedParent endedChild closed : -> Handle [ctor] .
+  ops empty parentQueued childQueued : -> Queue [ctor] .
+  ops new pending delivered discarded rejected : -> Mark [ctor] .
+  ops scopeOpen scopeOk scopeFailed : -> Scope [ctor] .
+
+  --- Sender 0, sender 1, receiver 0, receiver 1; then queue and the two
+  --- message dispositions. A pending message is exactly the queued one.
+  op st : Parent Child Handle Handle Handle Handle Queue Mark Mark Scope
+       -> State [ctor] .
+  op initial : -> State .
+  eq initial = st(pRunning, cDormant,
+    heldParent, absent, heldParent, absent,
+    empty, new, new, scopeOpen) .
+
+  vars P : Parent .
+  vars C : Child .
+  vars S0 S1 R0 R1 : Handle .
+  vars Q : Queue .
+  vars PM CM : Mark .
+  vars SC : Scope .
+
+  --- Fork creates an additional capability; spawn transfers its sole owner.
+  rl [fork-sender] :
+    st(pRunning, cDormant, heldParent, absent, R0, R1, Q, PM, CM, scopeOpen)
+    => st(pRunning, cDormant, heldParent, heldParent,
+          R0, R1, Q, PM, CM, scopeOpen) .
+  rl [fork-receiver] :
+    st(pRunning, cDormant, S0, S1, heldParent, absent, Q, PM, CM, scopeOpen)
+    => st(pRunning, cDormant, S0, S1, heldParent, heldParent,
+          Q, PM, CM, scopeOpen) .
+  rl [spawn] :
+    st(pRunning, cDormant, S0, heldParent, R0, heldParent,
+       Q, PM, CM, scopeOpen)
+    => st(pRunning, cRunning, S0, heldChild, R0, heldChild,
+          Q, PM, CM, scopeOpen) .
+
+  --- A send creates one pending message. Receive consumes that exact message.
+  crl [parent-send] :
+    st(pRunning, C, heldParent, S1, R0, R1, empty, new, CM, scopeOpen)
+    => st(pRunning, C, heldParent, S1, R0, R1,
+          parentQueued, pending, CM, scopeOpen)
+    if R0 == heldParent or R1 == heldParent or R1 == heldChild .
+  crl [child-send] :
+    st(pRunning, cRunning, S0, heldChild, R0, R1, empty, PM, new, scopeOpen)
+    => st(pRunning, cRunning, S0, heldChild, R0, R1,
+          childQueued, PM, pending, scopeOpen)
+    if R0 == heldParent or R1 == heldChild .
+  --- An attempted send after all receivers close returns Closed and queues
+  --- nothing. The sender remains usable only for close, not another send here.
+  rl [parent-send-closed] :
+    st(pRunning, C, heldParent, S1, closed, closed, empty, new, CM, scopeOpen)
+    => st(pRunning, C, heldParent, S1, closed, closed,
+          empty, rejected, CM, scopeOpen) .
+  rl [parent-send-closed-without-fork] :
+    st(pRunning, cDormant, heldParent, S1, closed, absent,
+       empty, new, CM, scopeOpen)
+    => st(pRunning, cDormant, heldParent, S1, closed, absent,
+          empty, rejected, CM, scopeOpen) .
+  rl [child-send-closed] :
+    st(pRunning, cRunning, S0, heldChild, closed, closed,
+       empty, PM, new, scopeOpen)
+    => st(pRunning, cRunning, S0, heldChild, closed, closed,
+          empty, PM, rejected, scopeOpen) .
+  rl [parent-receive-parent] :
+    st(pRunning, C, S0, S1, heldParent, R1,
+       parentQueued, pending, CM, scopeOpen)
+    => st(pRunning, C, S0, S1, heldParent, R1,
+          empty, delivered, CM, scopeOpen) .
+  rl [parent-receive-child] :
+    st(pRunning, C, S0, S1, heldParent, R1,
+       childQueued, PM, pending, scopeOpen)
+    => st(pRunning, C, S0, S1, heldParent, R1,
+          empty, PM, delivered, scopeOpen) .
+  rl [child-receive-parent] :
+    st(pRunning, cRunning, S0, S1, R0, heldChild,
+       parentQueued, pending, CM, scopeOpen)
+    => st(pRunning, cRunning, S0, S1, R0, heldChild,
+          empty, delivered, CM, scopeOpen) .
+  rl [child-receive-child] :
+    st(pRunning, cRunning, S0, S1, R0, heldChild,
+       childQueued, PM, pending, scopeOpen)
+    => st(pRunning, cRunning, S0, S1, R0, heldChild,
+          empty, PM, delivered, scopeOpen) .
+
+  rl [parent-close-sender] :
+    st(pRunning, C, heldParent, S1, R0, R1, Q, PM, CM, scopeOpen)
+    => st(pRunning, C, closed, S1, R0, R1, Q, PM, CM, scopeOpen) .
+  rl [child-close-sender] :
+    st(pRunning, cRunning, S0, heldChild, R0, R1, Q, PM, CM, scopeOpen)
+    => st(pRunning, cRunning, S0, closed, R0, R1, Q, PM, CM, scopeOpen) .
+
+  --- End is enabled only when both senders have closed and the queue is empty.
+  rl [parent-end] :
+    st(pRunning, C, closed, closed, heldParent, R1,
+       empty, PM, CM, scopeOpen)
+    => st(pRunning, C, closed, closed, endedParent, R1,
+          empty, PM, CM, scopeOpen) .
+  rl [parent-end-without-fork] :
+    st(pRunning, cDormant, closed, absent, heldParent, R1,
+       empty, PM, CM, scopeOpen)
+    => st(pRunning, cDormant, closed, absent, endedParent, R1,
+          empty, PM, CM, scopeOpen) .
+  rl [child-end] :
+    st(pRunning, cRunning, closed, closed, R0, heldChild,
+       empty, PM, CM, scopeOpen)
+    => st(pRunning, cRunning, closed, closed, R0, endedChild,
+          empty, PM, CM, scopeOpen) .
+
+  --- A receiver may close early. A queued message is explicitly discarded
+  --- only when no receiver remains, so it is never silently lost.
+  rl [parent-close-receiver] :
+    st(pRunning, C, S0, S1, heldParent, R1, Q, PM, CM, scopeOpen)
+    => st(pRunning, C, S0, S1, closed, R1, Q, PM, CM, scopeOpen) .
+  rl [parent-close-ended] :
+    st(pRunning, C, S0, S1, endedParent, R1, Q, PM, CM, scopeOpen)
+    => st(pRunning, C, S0, S1, closed, R1, Q, PM, CM, scopeOpen) .
+  rl [child-close-receiver] :
+    st(pRunning, cRunning, S0, S1, R0, heldChild, Q, PM, CM, scopeOpen)
+    => st(pRunning, cRunning, S0, S1, R0, closed, Q, PM, CM, scopeOpen) .
+  rl [child-close-ended] :
+    st(pRunning, cRunning, S0, S1, R0, endedChild, Q, PM, CM, scopeOpen)
+    => st(pRunning, cRunning, S0, S1, R0, closed, Q, PM, CM, scopeOpen) .
+  rl [discard-parent] :
+    st(P, C, S0, S1, closed, closed,
+       parentQueued, pending, CM, SC)
+    => st(P, C, S0, S1, closed, closed,
+          empty, discarded, CM, SC) .
+  rl [discard-parent-without-fork] :
+    st(pRunning, cDormant, S0, S1, closed, absent,
+       parentQueued, pending, CM, scopeOpen)
+    => st(pRunning, cDormant, S0, S1, closed, absent,
+          empty, discarded, CM, scopeOpen) .
+  rl [discard-child] :
+    st(P, C, S0, S1, closed, closed,
+       childQueued, PM, pending, SC)
+    => st(P, C, S0, S1, closed, closed,
+          empty, PM, discarded, SC) .
+
+  --- Failure closes only capabilities owned by the child. Parent can drain
+  --- a pending message, then close its own handles and observe the failure.
+  rl [child-fail] :
+    st(pRunning, cRunning, S0, S1, R0, R1, Q, PM, CM, scopeOpen)
+    => st(pRunning, cFailed, S0, closed, R0, closed,
+          Q, PM, CM, scopeOpen) .
+  rl [child-complete] :
+    st(pRunning, cRunning, S0, closed, R0, closed,
+       Q, PM, CM, scopeOpen)
+    => st(pRunning, cDone, S0, closed, R0, closed,
+          Q, PM, CM, scopeOpen) .
+  rl [scope-success] :
+    st(pRunning, cDone, closed, closed, closed, closed,
+       empty, PM, CM, scopeOpen)
+    => st(pDone, cDone, closed, closed, closed, closed,
+          empty, PM, CM, scopeOk) .
+  rl [scope-failure] :
+    st(pRunning, cFailed, closed, closed, closed, closed,
+       empty, PM, CM, scopeOpen)
+    => st(pDone, cFailed, closed, closed, closed, closed,
+          empty, PM, CM, scopeFailed) .
+
+  --- The predicate checks accounting rather than repeating rule guards.
+  op bad : State -> Bool .
+  eq bad(st(P, C, S0, S1, R0, R1, Q, PM, CM, SC)) =
+    not ((Q == parentQueued) == (PM == pending)) or
+    not ((Q == childQueued) == (CM == pending)) or
+    (S0 == heldChild or R0 == heldChild or
+     S0 == endedChild or R0 == endedChild) or
+    (C == cDormant and
+      (S1 == heldChild or R1 == heldChild or
+       S1 == endedChild or R1 == endedChild)) or
+    ((C == cDone or C == cFailed) and
+      not (S1 == closed and R1 == closed)) or
+    (C == cRunning and
+      (S1 == absent or R1 == absent or
+       S1 == heldParent or R1 == heldParent)) or
+    ((R0 == endedParent or R1 == endedChild) and
+      not (S0 == closed and (S1 == closed or S1 == absent))) or
+    (P == pDone and (S0 == heldParent or R0 == heldParent)) or
+    (P == pDone and
+      not (S0 == closed and S1 == closed and
+           R0 == closed and R1 == closed and Q == empty)) or
+    (P == pDone and SC == scopeOpen) or
+    (P == pRunning and not (SC == scopeOpen)) or
+    (SC == scopeOk and not (P == pDone and C == cDone)) or
+    (SC == scopeFailed and not (P == pDone and C == cFailed)) .
+endm

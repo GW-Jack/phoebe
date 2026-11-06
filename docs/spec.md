@@ -1,7 +1,7 @@
-# Phoebe language specification — draft 0.1
+# Phoebe language specification — draft 0.2
 
 Status: design proposal, 2026-11-06. Syntax examples are illustrative. Only the
-bounded core in `formal/core.maude` has an executable semantics so far.
+bounded machines in `formal/` have executable semantics so far.
 
 ## 1. Purpose and non-goals
 
@@ -61,7 +61,7 @@ lifetime annotations are required.
 Regions nest. A task's retained frames remain live while it is parked. An inner
 region may end only when no live reference can reach its objects. The compiler
 must reject any control-flow path that violates this rule. Exact treatment of
-resizable collection shrinkage is deferred; draft 0.1 offers grow-only lists
+resizable collection shrinkage is deferred; draft 0.2 offers grow-only lists
 whose elements remain stable until the owning list's region ends.
 
 Safe code cannot construct arbitrary pointers, reinterpret object types, or
@@ -76,13 +76,16 @@ its enclosing `scope`; scope completion waits for all children and reports any
 failure. Blocking channel operations park a task, not an OS thread.
 
 A channel has a bounded FIFO queue. A `Sender<T>` or `Receiver<T>` handle has one
-owner. `fork` creates another handle explicitly; `close` consumes a handle.
+owner. `fork` creates another handle explicitly while the original remains
+usable; `close` consumes a handle. A closed handle cannot be forked again.
 `send` copies a closed `T` into the queue. A closed type recursively contains no
 task-local references, channel handles, or other task-owned capabilities.
 Each queued message is delivered to exactly one receiver. A receiver reports
-end after the last sender has closed and the queue is drained. Sending when
-all receivers have closed reports `Closed`. Queue-full and queue-empty cases
-may park the caller.
+end after the last sender has closed and the queue is drained; an absent forked
+handle does not count as an open sender. Sending when all receivers have closed
+reports `Closed` without queueing the message. Closing the last receiver may
+discard queued messages; this disposition is explicit in the formal model.
+Queue-full and queue-empty cases may park the caller.
 
 Every normal exit path must close or transfer its handles. On task failure,
 the runtime closes its handles and wakes affected peers; scope observes the
@@ -126,12 +129,13 @@ replay needs scheduler choices and external inputs in addition to IR events.
 
 ## 7. Verification plan and evidence boundary
 
-The first Maude model checks only one task, two nested regions, one reference,
-one sender, one receiver, and a one-slot queue. It explores possible orders of
-region, channel, and failure operations and searches for invariant violations.
-This finite result is evidence about that model only.
+The first Maude model checks one task, two nested regions, one reference, one
+sender, one receiver, and a one-slot queue. The second checks two tasks,
+explicit handle `fork`, transfer at spawn, distinct messages, close, failure,
+and scope outcome. They explore possible operation orders and search for
+encoded invariant violations. Their precise bounds are in `formal/README.md`.
 
-Next: model two tasks and `fork`, define a small-step typed IR semantics, prove
-preservation for the sequential core, build a checked IR verifier and interpreter,
-then compare interpreter traces with Cranelift-generated binaries. No compiler
-or runtime correctness theorem is claimed at this stage.
+Next: combine regions and task transfer in a typed small-step IR semantics,
+prove preservation for its sequential core, build a checked IR verifier and
+interpreter, then compare interpreter traces with Cranelift-generated binaries.
+No compiler or runtime correctness theorem is claimed at this stage.

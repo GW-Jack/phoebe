@@ -1,0 +1,50 @@
+load two_task.maude
+
+--- Sanity check: a queued parent message marked new must be rejected.
+reduce in PHOEBE-TWO-TASK : bad(st(pRunning, cDormant,
+  heldParent, absent, heldParent, absent,
+  parentQueued, new, new, scopeOpen)) .
+
+--- Exhaustive safety search over all interleavings of this bounded machine.
+search [1] in PHOEBE-TWO-TASK : initial =>* X:State
+  such that bad(X:State) == true .
+
+--- Witnesses: fork/spawn, child delivery, failure with pending data, and
+--- both scope outcomes. These guard against a vacuous safety search.
+search [1] in PHOEBE-TWO-TASK : initial =>*
+  st(pRunning, cRunning, heldParent, heldChild,
+     heldParent, heldChild, empty, new, new, scopeOpen) .
+search [1] in PHOEBE-TWO-TASK : initial =>*
+  st(pRunning, cDormant, closed, absent,
+     endedParent, absent, empty, new, new, scopeOpen) .
+search [1] in PHOEBE-TWO-TASK : initial =>*
+  st(pRunning, cRunning, heldParent, heldChild,
+     heldParent, heldChild, empty, delivered, new, scopeOpen) .
+--- With the parent receiver closed, only the child can consume this message.
+search [1] in PHOEBE-TWO-TASK :
+  st(pRunning, cRunning, heldParent, heldChild,
+     closed, heldChild, parentQueued, pending, new, scopeOpen)
+  =>+ st(pRunning, cRunning, heldParent, heldChild,
+          closed, heldChild, empty, delivered, new, scopeOpen) .
+search [1] in PHOEBE-TWO-TASK : initial =>*
+  st(pRunning, cFailed, heldParent, closed,
+     heldParent, closed, parentQueued, pending, new, scopeOpen) .
+search [1] in PHOEBE-TWO-TASK : initial =>*
+  st(pRunning, cRunning, heldParent, heldChild,
+     closed, closed, empty, rejected, new, scopeOpen) .
+search [1] in PHOEBE-TWO-TASK : initial =>*
+  st(pRunning, cRunning, heldParent, heldChild,
+     closed, closed, empty, discarded, new, scopeOpen) .
+search [1] in PHOEBE-TWO-TASK : initial =>*
+  st(pDone, cDone, closed, closed, closed, closed,
+     empty, new, new, scopeOk) .
+search [1] in PHOEBE-TWO-TASK : initial =>*
+  st(pDone, cFailed, closed, closed, closed, closed,
+     empty, new, new, scopeFailed) .
+
+--- Closed handles cannot be forked back into existence.
+search [1] in PHOEBE-TWO-TASK :
+  st(pRunning, cDormant, closed, absent,
+     heldParent, absent, empty, new, new, scopeOpen)
+  =>+ st(pRunning, cDormant, closed, heldParent,
+          heldParent, absent, empty, new, new, scopeOpen) .
