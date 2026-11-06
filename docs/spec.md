@@ -132,9 +132,12 @@ selection policy among multiple receivers remain open.
 
 `?` propagates an existing `Err` as a normal early return; it performs no
 implicit `Option` or error-type conversion. A lexical `with` owns a built-in
-closable capability and closes it on every normal exit, including `?`, unless
-it has already moved or closed. A rejected send returns its unsent message;
-any capabilities in that message remain the caller's responsibility.
+communication capability or an aggregate containing them and closes any
+still-owned capabilities on every normal exit, including `?`. A rejected send
+returns its intact message. The caller may recover it or consume it with the
+compiler-derived, structural `close_caps()`; this runs no user code. A named
+`send_or_close` convenience operation may explicitly discard it on rejection.
+Decision 0004 records the ownership and cleanup rule.
 
 ## 5. Modules, generics, and operators
 
@@ -159,7 +162,8 @@ spawn, channel fork/send/receive/close, park/resume, and scope join, plus
 capability moves into and out of messages. Region parameters are inferred by
 the frontend and explicit only in the IR. The frontend and lowering must check
 type, definite initialization, region reachability, borrow exclusivity,
-capability use, message ownership at enqueue/dequeue/discard, cleanup on all
+capability use, message ownership at enqueue/dequeue/discard, structural
+cleanup on all
 normal exit edges, and values live across suspension for each program. A full
 IR verifier rechecks dominance and these
 invariants during compiler development and CI; release builds may omit that

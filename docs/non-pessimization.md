@@ -71,6 +71,10 @@ instructions for one event or eliminate instructions when semantics allow it.
 9. Generic bodies are shared by ABI shape initially. Trait calls that require
    dictionaries are visible as `call.indirect`; concrete calls remain direct.
    A later runtime-optimized mode may specialize selected generic calls.
+10. `close_caps()` is structural: only owned, active communication-capability
+    fields produce close operations. Capability-free values introduce no
+    cleanup call. A named `send_or_close` may close a rejected message; an
+    ordinary rejected `send` must return it without hidden cleanup work.
 
 ## 3. Acceptance examples
 

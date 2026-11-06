@@ -19,6 +19,8 @@ an abstraction over that core. `docs/pony-actors.md` explores the actor details.
 `docs/decisions/0003-language-baseline.md` records the agreed type, borrow,
 error, module, and ABI-shape generic policies; `docs/language-features.md`
 develops them and lists the next questions.
+`docs/decisions/0004-structural-capability-cleanup.md` specifies cleanup of
+communication capabilities inside rejected or discarded messages.
 `docs/concurrency-pressure-tests.md` compares scoped tasks and actors on
 stateful and asynchronous workloads and records the resulting design gates.
 `formal/core.maude` explores one task with nested regions and a reference.

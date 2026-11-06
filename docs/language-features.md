@@ -96,13 +96,13 @@ catch task failure. Conversions use an explicit operation such as
 `option.ok_or(ParseError.Missing("port"))?` or `error.map_err(...)`.
 
 Linear values must be consumed, returned, transferred, or covered by a lexical
-cleanup owner on every normal exit. `with name = capability { ... }` owns a
-built-in closable capability until it is explicitly moved or closed. On fall-
-through, `return`, or `?`, the compiler closes any still-owned capability in
-reverse lexical order. An explicit `close()` consumes it and suppresses that
-cleanup. A move transfers responsibility to the destination. The initial
-`with` mechanism covers built-in channel and reply capabilities; user-defined
-destructors and fallible cleanup are outside this slice.
+cleanup owner on every normal exit. `with name = value { ... }` owns a built-in
+communication capability or an aggregate containing them until it is moved or
+closed. On fall-through, `return`, or `?`, the compiler structurally closes
+any still-owned capabilities in reverse lexical order. An explicit `close()`
+or `close_caps()` consumes the owned value and suppresses that cleanup. A move
+transfers responsibility to the destination. The generated cleanup visits
+only active, owned fields; it invokes no user destructor and cannot fail.
 
 ```text
 fn publish(out: Sender<Count>, input: &String)
@@ -119,14 +119,38 @@ fn publish(out: Sender<Count>, input: &String)
 
 If a rejected request send returns a message containing a `ReplyTo` right,
 that right must be closed or otherwise consumed before `?` may return.
-`map_err` alone does not silently discard that right. A
-convenience `send_or_close` may make this common path short, but it must be
-an explicit library operation with visible discard semantics.
+`map_err` alone does not silently discard it. The compiler derives
+`close_caps()` for an aggregate, recursively closing its communication
+capabilities without running user code. The ordinary send returns the intact
+message; a named `send_or_close` convenience operation may explicitly discard
+it on rejection.
 
-Task failure is distinct from `Err`: the runtime closes owned built-in
-capabilities, wakes peers, and reports failure to the scope. It does not run
-user code or user destructors. This means `with` has a static normal-exit
-lowering plus runtime-known failure cleanup, not an arbitrary unwind stack.
+```text
+val (reply_to, reply_from) = reply<Value>()
+with receiver = reply_from {
+  when (service.send(Get(key, reply_to))) {
+    Sent -> receiver.receive()
+    Closed(request) -> {
+      request.close_caps() // closes the returned ReplyTo
+      Err(ServiceClosed)
+    }
+  }
+}
+```
+
+The compiler must track the active variant and owned fields if an aggregate
+is destructured. For failure cleanup, each suspension or failure point must
+identify its live capabilities. Capability-free messages need no capability
+cleanup call. The first implementation may restrict partial moves from a
+capability-bearing aggregate if precise per-field tracking proves costly;
+whole-value moves and complete destructuring are enough for the examples so
+far.
+
+Task failure is distinct from `Err`: the runtime closes owned communication
+capabilities, including those nested in aggregates, wakes peers, and reports
+failure to the scope. It does not run user code or user destructors. This
+means `with` has a static normal-exit lowering plus compiler-provided runtime
+failure cleanup, not an arbitrary unwind stack.
 
 ## Modules and package builds
 
@@ -204,8 +228,8 @@ not part of this obligation.
 
 ## Questions to test next
 
-1. Can `with` cover a rejected send without hiding ownership of the returned
-   message, especially when the message contains multiple capabilities?
+1. How should partial moves and complete destructuring of an aggregate with
+   multiple capabilities appear in the checked IR and failure cleanup table?
 2. Which ABI shapes can share a body, and which generic collection operations
    need a runtime-optimized mode to reach their performance goals?
 3. Can field-sensitive borrows remain a small, local analysis when a task
