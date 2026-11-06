@@ -1,7 +1,7 @@
 # Concurrency pressure tests
 
 Status: design exploration, 2026-11-06. The syntax below is illustrative.
-`! proposed` marks an operation or type that draft 0.3 cannot yet express.
+`! proposed` marks syntax or behavior not yet fully specified in draft 0.4.
 These examples compare APIs, not measured performance or formal proofs.
 
 ## 1. Request/reply across an independently owned service
@@ -9,7 +9,7 @@ These examples compare APIs, not measured performance or formal proofs.
 A service owns its state. A client wants a one-shot response.
 
 ```text
-data Query { Get(key: Key, reply: ReplyTo<Option<Value>>) } // ! proposed
+data Query { Get(key: Key, reply: ReplyTo<Option<Value>>) }
 
 fn cache(inbox: Receiver<Query>) {
   var entries = SlotMap<Key, Value>()
@@ -24,9 +24,9 @@ fn cache(inbox: Receiver<Query>) {
 }
 ```
 
-The current spec forbids channel handles inside messages. The valid workaround
-is to send a request ID and use one shared reply channel, then route replies
-to waiting clients. That routing is substantial code for a basic interaction.
+Draft 0.4 permits the one-shot `ReplyTo` to move through a request message.
+The earlier closed-values-only rule required request IDs and a shared reply
+channel with routing code for this basic interaction.
 
 An actor API makes the interaction read naturally:
 
@@ -40,13 +40,11 @@ actor Cache {
 ```
 
 It has the same underlying capability-transfer requirement. `ReplyTo<T>` is a
-proposed one-shot, nonblocking capability; `complete` consumes it and reports
-if the caller already stopped waiting. A sound extension would allow a
-*linear communication capability* to move into a message, with
-the queue owning it until delivery. If the message is discarded or the
-receiver fails, the runtime must close that capability exactly once. This is
-distinct from allowing arbitrary references in messages. The existing Maude
-models do not cover it.
+one-shot, nonblocking capability; `complete` consumes it and reports if the
+caller already stopped waiting. The queue owns it until delivery. Discard or
+receiver failure closes it exactly once. The bounded
+`formal/reply_capability.maude` model covers one such right and request; the
+general sendability rule remains an unproved design obligation.
 
 ## 2. A chat room with dynamic membership and slow subscribers
 
@@ -173,7 +171,7 @@ needs retained suspension storage even if actor handlers do not.
 A single task or actor that owns a map serializes every lookup. Sending a
 whole snapshot to each reader copies it. Replicating a snapshot per worker
 trades memory and update cost for read throughput. Sharing one immutable
-region across workers would need a lifetime mechanism absent from draft 0.3;
+region across workers would need a lifetime mechanism absent from draft 0.4;
 a managed heap or scoped immutable-region ownership could provide one. Actor
 syntax alone does not solve the read bottleneck.
 
@@ -187,8 +185,9 @@ syntax alone does not solve the read bottleneck.
 | Chained remote operations | Suspended task | Suspension frame and ask/reply API |
 | Read-heavy shared state | Neither alone | Snapshot replication or shared immutable lifetime |
 
-The first design gate is **move-only communication capabilities in messages**.
-Without it, both request/reply and dynamic membership are awkward or invalid.
-The second is a precise bounded-mailbox policy for sends from actor handlers.
-The third is an ownership and cost model for long-lived maps and read-only
-snapshots. These are candidate changes, not adopted language rules.
+The first design gate, **move-only communication capabilities in messages**,
+is adopted in draft 0.4 and modeled for one `ReplyTo`. General handle transfer,
+including the `Sender<RoomEvent>` in the chat-room sketch, needs a further
+model. The remaining gates are a precise bounded-mailbox policy for sends
+from actor handlers and an ownership and cost model for long-lived maps and
+read-only snapshots.

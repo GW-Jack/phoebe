@@ -1,0 +1,166 @@
+--- Bounded request/reply: one parent, one service child, one request slot,
+--- one reply slot, and one linear ReplyTo capability.
+mod PHOEBE-REPLY-CAPABILITY is
+  protecting BOOL .
+
+  sorts Parent Child RequestQueue CapOwner ReplySlot Receiver Sender Service
+        RequestMark Completion Scope State .
+  ops pRunning pDone : -> Parent [ctor] .
+  ops cRunning cDone cFailed : -> Child [ctor] .
+  ops reqEmpty reqFull : -> RequestQueue [ctor] .
+  ops capParent capQueue capChild capClosed : -> CapOwner [ctor] .
+  ops replyEmpty replyFull : -> ReplySlot [ctor] .
+  ops recvOpen recvCanceled recvReceived : -> Receiver [ctor] .
+  ops sendOpen sendClosed : -> Sender [ctor] .
+  ops serviceOpen serviceClosed : -> Service [ctor] .
+  ops reqNew reqQueued reqDelivered reqDiscarded : -> RequestMark [ctor] .
+  ops noAttempt completeSent completeRejected completeAbandoned : -> Completion [ctor] .
+  ops scopeOpen scopeOk scopeFailed : -> Scope [ctor] .
+
+  --- CapOwner is a single token: the capability can have only one owner.
+  op st : Parent Child RequestQueue CapOwner ReplySlot Receiver Sender
+          Service RequestMark Completion Scope -> State [ctor] .
+  op initial : -> State .
+  eq initial = st(pRunning, cRunning, reqEmpty, capParent, replyEmpty,
+                  recvOpen, sendOpen, serviceOpen, reqNew, noAttempt,
+                  scopeOpen) .
+
+  vars P : Parent .
+  vars C : Child .
+  vars Q : RequestQueue .
+  vars K : CapOwner .
+  vars B : ReplySlot .
+  vars R : Receiver .
+  vars S : Sender .
+  vars V : Service .
+  vars M : RequestMark .
+  vars D : Completion .
+  vars O : Scope .
+
+  --- Sending moves the right into the queue. Receiving moves it to child.
+  rl [send-request] :
+    st(pRunning, cRunning, reqEmpty, capParent, B, R, sendOpen,
+       serviceOpen, reqNew, noAttempt, scopeOpen)
+    => st(pRunning, cRunning, reqFull, capQueue, B, R, sendOpen,
+          serviceOpen, reqQueued, noAttempt, scopeOpen) .
+  rl [receive-request] :
+    st(P, cRunning, reqFull, capQueue, B, R, S,
+       serviceOpen, reqQueued, noAttempt, scopeOpen)
+    => st(P, cRunning, reqEmpty, capChild, B, R, S,
+          serviceOpen, reqDelivered, noAttempt, scopeOpen) .
+
+  --- Complete consumes the right. A canceled receiver rejects a late reply.
+  rl [complete-success] :
+    st(P, cRunning, reqEmpty, capChild, replyEmpty, recvOpen, S,
+       serviceOpen, reqDelivered, noAttempt, scopeOpen)
+    => st(P, cRunning, reqEmpty, capClosed, replyFull, recvOpen, S,
+          serviceOpen, reqDelivered, completeSent, scopeOpen) .
+  rl [complete-canceled] :
+    st(P, cRunning, reqEmpty, capChild, replyEmpty, recvCanceled, S,
+       serviceOpen, reqDelivered, noAttempt, scopeOpen)
+    => st(P, cRunning, reqEmpty, capClosed, replyEmpty, recvCanceled, S,
+          serviceOpen, reqDelivered, completeRejected, scopeOpen) .
+  rl [abandon-reply] :
+    st(P, cRunning, reqEmpty, capChild, replyEmpty, R, S,
+       serviceOpen, reqDelivered, noAttempt, scopeOpen)
+    => st(P, cRunning, reqEmpty, capClosed, replyEmpty, R, S,
+          serviceOpen, reqDelivered, completeAbandoned, scopeOpen) .
+  rl [receive-reply] :
+    st(pRunning, C, Q, capClosed, replyFull, recvOpen, S,
+       V, M, completeSent, scopeOpen)
+    => st(pRunning, C, Q, capClosed, replyEmpty, recvReceived, S,
+          V, M, completeSent, scopeOpen) .
+  rl [cancel-empty-reply] :
+    st(pRunning, C, Q, K, replyEmpty, recvOpen, S, V, M, D, scopeOpen)
+    => st(pRunning, C, Q, K, replyEmpty, recvCanceled, S, V, M, D, scopeOpen) .
+  rl [cancel-queued-reply] :
+    st(pRunning, C, Q, capClosed, replyFull, recvOpen, S,
+       V, M, completeSent, scopeOpen)
+    => st(pRunning, C, Q, capClosed, replyEmpty, recvCanceled, S,
+          V, M, completeSent, scopeOpen) .
+
+  rl [close-unused-reply] :
+    st(pRunning, C, reqEmpty, capParent, B, R, S,
+       V, reqNew, noAttempt, scopeOpen)
+    => st(pRunning, C, reqEmpty, capClosed, B, R, S,
+          V, reqNew, noAttempt, scopeOpen) .
+  rl [close-request-sender] :
+    st(pRunning, C, Q, K, B, R, sendOpen, V, M, D, scopeOpen)
+    => st(pRunning, C, Q, K, B, R, sendClosed, V, M, D, scopeOpen) .
+
+  --- Closing the service discards a pending request and closes its right.
+  rl [service-close-pending] :
+    st(P, cRunning, reqFull, capQueue, B, R, S,
+       serviceOpen, reqQueued, noAttempt, scopeOpen)
+    => st(P, cDone, reqEmpty, capClosed, B, R, S,
+          serviceClosed, reqDiscarded, noAttempt, scopeOpen) .
+  crl [service-close-empty] :
+    st(P, cRunning, reqEmpty, K, B, R, S,
+       serviceOpen, M, D, scopeOpen)
+    => st(P, cDone, reqEmpty, K, B, R, S,
+          serviceClosed, M, D, scopeOpen)
+    if K == capParent or K == capClosed .
+
+  --- Failure closes whichever right the child or its queue currently owns.
+  rl [fail-before-request] :
+    st(P, cRunning, reqEmpty, capParent, B, R, S,
+       serviceOpen, reqNew, noAttempt, scopeOpen)
+    => st(P, cFailed, reqEmpty, capParent, B, R, S,
+          serviceClosed, reqNew, noAttempt, scopeOpen) .
+  rl [fail-with-queued-request] :
+    st(P, cRunning, reqFull, capQueue, B, R, S,
+       serviceOpen, reqQueued, noAttempt, scopeOpen)
+    => st(P, cFailed, reqEmpty, capClosed, B, R, S,
+          serviceClosed, reqDiscarded, noAttempt, scopeOpen) .
+  rl [fail-holding-reply] :
+    st(P, cRunning, reqEmpty, capChild, B, R, S,
+       serviceOpen, reqDelivered, noAttempt, scopeOpen)
+    => st(P, cFailed, reqEmpty, capClosed, B, R, S,
+          serviceClosed, reqDelivered, completeAbandoned, scopeOpen) .
+  rl [fail-after-consumption] :
+    st(P, cRunning, reqEmpty, capClosed, B, R, S,
+       serviceOpen, M, D, scopeOpen)
+    => st(P, cFailed, reqEmpty, capClosed, B, R, S,
+          serviceClosed, M, D, scopeOpen) .
+
+  --- A scope joins only after all rights and buffered replies are resolved.
+  crl [scope-success] :
+    st(pRunning, cDone, reqEmpty, capClosed, replyEmpty, R,
+       sendClosed, serviceClosed, M, D, scopeOpen)
+    => st(pDone, cDone, reqEmpty, capClosed, replyEmpty, R,
+          sendClosed, serviceClosed, M, D, scopeOk)
+    if R == recvCanceled or R == recvReceived .
+  crl [scope-failure] :
+    st(pRunning, cFailed, reqEmpty, capClosed, replyEmpty, R,
+       sendClosed, serviceClosed, M, D, scopeOpen)
+    => st(pDone, cFailed, reqEmpty, capClosed, replyEmpty, R,
+          sendClosed, serviceClosed, M, D, scopeFailed)
+    if R == recvCanceled or R == recvReceived .
+
+  op bad : State -> Bool .
+  eq bad(st(P, C, Q, K, B, R, S, V, M, D, O)) =
+    not ((Q == reqFull) == (K == capQueue)) or
+    not ((Q == reqFull) == (M == reqQueued)) or
+    (K == capParent and not (M == reqNew)) or
+    (K == capChild and not (M == reqDelivered and C == cRunning)) or
+    (M == reqDiscarded and not (K == capClosed and Q == reqEmpty)) or
+    (B == replyFull and
+      not (K == capClosed and D == completeSent and R == recvOpen)) or
+    (R == recvReceived and not (B == replyEmpty and D == completeSent)) or
+    (R == recvCanceled and B == replyFull) or
+    ((D == completeSent or D == completeRejected or
+      D == completeAbandoned) and
+      not (K == capClosed and M == reqDelivered)) or
+    (D == completeRejected and not (R == recvCanceled)) or
+    ((C == cDone or C == cFailed) and
+      not (V == serviceClosed and Q == reqEmpty and
+           not (K == capQueue or K == capChild))) or
+    (C == cRunning and V == serviceClosed) or
+    (P == pDone and
+      not (S == sendClosed and K == capClosed and Q == reqEmpty and
+           B == replyEmpty and (R == recvCanceled or R == recvReceived))) or
+    (P == pDone and O == scopeOpen) or
+    (P == pRunning and not (O == scopeOpen)) or
+    (O == scopeOk and not (P == pDone and C == cDone)) or
+    (O == scopeFailed and not (P == pDone and C == cFailed)) .
+endm

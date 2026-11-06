@@ -1,7 +1,8 @@
 # Pony-inspired actors without garbage collection — design exploration
 
-Status: open design, 2026-11-06. This document does not change Phoebe's
-existing task/channel contract.
+Status: partial decision, 2026-11-06. Decision 0002 adopts actors as an
+abstraction over scoped tasks and channels. Actor syntax, long-lived storage,
+and full-mailbox behavior remain open.
 
 ## What Pony actually provides
 
@@ -66,8 +67,9 @@ rather than parking inside the handler; an ordinary task may park on send.
   region is reclaimed when the actor terminates. A long-lived actor that
   repeatedly replaces state needs explicit storage reuse or a safe pool;
   bulk reclamation at actor exit alone is insufficient.
-- V1 messages are closed values copied into the mailbox and then into the
-  actor's task-local storage. No sender-owned reference enters actor state.
+- Messages may contain closed values copied into the mailbox or linear
+  communication capabilities moved through it. No sender-owned task-local
+  reference enters actor state.
 - A future isolated-region transfer could avoid large copies only if the
   sender gives up all aliases, including inner references, and ownership of
   the region moves atomically. That is a new proof and allocation design,

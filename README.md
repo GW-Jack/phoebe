@@ -13,14 +13,17 @@ criteria for the future compiler.
 `docs/compiler-architecture.md` records the research-informed proof and
 hackability plan.
 `docs/decisions/0001-compiler-principles.md` records the accepted compiler
-principles. `docs/pony-actors.md` explores an actor model without GC; its
-semantics remain undecided.
+principles. `docs/decisions/0002-concurrency-core.md` adopts scoped tasks and
+channels with move-only communication capabilities in messages, and actors as
+an abstraction over that core. `docs/pony-actors.md` explores the actor details.
 `docs/concurrency-pressure-tests.md` compares scoped tasks and actors on
 stateful and asynchronous workloads and records the resulting design gates.
 `formal/core.maude` explores one task with nested regions and a reference.
 `formal/two_task.maude` explores parent and child tasks, explicit handle fork,
-transfer at spawn, channel delivery, close, and child failure. Both have
-one-slot queues and finite state spaces. See `formal/README.md` for the exact
+transfer at spawn, channel delivery, close, and child failure.
+`formal/reply_capability.maude` explores a one-shot reply right moving through
+a request, cancellation, discard, and failure. All three models have finite
+state spaces. See `formal/README.md` for the exact
 models and their limits. These checks do not prove the full language, compiler,
 or native runtime safe.
 

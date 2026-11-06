@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CASES = (
     ("check.maude", 1, 4),
     ("check_two_task.maude", 2, 9),
+    ("check_reply_capability.maude", 1, 10),
 )
 
 

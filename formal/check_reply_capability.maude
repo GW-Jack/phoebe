@@ -1,0 +1,42 @@
+load reply_capability.maude
+
+--- Sanity: a queued request without queue ownership violates accounting.
+reduce in PHOEBE-REPLY-CAPABILITY : bad(st(pRunning, cRunning,
+  reqFull, capParent, replyEmpty, recvOpen, sendOpen, serviceOpen,
+  reqQueued, noAttempt, scopeOpen)) .
+
+search [1] in PHOEBE-REPLY-CAPABILITY : initial =>* X:State
+  such that bad(X:State) == true .
+
+--- Non-vacuous witnesses for ownership transfer, completion, cancellation,
+--- explicit discard, child failure, and both scope outcomes.
+search [1] in PHOEBE-REPLY-CAPABILITY : initial =>*
+  st(pRunning, cRunning, reqFull, capQueue, replyEmpty,
+     recvOpen, sendOpen, serviceOpen, reqQueued, noAttempt, scopeOpen) .
+search [1] in PHOEBE-REPLY-CAPABILITY : initial =>*
+  st(pRunning, cRunning, reqEmpty, capChild, replyEmpty,
+     recvOpen, sendOpen, serviceOpen, reqDelivered, noAttempt, scopeOpen) .
+search [1] in PHOEBE-REPLY-CAPABILITY : initial =>*
+  st(pRunning, cRunning, reqEmpty, capClosed, replyFull,
+     recvOpen, sendOpen, serviceOpen, reqDelivered, completeSent, scopeOpen) .
+search [1] in PHOEBE-REPLY-CAPABILITY : initial =>*
+  st(pRunning, cRunning, reqEmpty, capClosed, replyEmpty,
+     recvReceived, sendOpen, serviceOpen, reqDelivered, completeSent, scopeOpen) .
+search [1] in PHOEBE-REPLY-CAPABILITY : initial =>*
+  st(pRunning, cRunning, reqEmpty, capClosed, replyEmpty,
+     recvCanceled, sendOpen, serviceOpen, reqDelivered, completeRejected, scopeOpen) .
+search [1] in PHOEBE-REPLY-CAPABILITY : initial =>*
+  st(pRunning, cDone, reqEmpty, capClosed, replyEmpty,
+     recvOpen, sendOpen, serviceClosed, reqDiscarded, noAttempt, scopeOpen) .
+search [1] in PHOEBE-REPLY-CAPABILITY : initial =>*
+  st(pRunning, cFailed, reqEmpty, capClosed, replyEmpty,
+     recvOpen, sendOpen, serviceClosed, reqDiscarded, noAttempt, scopeOpen) .
+search [1] in PHOEBE-REPLY-CAPABILITY : initial =>*
+  st(pRunning, cFailed, reqEmpty, capClosed, replyEmpty,
+     recvOpen, sendOpen, serviceClosed, reqDelivered, completeAbandoned, scopeOpen) .
+search [1] in PHOEBE-REPLY-CAPABILITY : initial =>*
+  st(pDone, cDone, reqEmpty, capClosed, replyEmpty,
+     recvReceived, sendClosed, serviceClosed, reqDelivered, completeSent, scopeOk) .
+search [1] in PHOEBE-REPLY-CAPABILITY : initial =>*
+  st(pDone, cFailed, reqEmpty, capClosed, replyEmpty,
+     recvCanceled, sendClosed, serviceClosed, reqDiscarded, noAttempt, scopeFailed) .

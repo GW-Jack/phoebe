@@ -31,12 +31,30 @@ spawn, cross-task delivery, send rejection, explicit discard, normal scope
 completion, and failure reporting. A negative query confirms a closed sender
 cannot be forked back into existence.
 
+## One-shot reply capability model
+
+`reply_capability.maude` has one parent/client, one service child, one request
+slot, one reply slot, and one `ReplyTo` token. The token has exactly one owner:
+parent, request queue, child, or closed. Its rules move the token on send and
+receive, consume it on completion, and close it on abandoned replies, queued
+request discard, or child failure. Cancellation either rejects a later
+completion or discards an already queued reply. A scope joins only after the
+request sender, child, reply token, and reply slot are resolved.
+
+The bad-state predicate checks queue/token agreement, completion and receiver
+states, child cleanup, and scope closure. The exhaustive search explored 88
+reachable states with no encoded bad state. Ten positive queries witness
+ownership transfer, successful and canceled completion, discard, failure,
+and both scope outcomes. A deliberately inconsistent state is classified bad.
+
 ## Evidence boundary
 
-These are finite explorations of two handwritten abstract machines. The
+These are finite explorations of three handwritten abstract machines. The
 two-task model does not include regions or references; the one-task model
 does not include handle fork. Neither models multiple queued messages,
 blocking/parking, scheduling fairness, foreign calls, or executable compiler
-IR. In particular, no proof yet connects either model to the proposed
+IR. The reply model does not cover multiple reply rights, general transferable
+handles, multiple queued requests, or memory regions. In particular, no proof
+yet connects any model to the proposed
 compiler, runtime, or generated machine code. A `No solution.` result means
 only that its stated bad predicate is unreachable under its stated rules.
