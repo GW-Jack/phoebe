@@ -1,4 +1,4 @@
-# Non-pessimization contract — draft 0.1
+# Non-pessimization contract — draft 0.2
 
 Phoebe should hand Cranelift a direct representation of the program, without
 introducing avoidable copies, allocations, checks, scheduler calls, or dynamic
@@ -23,12 +23,13 @@ memory instructions:
 | `call.indirect` | Call through a dynamic function value | Source-level dynamic call or dispatch |
 
 Every event has a source span, a semantic reason, and the owning task/region
-where relevant. A pass that introduces an event must attach its reason; a pass
-that removes an event records the proof or transformation that made it
-unnecessary. Provenance is diagnostic metadata and may be erased after audit.
-The IR verifier rejects an unaccounted event. It also rejects a variable-size
-copy at an ordinary assignment, argument pass, or return where no explicit
-copy or value-semantic boundary exists.
+where relevant. Costful IR constructors require a reason derived from a source
+operation. The core lowering and pass rules should be proved once to preserve
+the event budget for every well-typed input. Full provenance and IR validation
+run in compiler development and CI; they are optional in a normal user build.
+The normal compiler still creates the needed IR operations, but runs no cost
+solver or per-program proof search. See `compiler-architecture.md` for the
+proposed proof boundary and its limits.
 
 These are logical events, not exact counts of memory instructions. A
 `storage.grow` may reuse a reserved task-local page without an OS allocation.
@@ -84,12 +85,14 @@ operation and is necessary under the initial task-local ownership model.
 
 ## 4. Verification path
 
-The first compiler implementation should emit a machine-readable cost ledger
-alongside checked IR. Acceptance tests compare that ledger with these fixtures.
-The IR verifier checks provenance and forbidden operations after each lowering
-pass. Differential tests compare the IR interpreter and native code's
-observable results. Microbenchmarks and generated-code inspection then test
-whether runtime and backend implementations meet the intended cost shape.
+The development compiler should emit a machine-readable cost ledger on demand.
+Acceptance tests compare it with these fixtures. An IR verifier checks
+provenance and forbidden operations in tests and debug builds. Proofs of core
+lowering and reusable rewrite rules are checked when the compiler changes, not
+when user programs compile. Differential tests compare the IR interpreter and
+native code's observable results. Microbenchmarks and generated-code
+inspection test whether runtime and backend implementations meet the intended
+cost shape.
 
 The existing Maude models check safety properties only. A later costed
 transition model could check that source operations and IR traces agree on

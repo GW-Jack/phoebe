@@ -103,8 +103,11 @@ separate *values* (computed data) and *places* (stored objects with identity).
 Its operations include region begin/end, place allocation, reference creation,
 load/store, typed copy, spawn, channel fork/send/receive/close, park/resume,
 and scope join. Region parameters are inferred by the frontend and explicit
-only in the IR. The verifier checks type, dominance, definite initialization,
-region reachability, capability use, and live values across suspension.
+only in the IR. The frontend and lowering must check type, definite
+initialization, region reachability, capability use, and values live across
+suspension for each program. A full IR verifier rechecks dominance and these
+invariants during compiler development and CI; release builds may omit that
+redundant pass when IR is created by trusted, proved lowering operations.
 
 Lowering to physical task frames, stack segments, channel layouts, and
 Cranelift IR occurs after these checks. Each pass must preserve the observable
@@ -112,7 +115,8 @@ behavior of the checked IR, allowing different schedules but not new memory
 errors or unintended loss/duplication of channel messages. The checked IR also
 carries cost events and provenance under the non-pessimization contract in
 `docs/non-pessimization.md`. This contract constrains Phoebe's lowering; it does
-not assert a minimum machine-instruction count from Cranelift.
+not assert a minimum machine-instruction count from Cranelift. The intended
+proof-once architecture is described in `docs/compiler-architecture.md`.
 
 ## 6. Formal obligations
 
