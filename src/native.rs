@@ -18,7 +18,7 @@ use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use cranelift_native::builder as native_builder;
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-use crate::core::{self, CallArg, Operation, Program, Terminator, Type};
+use crate::core::{self, CallArg, MatchBinding, Operation, Program, Terminator, Type};
 use crate::syntax::ParamMode;
 
 pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
@@ -293,7 +293,7 @@ fn compile_functions<M: Module>(
                         else_block,
                         ..
                     } => vec![then_block.0, else_block.0],
-                    Terminator::Match { arms, .. } => arms.iter().map(|target| target.0).collect(),
+                    Terminator::Match { arms, .. } => arms.iter().map(|arm| arm.target.0).collect(),
                 };
                 for target in successors {
                     if !seen[target] {
@@ -439,10 +439,14 @@ fn compile_functions<M: Module>(
                         };
                         let data = &program.data[id.0];
                         let components = get(*subject);
-                        for (tag, target) in arms.iter().enumerate() {
-                            let args = data.payloads[tag]
-                                .filter(|_| !function.blocks[target.0].params.is_empty())
-                                .map(|ty| {
+                        for (tag, arm) in arms.iter().enumerate() {
+                            let args = match arm.binding {
+                                MatchBinding::Discard => vec![],
+                                MatchBinding::Whole => {
+                                    components.iter().copied().map(Into::into).collect()
+                                }
+                                MatchBinding::Payload => {
+                                    let ty = data.payloads[tag].expect("verified payload arm");
                                     shapes
                                         .types(ty)
                                         .into_iter()
@@ -456,10 +460,10 @@ fn compile_functions<M: Module>(
                                             }
                                         })
                                         .collect::<Vec<_>>()
-                                })
-                                .unwrap_or_default();
+                                }
+                            };
                             if tag + 1 == arms.len() {
-                                builder.ins().jump(blocks[target.0], &args);
+                                builder.ins().jump(blocks[arm.target.0], &args);
                             } else {
                                 let next = builder.create_block();
                                 let expected = builder.ins().iconst(types::I64, tag as i64);
@@ -467,7 +471,7 @@ fn compile_functions<M: Module>(
                                     builder.ins().icmp(IntCC::Equal, components[0], expected);
                                 builder
                                     .ins()
-                                    .brif(equal, blocks[target.0], &args, next, &[]);
+                                    .brif(equal, blocks[arm.target.0], &args, next, &[]);
                                 builder.switch_to_block(next);
                             }
                         }

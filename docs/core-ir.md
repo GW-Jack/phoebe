@@ -13,9 +13,10 @@ backedge.
 
 Nominal sum variants have a distinct `Data(id)` type and an explicit `variant`
 instruction. Source `when` checks every variant exactly once, then lowers to
-one `match` terminator with a target per variant. A payload-bearing target
-receives its payload as a typed block parameter. The verifier checks the tag
-bounds and each target's parameter type and count. Payload access therefore
+one `match` terminator with a target per variant. Each edge explicitly binds
+the active payload, the whole subject, or nothing. The verifier checks the tag
+bounds and the edge binding against its target's parameter type and count.
+Payload access therefore
 does not need a separate unchecked field operation or path-sensitive proof
 search. Native lowering expands the match into a tag dispatch; the interpreter
 selects the matching arm directly. Primitive-field products have `product` and
@@ -23,7 +24,8 @@ selects the matching arm directly. Primitive-field products have `product` and
 calls, returns, and joins; `docs/abi-shapes.md` specifies the current shape.
 
 The first `?` lowering uses this same `match` terminator. Its `Err` target
-returns the original sum value; its `Ok` target binds the payload. See
+receives and returns the original sum value through a block parameter; its
+`Ok` target binds the payload. There is no new `Err` construction. See
 `docs/result-try.md` for the executable rule and missing cleanup obligation.
 
 `val` binds an SSA value. `var` creates a task-local scalar place. The current
@@ -46,6 +48,8 @@ correct. Differential tests compare interpreter and JIT results on supported
 programs. The Maude models cover different bounded abstract machines; they
 do not model this executable IR.
 
-Next IR steps are general loan lifetimes and region begin/end, ownership
-moves, cleanup edges, and cost events. The verifier will need to
+The edge binding is a prerequisite for ownership checking, but the current
+verifier does not yet reject reusing the subject after a match or dropping a
+capability-bearing payload. Next IR steps are general loan lifetimes and
+region begin/end, ownership moves, cleanup edges, and cost events. The verifier will need to
 check those without turning ordinary compilation into proof search.

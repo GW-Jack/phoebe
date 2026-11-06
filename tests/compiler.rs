@@ -577,12 +577,27 @@ fn verifier_rejects_forged_match_payload_parameter() {
     let mut program = compile(include_str!("../examples/payload.phoebe"));
     let target =
         if let core::Terminator::Match { arms, .. } = &program.functions[0].blocks[0].terminator {
-            arms[1]
+            arms[1].target
         } else {
             panic!("expected match")
         };
     let param = program.functions[0].blocks[target.0].params[0];
     program.functions[0].value_types[param.0] = core::Type::Bool;
+    assert!(
+        core::verify(&program)
+            .unwrap_err()
+            .contains("match payload parameter mismatch")
+    );
+}
+
+#[test]
+fn verifier_rejects_match_edge_binding_mismatch() {
+    let mut program = compile(include_str!("../examples/payload.phoebe"));
+    if let core::Terminator::Match { arms, .. } = &mut program.functions[0].blocks[0].terminator {
+        arms[1].binding = core::MatchBinding::Whole;
+    } else {
+        panic!("expected match");
+    }
     assert!(
         core::verify(&program)
             .unwrap_err()
@@ -614,10 +629,16 @@ fn result_question_mark_propagates_original_error_across_backends() {
             }
         })
         .unwrap();
+    assert_eq!(arms[1].binding, core::MatchBinding::Whole);
+    let failure = &plus_one.blocks[arms[1].target.0];
     assert!(
-        matches!(plus_one.blocks[arms[1].0].terminator, core::Terminator::Return(value) if value == subject)
+        matches!(failure.terminator, core::Terminator::Return(value) if value == failure.params[0])
     );
-    assert!(plus_one.blocks[arms[1].0].params.is_empty());
+    assert_eq!(
+        plus_one.value_types[failure.params[0].0],
+        plus_one.value_types[subject.0]
+    );
+    assert!(failure.instructions.is_empty());
 }
 
 #[test]

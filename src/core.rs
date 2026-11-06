@@ -97,6 +97,19 @@ pub struct Instruction {
     pub span: Span,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MatchBinding {
+    Discard,
+    Payload,
+    Whole,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MatchArm {
+    pub target: BlockId,
+    pub binding: MatchBinding,
+}
+
 #[derive(Clone, Debug)]
 pub enum Terminator {
     Return(ValueId),
@@ -108,7 +121,7 @@ pub enum Terminator {
     },
     Match {
         subject: ValueId,
-        arms: Vec<BlockId>,
+        arms: Vec<MatchArm>,
     },
 }
 
@@ -455,14 +468,24 @@ impl<'a> Lowerer<'a> {
                 let success = self.block();
                 let payload = self.block_param(success, ok_ty);
                 let failure = self.block();
-                let mut arms = vec![failure; 2];
-                arms[ok_tag] = success;
+                let original = self.block_param(failure, ty);
+                let mut arms = vec![
+                    MatchArm {
+                        target: failure,
+                        binding: MatchBinding::Whole,
+                    };
+                    2
+                ];
+                arms[ok_tag] = MatchArm {
+                    target: success,
+                    binding: MatchBinding::Payload,
+                };
                 self.terminate(Terminator::Match {
                     subject: value,
                     arms,
                 });
                 self.current = failure;
-                self.terminate(Terminator::Return(value));
+                self.terminate(Terminator::Return(original));
                 self.current = success;
                 return Ok((payload, ok_ty));
             }
@@ -725,7 +748,18 @@ impl<'a> Lowerer<'a> {
                     .collect::<Vec<_>>();
                 self.terminate(Terminator::Match {
                     subject: subject_value,
-                    arms: targets.clone(),
+                    arms: targets
+                        .iter()
+                        .zip(&payload_types)
+                        .map(|(target, payload)| MatchArm {
+                            target: *target,
+                            binding: if payload.is_some() {
+                                MatchBinding::Payload
+                            } else {
+                                MatchBinding::Discard
+                            },
+                        })
+                        .collect(),
                 });
                 let mut arm_results = Vec::with_capacity(ordered.len());
                 for (tag, arm) in ordered.into_iter().enumerate() {
@@ -1289,7 +1323,7 @@ pub fn verify(program: &Program) -> Result<(), String> {
                     else_block,
                     ..
                 } => vec![*then_block, *else_block],
-                Terminator::Match { arms, .. } => arms.clone(),
+                Terminator::Match { arms, .. } => arms.iter().map(|arm| arm.target).collect(),
             };
             for target in targets {
                 if target.0 >= function.blocks.len() {
@@ -1445,17 +1479,22 @@ pub fn verify(program: &Program) -> Result<(), String> {
                         return Err(format!("{}: match arm count mismatch", function.name));
                     }
                     let mut distinct = std::collections::HashSet::new();
-                    for (tag, target) in arms.iter().enumerate() {
-                        if !distinct.insert(target.0) {
+                    for (tag, arm) in arms.iter().enumerate() {
+                        if !distinct.insert(arm.target.0) {
                             return Err(format!("{}: duplicate match target", function.name));
                         }
-                        let expected = data.payloads[tag];
-                        let params = &function.blocks[target.0].params;
-                        if params.len() > usize::from(expected.is_some())
-                            || (params.len() == 1
-                                && expected
-                                    .is_some_and(|ty| function.value_types[params[0].0] != ty))
-                        {
+                        let params = &function.blocks[arm.target.0].params;
+                        let valid = match arm.binding {
+                            MatchBinding::Discard => params.is_empty(),
+                            MatchBinding::Payload => data.payloads[tag].is_some_and(|ty| {
+                                params.len() == 1 && function.value_types[params[0].0] == ty
+                            }),
+                            MatchBinding::Whole => {
+                                params.len() == 1
+                                    && function.value_types[params[0].0] == Type::Data(id)
+                            }
+                        };
+                        if !valid {
                             return Err(format!(
                                 "{}: match payload parameter mismatch",
                                 function.name
@@ -1660,17 +1699,19 @@ impl Program {
                     };
                 }
                 Terminator::Match { subject, arms } => {
-                    let Value::Data(_, tag, payload) = get(*subject) else {
+                    let original = get(*subject);
+                    let Value::Data(_, tag, payload) = &original else {
                         unreachable!("verified sum value")
                     };
-                    let target = arms[tag];
-                    if let Some(payload) = payload
-                        && !function.blocks[target.0].params.is_empty()
-                    {
-                        let param = function.blocks[target.0].params[0];
-                        values[param.0] = Some(*payload);
+                    let arm = arms[*tag];
+                    if let Some(param) = function.blocks[arm.target.0].params.first() {
+                        values[param.0] = Some(match arm.binding {
+                            MatchBinding::Payload => *payload.clone().expect("verified payload"),
+                            MatchBinding::Whole => original,
+                            MatchBinding::Discard => unreachable!("verified match binding"),
+                        });
                     }
-                    current = target.0;
+                    current = arm.target.0;
                 }
             }
         }
@@ -1811,8 +1852,8 @@ impl fmt::Display for Program {
                     }
                     Terminator::Match { subject, arms } => {
                         write!(f, "    match v{}", subject.0)?;
-                        for (tag, target) in arms.iter().enumerate() {
-                            write!(f, ", {}->block{}", tag, target.0)?;
+                        for (tag, arm) in arms.iter().enumerate() {
+                            write!(f, ", {}->block{}:{:?}", tag, arm.target.0, arm.binding)?;
                         }
                         writeln!(f)?;
                     }

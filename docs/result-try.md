@@ -13,12 +13,12 @@ payloads, and error conversion are still unimplemented.
 
 For `val x = expression?`, lowering evaluates `expression` once, then emits a
 Core IR `match`. The `Ok` target receives its payload as a typed block
-parameter and continues with `x`. The `Err` target returns the original
-`Result` value. It does not construct another `Err`, copy a payload into a
-temporary, call a runtime helper, or perform a hidden conversion. The match
-target for `Err` intentionally discards its payload parameter. The verifier
-allows a payload-bearing match target to take zero or one payload parameter;
-if present, its type must match the variant declaration.
+parameter and continues with `x`. The `Err` target receives the whole original
+`Result` through a block parameter and returns it. It does not construct
+another `Err`, copy a payload into a temporary, call a runtime helper, or
+perform a hidden conversion. The verifier checks whether each match edge
+passes its payload, its whole subject, or nothing, and checks the target
+parameter type accordingly.
 
 This is a normal return edge. Once lexical capability owners exist, lowering
 must insert their structural closes on the error edge before returning. The
