@@ -7,7 +7,9 @@ tasks, channels, or references.
 `I64` and `Bool` are copyable. Every nominal `Data(id)` value is currently
 affine, even if its fields are small. The source can read primitive product
 fields without consuming the owner. An owning use transfers the whole value.
-There is no implicit copy of a nominal value and no `copy(x)` operation yet.
+There is no implicit copy of a nominal value. `copy(x)` explicitly creates a
+second owned closed value and leaves `x` live; a scalar `copy(x)` is an identity
+use. Every nominal copy appears as `copy.value` in Core IR and the cost ledger.
 
 For a function, let `L_v` be the set of live nominal SSA values and `L_p` the
 set of live nominal places. The verifier applies these transitions in program
@@ -18,6 +20,7 @@ order:
 | Nominal definition | — | Add its value to `L_v` |
 | `move v` | `v ∈ L_v` | Remove `v`; add the result |
 | `place.take p` | `p ∈ L_p` | Remove `p`; add the result |
+| `copy.value v` or `copy.value p` | Owner live | Keep the owner; add the independent result |
 | `field v, i` or `place.field p, i` | Owner live | State unchanged |
 | Owning call, construction, store, jump, return | Each nominal operand live | Remove transferred operands; store makes its destination place live |
 | `match v` | `v ∈ L_v` | Remove `v`; each edge introduces its explicit payload or whole-subject block parameter |

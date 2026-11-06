@@ -317,7 +317,7 @@ fn compile_functions<M: Module>(
                         Operation::Bool(value) => {
                             Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
                         }
-                        Operation::Move(value) => Some(get(*value)),
+                        Operation::Move(value) | Operation::Copy(value) => Some(get(*value)),
                         Operation::Variant(id, tag, payload) => {
                             let mut components =
                                 vec![builder.ins().iconst(types::I64, *tag as i64)];
@@ -401,7 +401,9 @@ fn compile_functions<M: Module>(
                             }
                             None
                         }
-                        Operation::Load(place) | Operation::Take(place) => Some(
+                        Operation::Load(place)
+                        | Operation::Take(place)
+                        | Operation::CopyPlace(place) => Some(
                             shapes
                                 .types(function.place_types[place.0])
                                 .into_iter()

@@ -42,6 +42,8 @@ attached to *places*, rather than pretending a mutable object is an SSA value.
 
 Nominal values are currently affine. Reading a nominal `val` for an owning
 use emits `move`; reading a nominal `var` emits `place.take`. A primitive
+`copy(x)` emits `copy.value` for a nominal owner and preserves the source.
+That IR operation is also an on-demand static cost event. A primitive
 product field read uses `field` on a live SSA owner or `place.field` on a live
 place, leaving the owner available. The ownership verifier propagates live
 value and place states through the CFG, consumes them at owning calls,
@@ -65,6 +67,6 @@ The current check is affine: unused closed values may be dropped. It is not a
 capability cleanup proof. Replacing an owned `var` currently discards the old
 closed value, and `match` may discard a payload. Before capability-bearing
 types enter this IR, those exits need structural cleanup or explicit transfer.
-General loan lifetimes, region begin/end, closed-value `copy`, cleanup edges,
+General loan lifetimes, region begin/end, cleanup edges,
 and cost events remain next steps. The verifier will need to check those
 without turning ordinary compilation into proof search.

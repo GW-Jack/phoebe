@@ -14,6 +14,7 @@ memory instructions:
 
 | Event | Meaning | Required provenance |
 | --- | --- | --- |
+| `copy.value` | Independent copy of a fixed-size nominal value | Explicit `copy(x)` |
 | `copy.bytes` | Copy a variable-size value | Explicit `copy`, channel send/receive, or another named value-semantic boundary |
 | `storage.grow` | Obtain storage for a growing task-local value | Constructed value and owning region |
 | `check.bounds` | Check an index against a collection length | Indexed access and the absence of a range proof |
@@ -32,16 +33,19 @@ solver or per-program proof search. See `compiler-architecture.md` for the
 proposed proof boundary and its limits.
 
 These are logical events, not exact counts of memory instructions. A
-`storage.grow` may reuse a reserved task-local page without an OS allocation.
+`copy.value` may be carried entirely in registers. The current executable
+compiler emits this event for explicit nominal copies and exposes a static
+site ledger with `phoebe cost <file>`; it does not count dynamic executions.
+A `storage.grow` may reuse a reserved task-local page without an OS allocation.
 A `channel.op` may take a fast path without parking. A backend may emit several
 instructions for one event or eliminate instructions when semantics allow it.
 
 ## 2. Source-level cost rules
 
-1. Scalars, references, and small fixed-size aggregates copy by value.
-   Larger fixed-size aggregates need an explicit `copy` or a reference
-   parameter. The small-aggregate threshold is still open. Cranelift may
-   remove redundant machine moves.
+1. Scalars and references copy by value. The current executable compiler
+   conservatively requires explicit `copy` for every nominal type, including
+   small fixed-size aggregates. The eventual small-aggregate threshold is
+   still open. Cranelift may remove redundant machine moves.
 2. Variable-size values do not copy at assignment, ordinary call, or return.
    An owning parameter moves them; `&T` and `&mut T` borrow them explicitly.
    Fresh results are constructed in the destination. An independent copy uses
@@ -99,7 +103,9 @@ operation and is necessary under the initial task-local ownership model.
 
 ## 4. Verification path
 
-The development compiler should emit a machine-readable cost ledger on demand.
+The executable compiler emits a tab-separated static cost-site ledger on
+demand with `phoebe cost <file>`. It currently records `copy.value` only.
+The development compiler should extend it to the remaining event kinds.
 Acceptance tests compare it with these fixtures. An IR verifier checks
 provenance and forbidden operations in tests and debug builds. Proofs of core
 lowering and reusable rewrite rules are checked when the compiler changes, not

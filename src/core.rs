@@ -74,6 +74,7 @@ pub enum Operation {
     Const(i64),
     Bool(bool),
     Move(ValueId),
+    Copy(ValueId),
     Variant(DataId, usize, Option<ValueId>),
     Product(DataId, Vec<ValueId>),
     Field(ValueId, usize),
@@ -90,6 +91,7 @@ pub enum Operation {
     PlaceInit(PlaceId, ValueId),
     Load(PlaceId),
     Take(PlaceId),
+    CopyPlace(PlaceId),
     Store(PlaceId, ValueId),
 }
 
@@ -149,6 +151,17 @@ pub struct Function {
 pub struct Program {
     pub data: Vec<DataDef>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CostEvent {
+    pub function: String,
+    pub block: usize,
+    pub instruction: usize,
+    pub span: Span,
+    pub kind: &'static str,
+    pub type_name: String,
+    pub reason: &'static str,
 }
 
 #[derive(Clone, Debug)]
@@ -525,6 +538,33 @@ impl<'a> Lowerer<'a> {
                         Type::I64,
                     ),
                 });
+            }
+            ExprKind::Copy(inner) => {
+                if let ExprKind::Name(name) = &inner.kind {
+                    let binding = locals.get(name).copied().ok_or_else(|| {
+                        Diagnostic::new(inner.span, format!("unknown local {name}"))
+                    })?;
+                    match binding {
+                        Binding::Val(value)
+                            if matches!(self.value_types[value.0], Type::Data(_)) =>
+                        {
+                            let ty = self.value_types[value.0];
+                            return Ok((self.emit(Operation::Copy(value), ty, expr.span), ty));
+                        }
+                        Binding::Var(place)
+                            if matches!(self.place_types[place.0], Type::Data(_)) =>
+                        {
+                            let ty = self.place_types[place.0];
+                            return Ok((self.emit(Operation::CopyPlace(place), ty, expr.span), ty));
+                        }
+                        _ => {}
+                    }
+                }
+                let (value, ty) = self.expr(inner, locals)?;
+                if matches!(ty, Type::Data(_)) {
+                    return Ok((self.emit(Operation::Copy(value), ty, expr.span), ty));
+                }
+                return Ok((value, ty));
             }
             ExprKind::Neg(rhs) => {
                 let (value, ty) = self.expr(rhs, locals)?;
@@ -1043,6 +1083,12 @@ fn op_type(
             }
             Ok(Some(ty(*value)))
         }
+        Operation::Copy(value) => {
+            if !matches!(ty(*value), Type::Data(_)) {
+                return Err("copy requires a nominal value".into());
+            }
+            Ok(Some(ty(*value)))
+        }
         Operation::Variant(data_id, tag, payload) => {
             let definition = program
                 .data
@@ -1198,13 +1244,18 @@ fn op_type(
             Some(_) => Err("take requires a nominal place".into()),
             None => Err("invalid place ID".into()),
         },
+        Operation::CopyPlace(place) => match function.place_types.get(place.0) {
+            Some(ty @ Type::Data(_)) => Ok(Some(*ty)),
+            Some(_) => Err("copy requires a nominal place".into()),
+            None => Err("invalid place ID".into()),
+        },
     }
 }
 
 fn operands(operation: &Operation) -> Vec<ValueId> {
     match operation {
         Operation::Const(_) | Operation::Bool(_) => vec![],
-        Operation::Move(value) => vec![*value],
+        Operation::Move(value) | Operation::Copy(value) => vec![*value],
         Operation::Variant(_, _, payload) => payload.iter().copied().collect(),
         Operation::Product(_, fields) => fields.clone(),
         Operation::Field(value, _) => vec![*value],
@@ -1213,7 +1264,10 @@ fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::Store(_, a)
         | Operation::LoadRef(a) => vec![*a],
         Operation::StoreRef(a, b) => vec![*a, *b],
-        Operation::Load(_) | Operation::Take(_) | Operation::ReadField(_, _) => vec![],
+        Operation::Load(_)
+        | Operation::Take(_)
+        | Operation::CopyPlace(_)
+        | Operation::ReadField(_, _) => vec![],
         Operation::Add(a, b)
         | Operation::Sub(a, b)
         | Operation::Mul(a, b)
@@ -1335,7 +1389,7 @@ fn verify_ownership(program: &Program) -> Result<(), OwnershipError> {
                         }
                         state.places[place.0] = false;
                     }
-                    Operation::ReadField(place, _) => {
+                    Operation::ReadField(place, _) | Operation::CopyPlace(place) => {
                         if !state.places[place.0] {
                             return Err(OwnershipError {
                                 span,
@@ -1645,6 +1699,7 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                 }
                 if let Operation::Load(place)
                 | Operation::Take(place)
+                | Operation::CopyPlace(place)
                 | Operation::ReadField(place, _)
                 | Operation::Store(place, _) = instruction.operation
                 {
@@ -1773,6 +1828,34 @@ pub fn verify(program: &Program) -> Result<(), String> {
 }
 
 impl Program {
+    pub fn cost_events(&self) -> Vec<CostEvent> {
+        let mut events = Vec::new();
+        for function in &self.functions {
+            for (block_id, block) in function.blocks.iter().enumerate() {
+                for (instruction_id, instruction) in block.instructions.iter().enumerate() {
+                    let ty = match instruction.operation {
+                        Operation::Copy(value) => function.value_types[value.0],
+                        Operation::CopyPlace(place) => function.place_types[place.0],
+                        _ => continue,
+                    };
+                    let Type::Data(id) = ty else {
+                        continue;
+                    };
+                    events.push(CostEvent {
+                        function: function.name.clone(),
+                        block: block_id,
+                        instruction: instruction_id,
+                        span: instruction.span,
+                        kind: "copy.value",
+                        type_name: self.data[id.0].name.clone(),
+                        reason: "explicit",
+                    });
+                }
+            }
+        }
+        events
+    }
+
     pub fn function(&self, name: &str) -> Option<(FunctionId, &Function)> {
         self.functions
             .iter()
@@ -1842,6 +1925,7 @@ impl Program {
                     Operation::Const(x) => Some(Value::I64(*x)),
                     Operation::Bool(x) => Some(Value::Bool(*x)),
                     Operation::Move(value) => Some(get(*value)),
+                    Operation::Copy(value) => Some(get(*value)),
                     Operation::Variant(data_id, tag, payload) => Some(Value::Data(
                         *data_id,
                         *tag,
@@ -1897,6 +1981,11 @@ impl Program {
                     Operation::Take(place) => {
                         Some(stores[base + place.0].take().expect("verified owned place"))
                     }
+                    Operation::CopyPlace(place) => Some(
+                        stores[base + place.0]
+                            .clone()
+                            .expect("verified owned place"),
+                    ),
                     Operation::LoadRef(reference) => {
                         let Value::Ref(slot) = get(*reference) else {
                             unreachable!("verified reference")
@@ -2012,6 +2101,7 @@ impl fmt::Display for Program {
                         Operation::Const(x) => write!(f, "const {x}")?,
                         Operation::Bool(x) => write!(f, "bool {x}")?,
                         Operation::Move(value) => write!(f, "move v{}", value.0)?,
+                        Operation::Copy(value) => write!(f, "copy.value v{}", value.0)?,
                         Operation::Variant(id, tag, payload) => write!(
                             f,
                             "variant {}.{}",
@@ -2064,6 +2154,7 @@ impl fmt::Display for Program {
                         }
                         Operation::Load(place) => write!(f, "place.load p{}", place.0)?,
                         Operation::Take(place) => write!(f, "place.take p{}", place.0)?,
+                        Operation::CopyPlace(place) => write!(f, "copy.value p{}", place.0)?,
                         Operation::Store(place, value) => {
                             write!(f, "place.store p{}, v{}", place.0, value.0)?
                         }

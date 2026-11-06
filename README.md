@@ -13,7 +13,8 @@ with optional primitive payloads, and nominal products with primitive fields.
 It supports arithmetic, conditions, exhaustive `when`, mutable locals, loops,
 call-site scalar borrows, and `?` on concrete `Result<T, E>` applications
 with primitive or existing nominal payloads. Nominal values have affine move
-checking across branches and loops. The compiler then
+checking across branches and loops, and `copy(x)` records an explicit
+fixed-size copy cost. The compiler then
 lowers them to checked Core IR. Programs run
 through an interpreter or Cranelift JIT. The compiler can also
 build a standalone executable for a zero-argument `main` using Cranelift
@@ -31,6 +32,8 @@ cargo run -- run examples/product.phoebe
 cargo run -- run examples/payload.phoebe
 cargo run -- run examples/try.phoebe
 cargo run -- run examples/nested_result.phoebe
+cargo run -- run examples/copy.phoebe
+cargo run -- cost examples/copy.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
 cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow

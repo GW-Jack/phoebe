@@ -6,13 +6,13 @@ use std::process::ExitCode;
 use phoebe::{core, native, syntax};
 
 fn usage() -> &'static str {
-    "usage: phoebe check <file> | phoebe ir <file> | phoebe run <file> [--interp] [function] [I64 args...] | phoebe build <file> -o <executable>"
+    "usage: phoebe check <file> | phoebe ir <file> | phoebe cost <file> | phoebe run <file> [--interp] [function] [I64 args...] | phoebe build <file> -o <executable>"
 }
 
 fn command() -> Result<(), String> {
     let mut args = env::args().skip(1);
     let action = args.next().ok_or_else(|| usage().to_owned())?;
-    if !matches!(action.as_str(), "check" | "ir" | "run" | "build") {
+    if !matches!(action.as_str(), "check" | "ir" | "cost" | "run" | "build") {
         return Err(usage().to_owned());
     }
     let path = args.next().ok_or_else(|| usage().to_owned())?;
@@ -31,6 +31,25 @@ fn command() -> Result<(), String> {
                 return Err(usage().into());
             }
             print!("{program}");
+        }
+        "cost" => {
+            if args.next().is_some() {
+                return Err(usage().into());
+            }
+            println!("function\tblock\tinstruction\tstart\tend\tkind\ttype\treason");
+            for event in program.cost_events() {
+                println!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    event.function,
+                    event.block,
+                    event.instruction,
+                    event.span.start,
+                    event.span.end,
+                    event.kind,
+                    event.type_name,
+                    event.reason
+                );
+            }
         }
         "run" => {
             let rest = args.collect::<Vec<_>>();

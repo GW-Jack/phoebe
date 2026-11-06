@@ -8,6 +8,7 @@ enum TokenKind {
     Val,
     Var,
     Mut,
+    Copy,
     While,
     If,
     Else,
@@ -72,6 +73,7 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     "val" => TokenKind::Val,
                     "var" => TokenKind::Var,
                     "mut" => TokenKind::Mut,
+                    "copy" => TokenKind::Copy,
                     "while" => TokenKind::While,
                     "if" => TokenKind::If,
                     "else" => TokenKind::Else,
@@ -292,6 +294,7 @@ pub enum ExprKind {
     Int(i64),
     Bool(bool),
     Name(String),
+    Copy(Box<Expr>),
     Neg(Box<Expr>),
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
@@ -726,6 +729,19 @@ impl Parser {
                         kind: ExprKind::Name(name),
                         span,
                     }
+                }
+            }
+            Token {
+                kind: TokenKind::Copy,
+                span,
+            } => {
+                self.pos += 1;
+                self.expect(&TokenKind::LParen, "(")?;
+                let value = self.expr(0)?;
+                let end = self.expect(&TokenKind::RParen, ")")?.span;
+                Expr {
+                    kind: ExprKind::Copy(Box::new(value)),
+                    span: span.join(end),
                 }
             }
             Token {

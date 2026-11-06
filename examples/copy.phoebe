@@ -1,0 +1,13 @@
+data Pair { left: I64, right: I64 }
+
+fn left(pair: Pair) -> I64 = pair.left
+fn right(pair: Pair) -> I64 = pair.right
+
+fn main() -> I64 {
+  val pair = Pair(20, 22);
+  var mutable = copy(pair);
+  val a = left(copy(mutable));
+  val b = right(pair);
+  val c = left(mutable);
+  a + b + c - 20
+}

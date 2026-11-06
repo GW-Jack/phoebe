@@ -793,3 +793,46 @@ fn verifier_rejects_forged_second_nominal_move() {
             .contains("use after move")
     );
 }
+
+#[test]
+fn explicit_nominal_copies_preserve_owners_and_record_costs() {
+    let program = compile(include_str!("../examples/copy.phoebe"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-copy-aot-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let result = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8(result.stdout).unwrap(), "42\n");
+
+    let events = program.cost_events();
+    assert_eq!(events.len(), 2);
+    assert!(events.iter().all(|event| event.kind == "copy.value"
+        && event.type_name == "Pair"
+        && event.reason == "explicit"));
+    assert!(program.to_string().contains("copy.value"));
+    assert!(
+        compile(include_str!("../examples/product.phoebe"))
+            .cost_events()
+            .is_empty()
+    );
+}
+
+#[test]
+fn copying_a_moved_owner_is_rejected() {
+    let source = "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { val p = Pair(20,22); val a = use(p); a + use(copy(p)) }";
+    let error = syntax::parse(source)
+        .and_then(|ast| core::lower(&ast))
+        .unwrap_err();
+    assert!(error.message.contains("use after move"), "{error:?}");
+    assert_eq!(&source[error.span.start..error.span.end], "copy(p)");
+}
+
+#[test]
+fn copying_a_scalar_has_no_cost_event() {
+    let program = compile("fn main() -> I64 { val x = 21; copy(x) + x }");
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert!(program.cost_events().is_empty());
+}

@@ -39,7 +39,8 @@ calls a zero-argument `main` returning I64. A later shape policy must decide
 when a larger aggregate switches to indirect passing or explicit copying;
 the current compiler does not enforce that cost threshold. User-declared sum
 payloads and product fields are still limited to primitive values. Generic
-shape sharing and ownership moves remain unimplemented.
+shape sharing and general capability ownership remain unimplemented. Affine
+nominal moves and explicit fixed-size copies are checked in Core IR.
 
 The verifier checks the nominal data ID, field count, field types, and field
 projection index before native lowering. A future proof obligation is that

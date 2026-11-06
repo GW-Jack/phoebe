@@ -41,13 +41,15 @@ fields. It supports up to four owned parameters (I64 borrows only), `val` and
 negation, `+`, `-`, `*`, `==`, `<`, `if` expressions with block arms, exhaustive
 `when` expressions, acyclic direct calls, call-site `&I64` and `&mut I64`
 arguments, `?` on concrete built-in `Result<T, E>` applications with
-primitive or existing nominal payloads,
-and a matching tail expression. Nominal values have affine move checking:
+primitive or existing nominal payloads, and a matching tail expression.
+Nominal values have affine move checking:
 owning uses consume them, product field reads preserve them, and CFG joins
-reject later reuse when any incoming path has moved the owner. Recursion is
-rejected until task stacks have safe growth limits. Arithmetic wraps at 64
-bits in both interpreter and native execution. `phoebe check`, `phoebe ir`,
-`phoebe run`, and `phoebe build <file> -o <output>` work on that subset.
+reject later reuse when any incoming path has moved the owner. `copy(x)` makes
+an explicit independent nominal copy and records a `copy.value` cost site.
+Recursion is rejected until task stacks have safe growth limits. Arithmetic
+wraps at 64 bits in both interpreter and native execution. `phoebe check`,
+`phoebe ir`, `phoebe cost`, `phoebe run`, and
+`phoebe build <file> -o <output>` work on that subset.
 Native execution uses Cranelift JIT or Cranelift object emission linked with
 the host `cc`; `--interp` selects the reference interpreter. The built
 executable runs without the compiler process and prints the I64 returned by
@@ -85,6 +87,8 @@ cargo run -- run examples/product.phoebe
 cargo run -- run examples/payload.phoebe
 cargo run -- run examples/try.phoebe
 cargo run -- run examples/nested_result.phoebe
+cargo run -- run examples/copy.phoebe
+cargo run -- cost examples/copy.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
 cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow
