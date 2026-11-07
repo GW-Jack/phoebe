@@ -71,8 +71,12 @@ current `?` rule and its missing user-declared nested payload, generic function,
 cleanup work.
 
 This slice establishes the parser → checked IR → interpreter/Cranelift path.
-It does not yet implement general ownership, concurrency, module, or release
-gates above. The `examples/cost/` files other than scalar `identity` remain
+It does not yet implement general ownership, concurrency, or all release
+gates above. A local `phoebe.toml` manifest and explicit imports now compile
+multiple modules together; `examples/multi_module/` runs in both engines and
+builds a standalone executable. `docs/modules.md` describes that path and
+the absent external dependency, interface cache, and incremental rebuild
+support. The `examples/cost/` files other than scalar `identity` remain
 design fixtures, not executable acceptance tests.
 
 Separately, `src/runtime.rs` implements an unconnected cooperative scheduler

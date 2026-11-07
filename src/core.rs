@@ -435,6 +435,34 @@ impl<'a> Lowerer<'a> {
                     (Operation::Variant(id, tag, None), Type::Data(id))
                 }
             }
+            ExprKind::QualifiedCall(name, member, args) => {
+                if self.data_names.contains_key(name) {
+                    let [CallArgument::Value(payload)] = args.as_slice() else {
+                        return Err(Diagnostic::new(
+                            expr.span,
+                            "variant constructor requires one owned payload",
+                        ));
+                    };
+                    return self.expr(
+                        &Expr {
+                            kind: ExprKind::VariantCall(
+                                name.clone(),
+                                member.clone(),
+                                Box::new(payload.clone()),
+                            ),
+                            span: expr.span,
+                        },
+                        locals,
+                    );
+                }
+                return self.expr(
+                    &Expr {
+                        kind: ExprKind::Call(format!("{name}.{member}"), args.clone()),
+                        span: expr.span,
+                    },
+                    locals,
+                );
+            }
             ExprKind::VariantCall(name, variant, payload) => {
                 let id = self.data_names.get(name).copied().ok_or_else(|| {
                     Diagnostic::new(expr.span, format!("unknown data type {name}"))
@@ -886,6 +914,12 @@ impl<'a> Lowerer<'a> {
 }
 
 pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
+    if let Some(import) = ast.imports.first() {
+        return Err(Diagnostic::new(
+            import.span,
+            "imports require a phoebe.toml project manifest",
+        ));
+    }
     let mut data = Vec::with_capacity(ast.data.len());
     let mut data_names = HashMap::new();
     for declaration in &ast.data {

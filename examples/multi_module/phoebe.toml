@@ -1,0 +1,7 @@
+[package]
+name = "multi_module"
+root = "app"
+
+[modules]
+app = "app.phoebe"
+math = "math.phoebe"

@@ -1,0 +1,12 @@
+data Maybe { None, Some(value: I64) }
+
+fn unwrap(value: Maybe) -> I64 = when (value) {
+  Maybe.None -> { 0 },
+  Maybe.Some(number) -> { number },
+}
+
+fn wrap() -> Maybe = Maybe.Some(22)
+
+fn value() -> I64 = unwrap(wrap())
+
+fn add(a: I64, b: I64) -> I64 = a + b

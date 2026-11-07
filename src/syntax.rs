@@ -3,6 +3,7 @@ use crate::{Diagnostic, Span};
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TokenKind {
     Fn,
+    Import,
     Data,
     When,
     Val,
@@ -68,6 +69,7 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
                 match &source[start..i] {
                     "fn" => TokenKind::Fn,
+                    "import" => TokenKind::Import,
                     "data" => TokenKind::Data,
                     "when" => TokenKind::When,
                     "val" => TokenKind::Val,
@@ -188,9 +190,16 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
 
 #[derive(Clone, Debug)]
 pub struct Program {
+    pub imports: Vec<Import>,
     pub data: Vec<Data>,
     pub functions: Vec<Function>,
     pub applied_results: Vec<(TypeName, Span)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Import {
+    pub name: String,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
@@ -304,6 +313,7 @@ pub enum ExprKind {
     If(Box<Expr>, Box<Body>, Box<Body>),
     Member(String, String),
     VariantCall(String, String, Box<Expr>),
+    QualifiedCall(String, String, Vec<CallArgument>),
     Try(Box<Expr>),
     When(Box<Expr>, Vec<WhenArm>),
     Call(String, Vec<CallArgument>),
@@ -344,6 +354,16 @@ impl Parser {
         }
         if name == "Result" {
             return Err(Diagnostic::new(span, "Result requires two type arguments"));
+        }
+        if self.eat(&TokenKind::Dot).is_some() {
+            let (member, end) = self.name()?;
+            if borrowed {
+                return Err(Diagnostic::new(
+                    span.join(end),
+                    "only I64 borrows are implemented",
+                ));
+            }
+            return Ok(TypeName::Named(format!("{name}.{member}")));
         }
         match name.as_str() {
             "I64" => Ok(TypeName::I64),
@@ -448,6 +468,31 @@ impl Parser {
         } else {
             Err(Diagnostic::new(self.current().span, "expected name"))
         }
+    }
+
+    fn call_arguments(&mut self) -> Result<(Vec<CallArgument>, Span), Diagnostic> {
+        let mut args = Vec::new();
+        let end = if let Some(close) = self.eat(&TokenKind::RParen) {
+            close.span
+        } else {
+            loop {
+                if let Some(amp) = self.eat(&TokenKind::Amp) {
+                    let mutable = self.eat(&TokenKind::Mut).is_some();
+                    let (name, name_span) = self.name()?;
+                    args.push(CallArgument::Borrow {
+                        name,
+                        span: amp.span.join(name_span),
+                        mutable,
+                    });
+                } else {
+                    args.push(CallArgument::Value(self.expr(0)?));
+                }
+                if self.eat(&TokenKind::Comma).is_none() {
+                    break self.expect(&TokenKind::RParen, ")")?.span;
+                }
+            }
+        };
+        Ok((args, end))
     }
 
     fn function(&mut self) -> Result<Function, Diagnostic> {
@@ -686,11 +731,10 @@ impl Parser {
                 if self.eat(&TokenKind::Dot).is_some() {
                     let (variant, end) = self.name()?;
                     if self.eat(&TokenKind::LParen).is_some() {
-                        let payload = self.expr(0)?;
-                        let close = self.expect(&TokenKind::RParen, ")")?;
+                        let (args, close) = self.call_arguments()?;
                         Expr {
-                            kind: ExprKind::VariantCall(name, variant, Box::new(payload)),
-                            span: span.join(close.span),
+                            kind: ExprKind::QualifiedCall(name, variant, args),
+                            span: span.join(close),
                         }
                     } else {
                         Expr {
@@ -699,27 +743,7 @@ impl Parser {
                         }
                     }
                 } else if self.eat(&TokenKind::LParen).is_some() {
-                    let mut args = Vec::new();
-                    let end = if let Some(close) = self.eat(&TokenKind::RParen) {
-                        close.span
-                    } else {
-                        loop {
-                            if let Some(amp) = self.eat(&TokenKind::Amp) {
-                                let mutable = self.eat(&TokenKind::Mut).is_some();
-                                let (name, name_span) = self.name()?;
-                                args.push(CallArgument::Borrow {
-                                    name,
-                                    span: amp.span.join(name_span),
-                                    mutable,
-                                });
-                            } else {
-                                args.push(CallArgument::Value(self.expr(0)?));
-                            }
-                            if self.eat(&TokenKind::Comma).is_none() {
-                                break self.expect(&TokenKind::RParen, ")")?.span;
-                            }
-                        }
-                    };
+                    let (args, end) = self.call_arguments()?;
                     Expr {
                         kind: ExprKind::Call(name, args),
                         span: span.join(end),
@@ -813,20 +837,26 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
     };
     let mut functions = Vec::new();
     let mut data = Vec::new();
+    let mut imports = Vec::new();
     while parser.current().kind != TokenKind::Eof {
-        if parser.current().kind == TokenKind::Data {
+        if parser.current().kind == TokenKind::Import {
+            parser.pos += 1;
+            let (name, span) = parser.name()?;
+            imports.push(Import { name, span });
+        } else if parser.current().kind == TokenKind::Data {
             data.push(parser.data()?);
         } else {
             functions.push(parser.function()?);
         }
     }
-    if functions.is_empty() {
+    if functions.is_empty() && data.is_empty() {
         return Err(Diagnostic::new(
             Span { start: 0, end: 0 },
             "expected a function",
         ));
     }
     Ok(Program {
+        imports,
         data,
         functions,
         applied_results: parser.applied_results,

@@ -24,6 +24,9 @@ lowers them to checked Core IR. Programs run
 through an interpreter or Cranelift JIT. The compiler can also
 build a standalone executable for a zero-argument `main` using Cranelift
 object output and the host C linker.
+Local projects can use a `phoebe.toml` manifest and explicit module imports;
+`examples/multi_module/` runs in both engines and builds a standalone binary.
+`docs/modules.md` describes the format and current limits.
 `docs/core-ir.md`, `docs/affine-ownership.md`, and `docs/call-borrows.md`
 describe the current IR and its limits.
 
@@ -38,6 +41,7 @@ cargo run -- run examples/payload.phoebe
 cargo run -- run examples/try.phoebe
 cargo run -- run examples/nested_result.phoebe
 cargo run -- run examples/copy.phoebe
+cargo run -- run examples/multi_module
 cargo run -- cost examples/copy.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe

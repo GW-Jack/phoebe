@@ -3,10 +3,10 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use phoebe::{core, native, syntax};
+use phoebe::{core, native, project, syntax};
 
 fn usage() -> &'static str {
-    "usage: phoebe check <file> | phoebe ir <file> | phoebe cost <file> | phoebe run <file> [--interp] [function] [I64 args...] | phoebe build <file> -o <executable>"
+    "usage: phoebe check <file|project> | phoebe ir <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable>"
 }
 
 fn command() -> Result<(), String> {
@@ -16,9 +16,14 @@ fn command() -> Result<(), String> {
         return Err(usage().to_owned());
     }
     let path = args.next().ok_or_else(|| usage().to_owned())?;
-    let source = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
-    let ast = syntax::parse(&source).map_err(|e| format!("{path}:{}", e.render(&source)))?;
-    let program = core::lower(&ast).map_err(|e| format!("{path}:{}", e.render(&source)))?;
+    let program = if Path::new(&path).is_dir() || path.ends_with(".toml") {
+        let loaded = project::load(Path::new(&path))?;
+        core::lower(&loaded.ast).map_err(|error| loaded.render(&error))?
+    } else {
+        let source = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+        let ast = syntax::parse(&source).map_err(|e| format!("{path}:{}", e.render(&source)))?;
+        core::lower(&ast).map_err(|e| format!("{path}:{}", e.render(&source)))?
+    };
     match action.as_str() {
         "check" => {
             if args.next().is_some() {

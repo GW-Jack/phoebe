@@ -1,6 +1,7 @@
 pub mod capability_flow;
 pub mod core;
 pub mod native;
+pub mod project;
 pub mod runtime;
 pub mod syntax;
 
