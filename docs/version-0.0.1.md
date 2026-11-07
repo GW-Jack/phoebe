@@ -192,6 +192,12 @@ park, wake, return, and ordered failure unwind. It does not prove the Rust
 implementation or generated code.
 The runtime has a tested same-task native call mailbox and child frame stack;
 generated Cranelift calls use that continuation ABI.
+Source `yield;` is an explicit cooperative checkpoint. Core records a typed
+resume edge and a source-spanned `task.yield` cost site. The interpreter and
+native poll backend requeue the task, retaining live places and capabilities;
+the standalone build uses the same runtime ABI. `examples/yield_loop.phoebe`
+has 42 executed yields from one static site. Automatic checkpoints on
+CPU-heavy backedges remain open.
 
 ## Commands
 

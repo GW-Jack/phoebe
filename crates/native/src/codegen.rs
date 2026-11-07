@@ -366,6 +366,7 @@ pub(super) fn compile_functions<M: Module>(
             while let Some(block_id) = ready.pop_front() {
                 order.push(block_id);
                 let successors = match &function.blocks[block_id].terminator {
+                    Terminator::Yield { resume, .. } => vec![resume.0],
                     Terminator::Return(_) => vec![],
                     Terminator::Jump(target, _) => vec![target.0],
                     Terminator::Branch {
@@ -553,6 +554,9 @@ pub(super) fn compile_functions<M: Module>(
                 let get =
                     |id: core::ValueId| values[id.0].clone().expect("verified value is defined");
                 match &block.terminator {
+                    Terminator::Yield { .. } => {
+                        return Err("native yield requires retained task frames".into());
+                    }
                     Terminator::Return(value) => {
                         let returned = get(*value);
                         if let Some(address) = return_address {

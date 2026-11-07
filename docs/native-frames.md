@@ -24,8 +24,10 @@ suspendable callee retains the callee frame and resumes that frame before
 continuing the caller. Reinvoking the call would repeat ownership transfer
 and any earlier effects.
 
-Let `S₀` be functions containing `channel.send.i64` or
-`channel.receive.i64`. The set of suspendable functions is the least fixed
+An explicit `yield;` spills live state and resumes at the following block,
+without replaying the yield. Let `S₀` be functions containing
+`channel.send.i64`, `channel.receive.i64`, or `yield`. The set of suspendable
+functions is the least fixed
 point `S = S₀ ∪ {f | f calls g and g ∈ S}`. `spawn` does not place its parent
 in `S`: the child is a separate task. A function outside `S` keeps its
 ordinary direct calling convention. Runtime-context use is a different
@@ -53,6 +55,7 @@ terminator, including its endpoint and message operands. At a pending call,
 the child owns its arguments and frame; the caller spills values needed
 *after* the call, excluding the result that has not been produced yet. A
 borrowed caller place remains in the caller frame while the child uses it.
+At `yield`, the spill set is the state live in the resume block.
 The union of point-local sets determines the function's payload slots. A
 call-only frame may have no payload slots but still needs a continuation
 header and child-frame link.

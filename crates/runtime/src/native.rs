@@ -173,6 +173,31 @@ pub unsafe extern "C" fn phoebe_receive_i64(
     }
 }
 
+/// Register a cooperative yield and return Pending without changing
+/// capability ownership. The generated frame already holds its resume PC.
+///
+/// # Safety
+///
+/// `bridge` must satisfy the lifetime and exclusive-borrow contract of
+/// `phoebe_channel_new_i64`.
+#[unsafe(export_name = "phoebe_rt_v1_yield")]
+pub unsafe extern "C" fn phoebe_yield(bridge: *mut NativeCallContext) -> i64 {
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let bridge = unsafe { &mut *bridge };
+        let context = unsafe { &mut *(bridge.context as *mut Context<'_>) };
+        context.yield_now()
+    }));
+    match outcome {
+        Ok(Ok(())) => 1,
+        _ => {
+            if !bridge.is_null() {
+                unsafe { *(*bridge).fault = true };
+            }
+            255
+        }
+    }
+}
+
 struct StandaloneRootTask {
     entry: extern "C" fn(*mut NativeCallContext) -> i64,
 }

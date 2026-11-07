@@ -368,6 +368,7 @@ fn rewrite_body(
     };
     for statement in &mut body.statements {
         match statement {
+            Statement::Yield(_) => {}
             Statement::ChannelVal { capacity, .. } => rewrite(capacity)?,
             Statement::Spawn { child, args, .. } => {
                 if local_functions.contains(child) {
@@ -580,6 +581,7 @@ fn shift_program(program: &mut syntax::Program, offset: usize) {
 fn shift_body(body: &mut Body, offset: usize) {
     for statement in &mut body.statements {
         match statement {
+            Statement::Yield(span) => shift_span(span, offset),
             Statement::ChannelVal {
                 sender,
                 receiver,

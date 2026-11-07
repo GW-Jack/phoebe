@@ -91,3 +91,16 @@ rust_test(
     deps = [":phoebe_lib"],
     resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
 )
+
+rust_test(
+    name = "source_yield_tests",
+    crate_root = "tests/source_yield.rs",
+    srcs = [
+        "tests/source_yield.rs",
+        "examples/yield_loop.phoebe",
+        "examples/with_wait.phoebe",
+    ],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)

@@ -255,7 +255,9 @@ pub fn suspendable_functions(program: &Program) -> Result<Vec<bool>, String> {
             function.blocks.iter().any(|block| {
                 matches!(
                     block.terminator,
-                    Terminator::ChannelSend { .. } | Terminator::ChannelReceive { .. }
+                    Terminator::ChannelSend { .. }
+                        | Terminator::ChannelReceive { .. }
+                        | Terminator::Yield { .. }
                 )
             })
         })
@@ -311,7 +313,9 @@ pub fn analyze(program: &Program) -> Result<Vec<FunctionFrame>, String> {
             let mut live = terminator_live(function, block_id, &incoming);
             if matches!(
                 block.terminator,
-                Terminator::ChannelSend { .. } | Terminator::ChannelReceive { .. }
+                Terminator::ChannelSend { .. }
+                    | Terminator::ChannelReceive { .. }
+                    | Terminator::Yield { .. }
             ) {
                 all.union(&live);
                 points.push(point(BlockId(block_id), None, &live));
@@ -453,6 +457,7 @@ fn terminator_live(function: &Function, block_id: usize, incoming: &[Live]) -> L
         live.union(&after);
     };
     match terminator {
+        Terminator::Yield { resume, .. } => edge(*resume, None),
         Terminator::Return(value) => live.values[value.0] = true,
         Terminator::Jump(target, args) => edge(*target, Some(args)),
         Terminator::Branch {

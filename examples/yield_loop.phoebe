@@ -1,0 +1,10 @@
+fn count(limit: I64) -> I64 {
+  var current = 0;
+  while (current < limit) {
+    current = current + 1;
+    yield;
+  }
+  current
+}
+
+fn main() -> I64 = count(42)

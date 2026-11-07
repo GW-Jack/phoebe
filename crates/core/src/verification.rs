@@ -375,6 +375,7 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                 .unwrap_or(Span { start: 0, end: 0 });
             let mut spawn_success = None;
             let successors = match &block.terminator {
+                Terminator::Yield { resume, .. } => vec![resume.0],
                 Terminator::Return(value) => {
                     value_use(&mut state, *value, true, span)?;
                     vec![]
@@ -589,6 +590,7 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
         let mut predecessors = vec![Vec::new(); function.blocks.len()];
         for (block_id, block) in function.blocks.iter().enumerate() {
             let targets = match &block.terminator {
+                Terminator::Yield { resume, .. } => vec![*resume],
                 Terminator::Return(_) => vec![],
                 Terminator::Jump(target, _) => vec![*target],
                 Terminator::Branch {
@@ -742,6 +744,14 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
             }
             let end = block.instructions.len();
             match &block.terminator {
+                Terminator::Yield { resume, .. } => {
+                    if !function.blocks[resume.0].params.is_empty() {
+                        return Err(format!(
+                            "{}: yield resume cannot have parameters",
+                            function.name
+                        ));
+                    }
+                }
                 Terminator::Return(value) => {
                     check_use(*value, block_id, end)?;
                     if function.value_types[value.0] != function.return_type {
@@ -1027,6 +1037,9 @@ pub(super) fn capability_graph(
             }
             let edge = |target: CapTarget, actions| capability_flow::Edge { target, actions };
             let exits = match &block.terminator {
+                Terminator::Yield { resume, .. } => {
+                    vec![edge(CapTarget::Suspend(resume.0), vec![])]
+                }
                 Terminator::Return(_) => vec![edge(
                     if cleanup_return[block_id] {
                         CapTarget::Failure

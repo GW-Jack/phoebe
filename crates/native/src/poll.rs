@@ -57,6 +57,7 @@ pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable,
         "phoebe_rt_v1_send_i64",
         runtime::phoebe_send_i64 as *const u8,
     );
+    jit.symbol("phoebe_rt_v1_yield", runtime::phoebe_yield as *const u8);
     jit.symbol(
         "phoebe_rt_v1_close_handle_i64",
         runtime::phoebe_close_handle_i64 as *const u8,
@@ -283,6 +284,12 @@ fn compile_poll_module<M: Module>(
     let send = module
         .declare_function("phoebe_rt_v1_send_i64", Linkage::Import, &send_signature)
         .map_err(|e| e.to_string())?;
+    let mut yield_signature = module.make_signature();
+    yield_signature.params.push(AbiParam::new(pointer));
+    yield_signature.returns.push(AbiParam::new(types::I64));
+    let yield_function = module
+        .declare_function("phoebe_rt_v1_yield", Linkage::Import, &yield_signature)
+        .map_err(|e| e.to_string())?;
     let mut close_signature = module.make_signature();
     close_signature.params.extend([
         AbiParam::new(pointer),
@@ -499,7 +506,12 @@ fn compile_poll_module<M: Module>(
                         builder.def_var(*var, value);
                     }
                 }
-                builder.ins().jump(retry_blocks[index], &[]);
+                if let Terminator::Yield { resume, .. } = function.blocks[point.block.0].terminator
+                {
+                    builder.ins().jump(blocks[resume.0], &[]);
+                } else {
+                    builder.ins().jump(retry_blocks[index], &[]);
+                }
             }
 
             builder.switch_to_block(fault);
@@ -508,6 +520,7 @@ fn compile_poll_module<M: Module>(
 
             let receive_ref = module.declare_func_in_func(receive, builder.func);
             let send_ref = module.declare_func_in_func(send, builder.func);
+            let yield_ref = module.declare_func_in_func(yield_function, builder.func);
             let close_ref = module.declare_func_in_func(close, builder.func);
             let call_ref = module.declare_func_in_func(call, builder.func);
             let create_ref = module.declare_func_in_func(create, builder.func);
@@ -1047,7 +1060,9 @@ fn compile_poll_module<M: Module>(
                         builder.def_var(variables[error.0][0], status);
                         builder.ins().jump(blocks[failure.0], &[]);
                     }
-                    Terminator::ChannelReceive { .. } | Terminator::ChannelSend { .. } => {
+                    Terminator::Yield { .. }
+                    | Terminator::ChannelReceive { .. }
+                    | Terminator::ChannelSend { .. } => {
                         let index = layout
                             .resumes
                             .iter()
@@ -1065,6 +1080,10 @@ fn compile_poll_module<M: Module>(
                 builder.switch_to_block(retry_blocks[index]);
                 let terminator = &function.blocks[point.block.0].terminator;
                 let status = match terminator {
+                    Terminator::Yield { .. } => {
+                        let call = builder.ins().call(yield_ref, &[bridge]);
+                        builder.inst_results(call)[0]
+                    }
                     Terminator::ChannelReceive { receiver, .. } => {
                         let token = builder.use_var(variables[receiver.0][0]);
                         let out = builder
@@ -1110,6 +1129,10 @@ fn compile_poll_module<M: Module>(
                 builder.ins().return_(&[pending_code]);
 
                 builder.switch_to_block(completed);
+                if matches!(terminator, Terminator::Yield { .. }) {
+                    builder.ins().jump(fault, &[]);
+                    continue;
+                }
                 let is_success = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
                 let success = builder.create_block();
                 let check_other = builder.create_block();
@@ -1260,7 +1283,9 @@ fn validate_poll_function(
             }
         } else if !matches!(
             function.blocks[point.block.0].terminator,
-            Terminator::ChannelReceive { .. } | Terminator::ChannelSend { .. }
+            Terminator::ChannelReceive { .. }
+                | Terminator::ChannelSend { .. }
+                | Terminator::Yield { .. }
         ) {
             return Err("unsupported retained poll point".into());
         }
@@ -1315,9 +1340,12 @@ fn validate_poll_function(
                 | Terminator::Spawn { .. }
                 | Terminator::ChannelReceive { .. }
                 | Terminator::ChannelSend { .. }
+                | Terminator::Yield { .. }
         ) || matches!(
             block.terminator,
-            Terminator::ChannelReceive { .. } | Terminator::ChannelSend { .. }
+            Terminator::ChannelReceive { .. }
+                | Terminator::ChannelSend { .. }
+                | Terminator::Yield { .. }
         ) && !layout
             .resumes
             .iter()

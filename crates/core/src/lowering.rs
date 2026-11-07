@@ -333,6 +333,14 @@ impl<'a> Lowerer<'a> {
                     }
                     self.with_body(name, *span, value, body, locals)?;
                 }
+                Statement::Yield(span) => {
+                    let resume = self.block();
+                    self.terminate(Terminator::Yield {
+                        resume,
+                        span: *span,
+                    });
+                    self.current = resume;
+                }
                 Statement::Val(name, span, expr) | Statement::Var(name, span, expr) => {
                     if locals.contains_key(name) {
                         return Err(Diagnostic::new(*span, format!("duplicate local {name}")));

@@ -24,6 +24,17 @@ impl Program {
                         reason: "explicit",
                     });
                 }
+                if let Terminator::Yield { span, .. } = block.terminator {
+                    events.push(CostEvent {
+                        function: function.name.clone(),
+                        block: block_id,
+                        instruction: block.instructions.len(),
+                        span,
+                        kind: "task.yield",
+                        type_name: "Task".into(),
+                        reason: "explicit",
+                    });
+                }
             }
         }
         events
@@ -50,6 +61,7 @@ impl Program {
                     && (matches!(
                         block.terminator,
                         Terminator::ChannelNew { .. }
+                            | Terminator::Yield { .. }
                             | Terminator::ChannelSend { .. }
                             | Terminator::ChannelReceive { .. }
                             | Terminator::Spawn { .. }
@@ -306,6 +318,14 @@ impl CoreTask {
             }
             let terminator = block.terminator.clone();
             match terminator {
+                Terminator::Yield { resume, .. } => {
+                    self.enter(resume, Vec::new());
+                    context
+                        .as_deref_mut()
+                        .ok_or("yield requires a runtime task")?
+                        .yield_now()?;
+                    return Ok(Poll::Pending);
+                }
                 Terminator::Return(value) => {
                     let result = self.value(value);
                     let frame = self.frames.pop().expect("active frame");
@@ -589,6 +609,9 @@ impl fmt::Display for Program {
                     writeln!(f, "  @{}..{}", instruction.span.start, instruction.span.end)?;
                 }
                 match &block.terminator {
+                    Terminator::Yield { resume, .. } => {
+                        writeln!(f, "    yield resume block{}", resume.0)?
+                    }
                     Terminator::Return(value) => writeln!(f, "    return v{}", value.0)?,
                     Terminator::Jump(target, args) => {
                         write!(f, "    jump block{}(", target.0)?;

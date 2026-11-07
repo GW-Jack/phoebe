@@ -42,6 +42,7 @@ buck2 test //:compiler_tests
 buck2 test //:source_traffic_tests
 buck2 test //:source_spawn_tests
 buck2 test //:source_with_tests
+buck2 test //:source_yield_tests
 buck2 test //...
 ```
 

@@ -13,6 +13,7 @@ enum TokenKind {
     While,
     Spawn,
     With,
+    Yield,
     If,
     Else,
     True,
@@ -81,6 +82,7 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     "while" => TokenKind::While,
                     "spawn" => TokenKind::Spawn,
                     "with" => TokenKind::With,
+                    "yield" => TokenKind::Yield,
                     "if" => TokenKind::If,
                     "else" => TokenKind::Else,
                     "true" => TokenKind::True,
@@ -313,6 +315,7 @@ pub enum Statement {
         value: Expr,
         body: Body,
     },
+    Yield(Span),
     Var(String, Span, Expr),
     Assign(String, Span, Expr),
     While(Expr, Body),
@@ -754,6 +757,11 @@ impl Parser {
                         body,
                     });
                 }
+                continue;
+            }
+            if let Some(start) = self.eat(&TokenKind::Yield) {
+                self.expect(&TokenKind::Semicolon, "; after yield")?;
+                statements.push(Statement::Yield(start.span));
                 continue;
             }
             let assignment = matches!(self.current().kind, TokenKind::Ident(_))

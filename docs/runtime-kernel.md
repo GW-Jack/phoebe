@@ -16,8 +16,10 @@ parks the sender with the original message still in its frame; a receive of an
 empty channel parks the receiver. Queue changes wake a waiting task. A
 one-slot channel never holds more than one message, and no task needs an OS
 thread while parked. `yield_now` requeues a runnable task without treating it
-as a blocked channel operation. Compiler-generated backedge checkpoints are
-still needed to make CPU-heavy Phoebe loops fair.
+as a blocked channel operation. Source `yield;` now lowers to a retained
+continuation in the interpreter and native ABI. Compiler-generated backedge
+checkpoints are still needed to make CPU-heavy Phoebe loops fair without an
+explicit yield.
 The default source-run scope permits 64 tasks and 64 channels, with no reply
 slots; callers can set tighter limits through the Rust API. Task creation
 therefore succeeds in the ordinary interpreter CLI example, while a one-task

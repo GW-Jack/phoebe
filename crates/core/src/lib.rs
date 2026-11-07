@@ -133,6 +133,10 @@ pub struct MatchArm {
 #[derive(Clone, Debug)]
 pub enum Terminator {
     Return(ValueId),
+    Yield {
+        resume: BlockId,
+        span: Span,
+    },
     Jump(BlockId, Vec<ValueId>),
     Branch {
         condition: ValueId,
