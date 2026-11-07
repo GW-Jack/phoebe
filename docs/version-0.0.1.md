@@ -176,8 +176,9 @@ parking and wakeup in the interpreter. The outcome types are added to Core
 only when used. General source capability safety and cancellation cleanup
 remain open. `docs/capability-ir.md` specifies
 the integration boundary.
-Source `with name = endpoint { ... }` now provides lexical fall-through
-cleanup for one bare `Sender<I64>` or `Receiver<I64>`. Exact capability flow
+Source `with name = capability { ... }` provides lexical fall-through
+cleanup for one bare `Sender<I64>`, `Receiver<I64>`, `ReplyTo<I64>`, or
+`ReplyReceiver<I64>`. Exact capability flow
 adds a close only when that right remains live. Explicit close or successful
 transfer suppresses it; source `?` still closes live bare rights on its error
 edge. Nested endpoint scopes run in the interpreter, JIT, and standalone
