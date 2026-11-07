@@ -541,9 +541,15 @@ fn compile_poll_module<M: Module>(
                                     }
                                 }
                             }
-                            let call_inst = builder.ins().call(target_ref, &operands);
                             let result = instruction.result.expect("verified direct call result");
-                            let returned = builder.inst_results(call_inst).to_vec();
+                            let returned = codegen::emit_direct_call(
+                                &mut builder,
+                                target_ref,
+                                operands,
+                                &shapes.types(program.functions[target.0].return_type),
+                                pointer,
+                                codegen::direct_register_results(module),
+                            )?;
                             for (var, value) in variables[result.0].iter().zip(returned) {
                                 builder.def_var(*var, value);
                             }

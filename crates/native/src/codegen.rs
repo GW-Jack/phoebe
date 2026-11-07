@@ -1,5 +1,53 @@
 use super::*;
 
+/// Phoebe currently flattens only integer and pointer-shaped return parts.
+/// Cranelift's supported host conventions allow eight such return registers
+/// on AArch64 and two on x86-64. Other hosts conservatively use two.
+pub(super) fn direct_register_results<M: Module>(module: &M) -> usize {
+    if module.isa().name() == "aarch64" {
+        8
+    } else {
+        2
+    }
+}
+
+pub(super) fn emit_direct_call(
+    builder: &mut FunctionBuilder<'_>,
+    callee: cranelift_codegen::ir::FuncRef,
+    mut args: Vec<ClValue>,
+    results: &[cranelift_codegen::ir::Type],
+    pointer: cranelift_codegen::ir::Type,
+    register_results: usize,
+) -> Result<Vec<ClValue>, String> {
+    if results.len() <= register_results {
+        let call = builder.ins().call(callee, &args);
+        return Ok(builder.inst_results(call).to_vec());
+    }
+    let bytes = results
+        .len()
+        .checked_mul(8)
+        .and_then(|bytes| u32::try_from(bytes).ok())
+        .ok_or("direct call result shape exceeds stack slot")?;
+    let slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, bytes, 3));
+    args.push(builder.ins().stack_addr(pointer, slot, 0));
+    builder.ins().call(callee, &args);
+    results
+        .iter()
+        .enumerate()
+        .map(|(part, ty)| {
+            let offset =
+                i32::try_from(part * 8).map_err(|_| "direct call result offset overflow")?;
+            let raw = builder.ins().stack_load(pointer, types::I64, slot, offset);
+            Ok(if *ty == types::I8 {
+                builder.ins().ireduce(types::I8, raw)
+            } else {
+                raw
+            })
+        })
+        .collect()
+}
+
 pub(super) struct AbiShapes {
     pub(super) data: Vec<Vec<cranelift_codegen::ir::Type>>,
     pointer_type: cranelift_codegen::ir::Type,
@@ -86,6 +134,7 @@ pub(super) fn compile_functions<M: Module>(
         }
     }
     let pointer_type = module.target_config().pointer_type();
+    let register_results = direct_register_results(module);
     let shapes = AbiShapes::new(program, pointer_type);
     let runtime_imports = if uses_runtime {
         let mut create_signature = module.make_signature();
@@ -151,12 +200,17 @@ pub(super) fn compile_functions<M: Module>(
                 .params
                 .extend(components.into_iter().map(AbiParam::new));
         }
-        signature.returns.extend(
-            shapes
-                .types(function.return_type)
-                .into_iter()
-                .map(AbiParam::new),
-        );
+        let result_types = shapes.types(function.return_type);
+        if result_types.len() > register_results {
+            signature.params.push(AbiParam::special(
+                pointer_type,
+                ArgumentPurpose::StructReturn,
+            ));
+        } else {
+            signature
+                .returns
+                .extend(result_types.into_iter().map(AbiParam::new));
+        }
         let symbol = if function.name == "main" {
             "phoebe_main".to_owned()
         } else {
@@ -279,6 +333,13 @@ pub(super) fn compile_functions<M: Module>(
                 })
                 .collect::<Vec<_>>();
             builder.append_block_params_for_function_params(blocks[0]);
+            let return_address = (shapes.types(function.return_type).len() > register_results)
+                .then(|| {
+                    *builder
+                        .block_params(blocks[0])
+                        .last()
+                        .expect("sret parameter")
+                });
             for (block_id, block) in function.blocks.iter().enumerate().skip(1) {
                 for param in &block.params {
                     for ty in shapes.types(function.value_types[param.0]) {
@@ -427,8 +488,14 @@ pub(super) fn compile_functions<M: Module>(
                                 let context = runtime_context.expect("caller context propagation");
                                 args.insert(0, context);
                             }
-                            let call = builder.ins().call(callee, &args);
-                            Some(builder.inst_results(call).to_vec())
+                            Some(emit_direct_call(
+                                &mut builder,
+                                callee,
+                                args,
+                                &shapes.types(program.functions[target.0].return_type),
+                                pointer_type,
+                                register_results,
+                            )?)
                         }
                         Operation::LoadRef(reference) => Some(vec![builder.ins().load(
                             types::I64,
@@ -487,7 +554,28 @@ pub(super) fn compile_functions<M: Module>(
                     |id: core::ValueId| values[id.0].clone().expect("verified value is defined");
                 match &block.terminator {
                     Terminator::Return(value) => {
-                        builder.ins().return_(&get(*value));
+                        let returned = get(*value);
+                        if let Some(address) = return_address {
+                            for (part, (component, ty)) in returned
+                                .into_iter()
+                                .zip(shapes.types(function.return_type))
+                                .enumerate()
+                            {
+                                let raw = if ty == types::I8 {
+                                    builder.ins().uextend(types::I64, component)
+                                } else {
+                                    component
+                                };
+                                let offset = i32::try_from(part * 8)
+                                    .map_err(|_| "direct result offset overflow")?;
+                                builder
+                                    .ins()
+                                    .store(MemFlagsData::new(), raw, address, offset);
+                            }
+                            builder.ins().return_(&[]);
+                        } else {
+                            builder.ins().return_(&returned);
+                        }
                     }
                     Terminator::Jump(target, args) => {
                         let args = args

@@ -206,6 +206,17 @@ fn main() -> I64 {
 }
 
 #[test]
+fn retained_parent_calls_direct_helper_with_wide_result() {
+    let source = include_str!("../examples/wide_after_wait.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let (wrap, _) = program.function("wrap").unwrap();
+    assert!(!phoebe::frame_layout::suspendable_functions(&program).unwrap()[wrap.0]);
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "wide-after-wait", 42);
+}
+
+#[test]
 fn suspendable_functions_call_direct_helpers_without_poll_continuations() {
     let source = include_str!("../examples/channel_exchange_helper.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

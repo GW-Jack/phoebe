@@ -56,6 +56,7 @@ cargo run -- run examples/channel_exchange.phoebe
 cargo run -- run examples/channel_exchange_helper.phoebe
 cargo run -- run examples/channel_accumulator.phoebe
 cargo run -- run examples/borrow_across_wait.phoebe
+cargo run -- run examples/wide_after_wait.phoebe
 cargo run -- run examples/spawn_direct_from_poll.phoebe
 cargo run -- run examples/spawn_pair.phoebe
 cargo run -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange

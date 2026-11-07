@@ -10,7 +10,7 @@ use std::task::Poll;
 use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
-    AbiParam, MemFlagsData, Signature, StackSlotData, StackSlotKind, UserFuncName,
+    AbiParam, ArgumentPurpose, MemFlagsData, Signature, StackSlotData, StackSlotKind, UserFuncName,
     Value as ClValue, types,
 };
 use cranelift_codegen::settings::{self, Configurable};

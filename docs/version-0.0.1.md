@@ -63,8 +63,10 @@ executable runs without the compiler process and prints the I64 returned by
 zero-argument `main`. External JIT and interpreter entries also require I64
 signatures; calls within Phoebe can pass and return Bool or nominal data.
 Finite products also cross calls and returns by flattened scalar
-components, without native heap allocation. `docs/abi-shapes.md` records the
-current internal calling convention and its missing cost threshold. Core IR
+components, without native heap allocation. Direct returns wider than the
+target's register return capacity use a caller-owned stack buffer, so x86-64
+and AArch64 both support finite nested results. `docs/abi-shapes.md` records the current internal
+calling convention and its unmeasured argument cost threshold. Core IR
 has typed values, conditional branches, variant matches, block parameters,
 and task-local places for `var`. Nested `Result` applications use a finite
 flattened ABI shape; see `examples/nested_result.phoebe`. Its verifier checks

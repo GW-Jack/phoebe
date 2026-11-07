@@ -698,6 +698,30 @@ fn nested_result_payloads_and_product_payloads_cross_all_backends() {
 }
 
 #[test]
+fn wide_direct_result_uses_explicit_return_buffer() {
+    let source = r#"
+data Wide { a: I64, b: I64, c: I64, d: I64, e: I64, f: I64, g: I64, h: I64, i: I64, yes: Bool }
+
+fn make() -> Wide = Wide(1, 2, 3, 4, 5, 6, 7, 8, 9, true)
+fn sum(value: Wide) -> I64 =
+  if (value.yes) {
+    value.a + value.b + value.c + value.d + value.e + value.f + value.g + value.h + value.i
+  } else { 0 }
+fn main() -> I64 = sum(make())
+"#;
+    let program = compile(source);
+    assert!(native::clif(&program).unwrap().contains("sret"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 45);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 45);
+    let path = std::env::temp_dir().join(format!("phoebe-wide-aot-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let result = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8(result.stdout).unwrap(), "45\n");
+}
+
+#[test]
 fn verifier_rejects_recursive_result_payload_shape() {
     let mut program = compile(include_str!("../examples/nested_result.phoebe"));
     let nested = program

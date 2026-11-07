@@ -30,8 +30,8 @@ Their statuses distinguish successful transfer, a parked operation, and
 closed/end. A pending send leaves its message and sender with the caller; a
 pending receive leaves its receiver with the caller and does not write the
 output value. Generated code must retain those operands in a task frame and
-return to the scheduler before it can use the shims. The current Cranelift
-lowering does not emit these calls.
+return to the scheduler before it can use the shims. The retained Cranelift
+path emits these calls for the supported scalar channel subset.
 The retained-frame plan now assigns one `I64` word per flattened component
 using these same shapes. A suspendable function's frame reserves word 0 for
 its program counter, enough words for its return shape, then only its live
@@ -40,9 +40,13 @@ the remaining code-generation work.
 
 For a product, `product` gathers existing SSA components and `field` selects
 the complete component range of one field. Neither operation creates a native
-heap object or a Core IR place. A
-`var` product gets one task-local stack slot per component. An owning call
-passes the components directly, and a return yields them directly. The
+heap object or a Core IR place. A `var` product gets one task-local slot per
+component, in the frame when it crosses a suspension. An owning call passes
+the components directly. Direct returns use registers for up to two
+components on x86-64 or eight on AArch64; wider returns write I64 words to
+an explicit caller-owned stack buffer. Bool components are widened on store
+and narrowed on load. This follows the available return registers without
+Cranelift's deprecated implicit multi-return buffer. The
 interpreter uses an explicit product value; its internal allocations are not
 part of the native runtime.
 
@@ -67,15 +71,16 @@ unsupported.
 
 This flattening is a compiler-internal calling convention. The external
 entrypoint remains a scalar I64 function, and the standalone C wrapper only
-calls a zero-argument `main` returning I64. A later shape policy must decide
-when a larger aggregate switches to indirect passing or explicit copying;
-the current compiler does not enforce that cost threshold. Generic
+calls a zero-argument `main` returning I64. The target-dependent return
+threshold is an ABI compatibility rule, not a measured optimal cost threshold.
+A later shape policy must decide when larger arguments switch to indirect
+passing or explicit copying. Generic
 shape sharing and general capability ownership remain unimplemented. Affine
 nominal moves and explicit fixed-size copies are checked in Core IR.
 
 The verifier checks the nominal data ID, field count, field types, and field
 projection index before native lowering. A future proof obligation is that
 flattening preserves typed Core IR evaluation, including joins and calls, and
-that no aggregate temporary is introduced unless a source-level operation
-requires one. Differential tests currently provide bounded evidence for this
+that the wide-result buffer is introduced only when the ABI requires it.
+Differential tests currently provide bounded evidence for this
 claim; they are not a proof.

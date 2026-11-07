@@ -40,7 +40,25 @@ rust_test(
         "examples/channel_exchange_helper.phoebe",
         "examples/channel_accumulator.phoebe",
         "examples/borrow_across_wait.phoebe",
+        "examples/wide_after_wait.phoebe",
         "examples/spawn_direct_from_poll.phoebe",
+    ],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
+    name = "compiler_tests",
+    crate_root = "tests/compiler.rs",
+    srcs = [
+        "tests/compiler.rs",
+        "examples/copy.phoebe",
+        "examples/nested_result.phoebe",
+        "examples/payload.phoebe",
+        "examples/product.phoebe",
+        "examples/try.phoebe",
+        "examples/variant.phoebe",
     ],
     edition = "2024",
     deps = [":phoebe_lib"],
