@@ -10,8 +10,8 @@ bounded `I64` and request channels, and one-shot `ReplyTo<I64>` rights;
 `docs/runtime-kernel.md` states its boundary.
 Checked Core and source programs can create and close scalar channels in the
 interpreter, Cranelift JIT, and standalone executables. The interpreter also
-runs checked Core channel traffic and source `spawn` with owned arguments;
-native retained task frames and source traffic syntax remain open.
+runs checked Core channel traffic and source `spawn`, `send`, and `receive`;
+native retained task frames remain open.
 Standalone channel builds link
 the `libphoebe.a` runtime archive produced by `cargo build --lib`; a packaged
 compiler must ship the archive beside its executable.

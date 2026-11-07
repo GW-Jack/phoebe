@@ -622,6 +622,83 @@ impl<'a> Lowerer<'a> {
                 }
             }
             ExprKind::QualifiedCall(name, member, args) => {
+                if let Some(Binding::Val(endpoint)) = locals.get(name).copied() {
+                    match (self.value_types[endpoint.0], member.as_str()) {
+                        (Type::SenderI64, "send") => {
+                            let [CallArgument::Value(message)] = args.as_slice() else {
+                                return Err(Diagnostic::new(
+                                    expr.span,
+                                    "send requires one owned I64 value",
+                                ));
+                            };
+                            let (message_value, message_type) = self.expr(message, locals)?;
+                            self.require(message_type, Type::I64, message.span)?;
+                            let outcome = self.data_names["Send<I64>"];
+                            let sent = self.block();
+                            let closed = self.block();
+                            let join = self.block();
+                            let result = self.block_param(join, Type::Data(outcome));
+                            self.terminate(Terminator::ChannelSend {
+                                sender: endpoint,
+                                message: message_value,
+                                sent,
+                                closed,
+                            });
+                            self.current = sent;
+                            let sent_value = self.emit(
+                                Operation::Variant(outcome, 0, None),
+                                Type::Data(outcome),
+                                expr.span,
+                            );
+                            self.terminate(Terminator::Jump(join, vec![sent_value]));
+                            self.current = closed;
+                            let closed_value = self.emit(
+                                Operation::Variant(outcome, 1, Some(message_value)),
+                                Type::Data(outcome),
+                                expr.span,
+                            );
+                            self.terminate(Terminator::Jump(join, vec![closed_value]));
+                            self.current = join;
+                            return Ok((result, Type::Data(outcome)));
+                        }
+                        (Type::ReceiverI64, "receive") => {
+                            if !args.is_empty() {
+                                return Err(Diagnostic::new(
+                                    expr.span,
+                                    "receive takes no arguments",
+                                ));
+                            }
+                            let outcome = self.data_names["Receive<I64>"];
+                            let value = self.block();
+                            let item = self.block_param(value, Type::I64);
+                            let end = self.block();
+                            let join = self.block();
+                            let result = self.block_param(join, Type::Data(outcome));
+                            self.terminate(Terminator::ChannelReceive {
+                                receiver: endpoint,
+                                value,
+                                end,
+                            });
+                            self.current = value;
+                            let some_value = self.emit(
+                                Operation::Variant(outcome, 0, Some(item)),
+                                Type::Data(outcome),
+                                expr.span,
+                            );
+                            self.terminate(Terminator::Jump(join, vec![some_value]));
+                            self.current = end;
+                            let end_value = self.emit(
+                                Operation::Variant(outcome, 1, None),
+                                Type::Data(outcome),
+                                expr.span,
+                            );
+                            self.terminate(Terminator::Jump(join, vec![end_value]));
+                            self.current = join;
+                            return Ok((result, Type::Data(outcome)));
+                        }
+                        _ => {}
+                    }
+                }
                 if self.data_names.contains_key(name) {
                     let [CallArgument::Value(payload)] = args.as_slice() else {
                         return Err(Diagnostic::new(
@@ -1116,7 +1193,14 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     for declaration in &ast.data {
         if matches!(
             declaration.name.as_str(),
-            "I64" | "Bool" | "Result" | "ResourceError" | "Sender" | "Receiver"
+            "I64"
+                | "Bool"
+                | "Result"
+                | "ResourceError"
+                | "Sender"
+                | "Receiver"
+                | "Send"
+                | "Receive"
         ) || data_names.contains_key(&declaration.name)
         {
             return Err(Diagnostic::new(declaration.span, "duplicate data type"));
@@ -1201,6 +1285,31 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
             variants,
             payloads,
             fields,
+        });
+    }
+    for (used, name, variants, payloads) in [
+        (
+            ast.uses_send_outcome,
+            "Send<I64>",
+            vec!["Sent", "Closed"],
+            vec![None, Some(Type::I64)],
+        ),
+        (
+            ast.uses_receive_outcome,
+            "Receive<I64>",
+            vec!["Value", "End"],
+            vec![Some(Type::I64), None],
+        ),
+    ] {
+        if !used {
+            continue;
+        }
+        data_names.insert(name.to_owned(), DataId(data.len()));
+        data.push(DataDef {
+            name: name.to_owned(),
+            variants: variants.into_iter().map(str::to_owned).collect(),
+            payloads,
+            fields: vec![],
         });
     }
     for (application, span) in &ast.applied_results {

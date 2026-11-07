@@ -1,0 +1,110 @@
+use phoebe::runtime::ScopeLimits;
+use phoebe::{core, native, syntax};
+
+#[test]
+fn source_two_message_exchange_parks_and_wakes() {
+    let source = include_str!("../examples/channel_exchange.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let printed = program.to_string();
+    assert!(printed.contains("channel.send.i64"));
+    assert!(printed.contains("channel.receive.i64"));
+    assert_eq!(
+        program
+            .interpret_with_limits(
+                "main",
+                &[],
+                ScopeLimits {
+                    tasks: 2,
+                    channels: 1,
+                    replies: 0,
+                },
+            )
+            .unwrap(),
+        42
+    );
+    assert!(
+        native::run(&program, "main", &[])
+            .unwrap_err()
+            .contains("retained task frames")
+    );
+}
+
+#[test]
+fn source_closed_send_returns_original_value_and_receive_reports_end() {
+    let source = r#"
+fn inspect() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  receiver.close();
+  val sent = sender.send(9);
+  sender.close();
+  when (sent) {
+    Send<I64>.Sent -> { Result<I64, ResourceError>.Ok(0) },
+    Send<I64>.Closed(unsent) -> { Result<I64, ResourceError>.Ok(unsent) }
+  }
+}
+
+fn inspect_end() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  sender.close();
+  val item = receiver.receive();
+  receiver.close();
+  when (item) {
+    Receive<I64>.Value(value) -> { Result<I64, ResourceError>.Ok(value) },
+    Receive<I64>.End -> { Result<I64, ResourceError>.Ok(1) }
+  }
+}
+
+fn main() -> I64 {
+  when (inspect()) {
+    Result<I64, ResourceError>.Ok(value) -> {
+      when (inspect_end()) {
+        Result<I64, ResourceError>.Ok(end) -> { value + end },
+        Result<I64, ResourceError>.Err(error) -> { 0 }
+      }
+    },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 10);
+}
+
+#[test]
+fn source_channel_methods_check_argument_shapes() {
+    let source = include_str!("../examples/channel_exchange.phoebe");
+    let bad_send = source.replace("sender.send(20)", "sender.send(true)");
+    assert!(
+        core::lower(&syntax::parse(&bad_send).unwrap())
+            .unwrap_err()
+            .message
+            .contains("expected I64")
+    );
+
+    let bad_receive = source.replace("receiver.receive()", "receiver.receive(1)");
+    assert!(
+        core::lower(&syntax::parse(&bad_receive).unwrap())
+            .unwrap_err()
+            .message
+            .contains("receive takes no arguments")
+    );
+}
+
+#[test]
+fn channel_outcome_types_do_not_enter_unrelated_core_programs() {
+    let program = core::lower(&syntax::parse("fn main() -> I64 = 1").unwrap()).unwrap();
+    assert!(program.data.is_empty());
+
+    let source = r#"
+fn main() -> I64 {
+  val result = Send<I64>.Sent;
+  when (result) {
+    Send<I64>.Sent -> { 1 },
+    Send<I64>.Closed(value) -> { value }
+  }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.data.len(), 1);
+    assert_eq!(program.data[0].name, "Send<I64>");
+}

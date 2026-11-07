@@ -150,6 +150,8 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
         data: Vec::new(),
         functions: Vec::new(),
         applied_results: Vec::new(),
+        uses_send_outcome: false,
+        uses_receive_outcome: false,
     };
     let mut sources = Vec::new();
     let mut offset = 0;
@@ -230,6 +232,8 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
         combined.data.extend(module.ast.data);
         combined.functions.extend(module.ast.functions);
         combined.applied_results.extend(module.ast.applied_results);
+        combined.uses_send_outcome |= module.ast.uses_send_outcome;
+        combined.uses_receive_outcome |= module.ast.uses_receive_outcome;
         sources.push(SourceFile {
             path: module.path,
             start: offset,

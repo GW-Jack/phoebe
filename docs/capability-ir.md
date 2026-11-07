@@ -192,7 +192,9 @@ extend that integration and lower `with` and structural cleanup. Scalar
 send/receive and spawn terminators and interpreter frames now exist; reply
 operations and native retained frames remain. Interpreter and Cranelift
 executions must agree on the same IR, including failed and canceled paths.
-Source syntax currently exposes only creation and explicit close.
+Source syntax exposes creation, explicit close, fallible spawn, and scalar
+send/receive outcomes. Native retained frames and aggregate rights remain
+open.
 
 An internal Core function may own a bare endpoint parameter. A synchronous
 call transfers the caller's slot to the callee's entry slot; the callee must

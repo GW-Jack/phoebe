@@ -85,9 +85,9 @@ parameters, plus a failure successor with a `ResourceError` parameter.
 from these operations: only the success edge creates the two rights, jumps
 move rights to destination parameters, and normal return requires both rights
 to be closed. This is exercised with hand-built Core and source programs. The interpreter
-runs creation and close through a one-task scheduler with explicit scope limits,
+runs creation and close through a scheduler with explicit scope limits,
 including resource-failure edges. `interpret_with_limits` can vary those
-limits; plain `interpret` permits one task and 64 channel creations. Cranelift
+limits; plain `interpret` permits 64 tasks and 64 channel creations. Cranelift
 JIT and standalone object execution use the same scheduler through a hidden
 context parameter and agree on the tested success and failure paths. Source
 lowering supports a fallible `I64` channel pair binding and explicit endpoint
@@ -112,4 +112,9 @@ Source `spawn worker(sender)?;` now lowers to this terminator and uses the
 exact failure-edge live-slot map for parent cleanup. It accepts only owned
 arguments and an `I64`-returning child; capability or nominal arguments must
 currently be named `val`s so their ownership is retained on failure. Native
-spawn, source send/receive, and structural cleanup remain open.
+spawn and structural cleanup remain open. Source `sender.send(value)` returns
+`Send<I64>.Sent` or `Send<I64>.Closed(value)`, while
+`receiver.receive()` returns `Receive<I64>.Value(value)` or
+`Receive<I64>.End`. Both lower to the checked Core terminators; the
+interpreter runs a source two-message exchange over a one-slot channel.
+The outcome sums enter Core only in programs that use them.

@@ -5,7 +5,7 @@ channels, and one-shot `ReplyTo<I64>`. Checked Core programs interpret
 channel creation, traffic, endpoint close, and task spawn through it. Cranelift JIT and standalone
 object code call the same kernel for channel creation and close through a C ABI shim.
 Source syntax covers fallible `I64` channel creation, explicit endpoint
-close, and interpreter task spawn. Compiler-generated native continuations and general typed messages are not
+close, interpreter task spawn, and `I64` send/receive outcomes. Compiler-generated native continuations and general typed messages are not
 implemented yet.
 
 `Scheduler` owns bounded tables of task records, channels, and reply slots.

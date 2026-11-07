@@ -92,8 +92,8 @@ kernel for one scope, bounded `I64` and request channels, and a one-shot
 handle transfer, reply transfer through a request queue, rejected sends,
 queued request discard, cancellation, close, failure cleanup, and deadlock
 cleanup. Recoverable runtime calls return the original frame or request on
-pre-commit failure. Checked Core uses this kernel for channel operations and
-task creation; source lowering currently uses it for channel creation and close.
+pre-commit failure. Checked Core and source lowering use this kernel for
+channel operations and task creation in the interpreter.
 Typed resource creation errors now distinguish invalid capacity, table
 limits, and allocation failure without publishing partial endpoint pairs.
 `docs/runtime-kernel.md` describes the kernel and the compiler,
@@ -113,20 +113,23 @@ disposition. Source accepts owned `Sender<I64>` and `Receiver<I64>` function
 parameters and `spawn worker(sender)?;` as a fallible statement. On success
 the child owns its argument; on task-limit failure the parent retains it and
 the `?` cleanup closes it. This path currently runs in the interpreter only.
-General source capability safety, send/receive, lexical scope
+Source `send` and `receive` now yield explicit `Send<I64>` and `Receive<I64>`
+outcomes. A two-message source exchange over a one-slot channel exercises
+parking and wakeup in the interpreter. The outcome types are added to Core
+only when used. General source capability safety, lexical scope
 cleanup, and cancellation cleanup remain open. `docs/capability-ir.md` specifies
 the integration boundary.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
 retry across both operations. Cranelift still needs generated task frames
-before source send/receive can use those calls in both execution engines.
+before source send/receive can use those calls in native execution.
 Core now checks scalar send/receive terminators and derives live-right maps
 for retry suspension. Its interpreter retains frames and places across a
 pending operation, and executes buffered scalar traffic. Core `spawn` now
 transfers endpoint and closed nominal arguments only on success. A two-task
 Core program parks a parent receiver, wakes it from a child send, and handles
 a task-limit failure without losing the parent's rights. Native retained
-frames and source channel traffic remain open. A Rust host test also spawns a
+frames remain open. A Rust host test also spawns a
 checked Core receiver that parks, wakes on a send, and returns its value.
 Internal Core calls can transfer an endpoint to a callee that closes it;
 interpreter and JIT executions agree on that synchronous path.
@@ -148,6 +151,7 @@ cargo run -- run examples/copy.phoebe
 cargo run -- run examples/channel_create.phoebe
 cargo run -- run examples/channel_cleanup.phoebe
 cargo run -- run examples/spawn_close.phoebe --interp
+cargo run -- run examples/channel_exchange.phoebe --interp
 cargo run -- cost examples/copy.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe

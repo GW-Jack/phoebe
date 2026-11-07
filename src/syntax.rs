@@ -196,6 +196,8 @@ pub struct Program {
     pub data: Vec<Data>,
     pub functions: Vec<Function>,
     pub applied_results: Vec<(TypeName, Span)>,
+    pub uses_send_outcome: bool,
+    pub uses_receive_outcome: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -349,6 +351,8 @@ struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     applied_results: Vec<(TypeName, Span)>,
+    uses_send_outcome: bool,
+    uses_receive_outcome: bool,
 }
 
 impl Parser {
@@ -375,6 +379,15 @@ impl Parser {
             } else {
                 TypeName::ReceiverI64
             });
+        }
+        if matches!(name.as_str(), "Send" | "Receive") {
+            if borrowed {
+                return Err(Diagnostic::new(
+                    span,
+                    "channel outcome borrows are not implemented",
+                ));
+            }
+            return self.channel_outcome_type_after_name(&name, span);
         }
         if name == "Result" && self.eat(&TokenKind::Less).is_some() {
             let ok = self.type_name(false)?;
@@ -422,6 +435,28 @@ impl Parser {
         let ty = TypeName::Result(Box::new(ok), Box::new(err));
         self.applied_results.push((ty.clone(), start.join(end)));
         Ok(ty)
+    }
+
+    fn channel_outcome_type_after_name(
+        &mut self,
+        name: &str,
+        _start: Span,
+    ) -> Result<TypeName, Diagnostic> {
+        self.expect(&TokenKind::Less, "< after channel outcome type")?;
+        let (element, element_span) = self.name()?;
+        if element != "I64" {
+            return Err(Diagnostic::new(
+                element_span,
+                "only I64 channels are implemented",
+            ));
+        }
+        self.expect(&TokenKind::Greater, ">")?;
+        if name == "Send" {
+            self.uses_send_outcome = true;
+        } else {
+            self.uses_receive_outcome = true;
+        }
+        Ok(TypeName::Named(format!("{name}<I64>")))
     }
 
     fn data(&mut self) -> Result<Data, Diagnostic> {
@@ -779,6 +814,9 @@ impl Parser {
                     let type_name =
                         if type_name == "Result" && self.current().kind == TokenKind::Less {
                             self.result_type_after_name(start)?.key()
+                        } else if matches!(type_name.as_str(), "Send" | "Receive") {
+                            self.channel_outcome_type_after_name(&type_name, start)?
+                                .key()
                         } else {
                             type_name
                         };
@@ -822,6 +860,8 @@ impl Parser {
                 self.pos += 1;
                 let name = if name == "Result" && self.current().kind == TokenKind::Less {
                     self.result_type_after_name(span)?.key()
+                } else if matches!(name.as_str(), "Send" | "Receive") {
+                    self.channel_outcome_type_after_name(&name, span)?.key()
                 } else {
                     name
                 };
@@ -829,6 +869,11 @@ impl Parser {
                     let (variant, end) = self.name()?;
                     if self.eat(&TokenKind::LParen).is_some() {
                         let (args, close) = self.call_arguments()?;
+                        if variant == "send" {
+                            self.uses_send_outcome = true;
+                        } else if variant == "receive" {
+                            self.uses_receive_outcome = true;
+                        }
                         Expr {
                             kind: ExprKind::QualifiedCall(name, variant, args),
                             span: span.join(close),
@@ -931,6 +976,8 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
         tokens: lex(source)?,
         pos: 0,
         applied_results: Vec::new(),
+        uses_send_outcome: false,
+        uses_receive_outcome: false,
     };
     let mut functions = Vec::new();
     let mut data = Vec::new();
@@ -957,5 +1004,7 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
         data,
         functions,
         applied_results: parser.applied_results,
+        uses_send_outcome: parser.uses_send_outcome,
+        uses_receive_outcome: parser.uses_receive_outcome,
     })
 }
