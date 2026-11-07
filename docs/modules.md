@@ -54,16 +54,17 @@ whether an interface changed.
 function-body reuse. The compiler compares the old and new function ASTs,
 allowing a uniform source-span shift. It also requires every nominal data
 shape and function signature to retain its position and ABI. If the global
-layout changes, it lowers all functions afresh. A body edit recompiles its
-module's functions while unchanged modules can reuse verified bodies. Core
-reruns its program-wide verifiers before publishing the new session state;
+layout changes, it lowers all functions afresh. A body edit recompiles that
+function while unchanged functions can reuse verified bodies, even within
+the edited module. Core reruns its program-wide verifiers before publishing the new session state;
 failed compilation preserves the old state. `CompileReport` counts reused
 functions. Cached spans are rebased to the new combined source positions.
 
 The current CLI starts a fresh session for each command. This API does not
 provide incremental type checking, persistent caches, or native object reuse.
-Cached ASTs are cloned and qualified again when a project is loaded, and the
-session has no measured speed benefit yet.
+Cached ASTs are cloned and qualified again when a project is loaded. The
+small warm-session baseline in `docs/performance-baseline.md` shows only a
+marginal difference on a six-function project.
 
 Current limitations are explicit: imported modules cannot construct another
 module's variants directly, the root module cannot be imported, imports are

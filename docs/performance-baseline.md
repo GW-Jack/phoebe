@@ -25,3 +25,20 @@ and incremental rebuilds are excluded. The two examples do not establish
 scaling, OCaml-like compile times, or native runtime speed for concurrent
 programs. Re-run the command on representative programs and target machines
 as those features land. No benchmark result is used as a correctness check.
+
+## Warm project session
+
+On the same macOS ARM64 host, an optimized build ran 100 warm rounds of
+`examples/multi_module/` with six functions:
+
+```sh
+cargo run --release --locked --example bench_project -- examples/multi_module 100
+```
+
+The median fresh project load plus Core lowering was 0.056 ms. The median
+in-process session compile was 0.054 ms, reusing six checked Core bodies.
+Each round compared the printable Core IR from both paths. These timings
+include source reads, manifest parsing, AST qualification, Core checking,
+and cache bookkeeping. They exclude native code generation and linking.
+The difference is too small to establish a useful speedup on this fixture;
+larger projects and edited-module rebuilds need measurement.

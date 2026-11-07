@@ -160,9 +160,12 @@ fn compiler_session_reuses_checked_core_bodies_and_rebases_spans() {
     std::fs::write(&math, source.replace("a + b", "a + b + 0")).unwrap();
     let (edited, report) = session.compile(&path).unwrap();
     assert_eq!(report.load.affected, ["math"]);
-    assert_eq!(report.reused_core_functions, 2);
+    assert_eq!(report.reused_core_functions, count - 1);
     assert_eq!(edited.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&edited, "main", &[]).unwrap(), 42);
+    let fresh = project::load(&path).unwrap();
+    let fresh_core = core::lower(&fresh.ast).unwrap();
+    assert_eq!(edited.to_string(), fresh_core.to_string());
     let old_span = first
         .functions
         .iter()
@@ -200,6 +203,16 @@ fn compiler_session_reuses_checked_core_bodies_and_rebases_spans() {
     assert_eq!(restored.interpret("main", &[]).unwrap(), 42);
 
     let source = std::fs::read_to_string(&math).unwrap();
+    let earlier_edit = source.replace("Maybe.None -> { 0 }", "Maybe.None -> { 0 + 0 }");
+    std::fs::write(&math, &earlier_edit).unwrap();
+    let (shifted, report) = session.compile(&path).unwrap();
+    assert_eq!(report.reused_core_functions, count - 1);
+    let fresh = project::load(&path).unwrap();
+    assert_eq!(
+        shifted.to_string(),
+        core::lower(&fresh.ast).unwrap().to_string()
+    );
+
     std::fs::write(&math, format!("{source}\ndata Extra {{ A }}\n")).unwrap();
     let (layout, report) = session.compile(&path).unwrap();
     assert_eq!(report.load.affected, ["app", "math"]);

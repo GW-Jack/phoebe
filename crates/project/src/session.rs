@@ -10,8 +10,8 @@ pub struct LoadReport {
     pub parsed: Vec<String>,
     pub reused: Vec<String>,
     pub changed_interfaces: Vec<String>,
-    /// Conservative source-level dependency invalidation. This is not a
-    /// checked Core cache hit: the current compiler still lowers every module.
+    /// Conservative source-level dependency invalidation. This is distinct
+    /// from the checked Core session's per-function cache decisions.
     pub affected: Vec<String>,
 }
 

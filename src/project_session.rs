@@ -1,6 +1,5 @@
 //! In-process project compilation with checked function-body reuse.
 
-use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -36,11 +35,6 @@ impl ProjectCompilerSession {
         // verifiers. A failed edit cannot become a future cache hit.
         let mut next_project = self.project.clone();
         let (loaded, load) = next_project.load(path)?;
-        let affected = load
-            .affected
-            .iter()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>();
         let current = loaded
             .ast
             .functions
@@ -59,10 +53,7 @@ impl ProjectCompilerSession {
                 let Some(previous) = self.previous_functions.get(index) else {
                     return (false, 0);
                 };
-                if previous.module != function.module
-                    || previous.name != function.name
-                    || affected.contains(function.module.as_str())
-                {
+                if previous.module != function.module || previous.name != function.name {
                     return (false, 0);
                 }
                 match (
