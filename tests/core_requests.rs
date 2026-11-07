@@ -4,6 +4,23 @@ use phoebe::core::{
 };
 use phoebe::native;
 use phoebe::runtime::ScopeLimits;
+use std::process::Command;
+
+fn assert_standalone(program: &Program, label: &str, expected: i64) {
+    let path = std::env::temp_dir().join(format!("phoebe-request-{label}-{}", std::process::id()));
+    native::build_executable(program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("{expected}\n")
+    );
+}
 
 fn instruction(result: Option<usize>, operation: Operation) -> Instruction {
     Instruction {
@@ -178,6 +195,98 @@ fn request_round_trip() -> Program {
 }
 
 #[test]
+fn direct_request_construction_and_unpack_agree_across_backends() {
+    let program = Program {
+        data: vec![],
+        functions: vec![Function {
+            name: "main".into(),
+            param_modes: vec![],
+            return_type: Type::I64,
+            value_types: vec![
+                Type::I64,
+                Type::RequestSenderI64,
+                Type::RequestReceiverI64,
+                Type::ResourceError,
+                Type::ReplyToI64,
+                Type::ReplyReceiverI64,
+                Type::ResourceError,
+                Type::I64,
+                Type::RequestI64,
+                Type::I64,
+                Type::ReplyToI64,
+                Type::I64,
+                Type::I64,
+            ],
+            place_types: vec![],
+            blocks: vec![
+                block(
+                    &[],
+                    vec![instruction(Some(0), Operation::Const(1))],
+                    Terminator::RequestChannelNew {
+                        capacity: ValueId(0),
+                        success: BlockId(1),
+                        failure: BlockId(2),
+                    },
+                ),
+                block(
+                    &[1, 2],
+                    vec![],
+                    Terminator::ReplyNew {
+                        success: BlockId(3),
+                        failure: BlockId(4),
+                    },
+                ),
+                block(
+                    &[3],
+                    vec![instruction(Some(11), Operation::Const(0))],
+                    Terminator::Return(ValueId(11)),
+                ),
+                block(
+                    &[4, 5],
+                    vec![
+                        instruction(Some(7), Operation::Const(42)),
+                        instruction(
+                            Some(8),
+                            Operation::PackRequest {
+                                value: ValueId(7),
+                                right: ValueId(4),
+                            },
+                        ),
+                    ],
+                    Terminator::RequestUnpack {
+                        request: ValueId(8),
+                        next: BlockId(5),
+                    },
+                ),
+                block(
+                    &[6],
+                    vec![
+                        instruction(None, Operation::CloseHandle(ValueId(1))),
+                        instruction(None, Operation::CloseHandle(ValueId(2))),
+                        instruction(Some(12), Operation::Const(0)),
+                    ],
+                    Terminator::Return(ValueId(12)),
+                ),
+                block(
+                    &[9, 10],
+                    vec![
+                        instruction(None, Operation::CloseReply(ValueId(10))),
+                        instruction(None, Operation::CloseReply(ValueId(5))),
+                        instruction(None, Operation::CloseHandle(ValueId(1))),
+                        instruction(None, Operation::CloseHandle(ValueId(2))),
+                    ],
+                    Terminator::Return(ValueId(9)),
+                ),
+            ],
+        }],
+    };
+    core::verify(&program).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "direct", 42);
+}
+
+#[test]
 fn checked_core_moves_reply_through_request_queue() {
     let program = request_round_trip();
     core::verify(&program).unwrap();
@@ -210,11 +319,34 @@ fn checked_core_moves_reply_through_request_queue() {
             .unwrap(),
         0
     );
-    assert!(
-        native::run(&program, "main", &[])
-            .unwrap_err()
-            .contains("request-message lowering")
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_eq!(
+        native::run_with_limits(
+            &program,
+            "main",
+            &[],
+            ScopeLimits {
+                channels: 0,
+                ..ScopeLimits::default()
+            }
+        )
+        .unwrap(),
+        0
     );
+    assert_eq!(
+        native::run_with_limits(
+            &program,
+            "main",
+            &[],
+            ScopeLimits {
+                replies: 0,
+                ..ScopeLimits::default()
+            }
+        )
+        .unwrap(),
+        0
+    );
+    assert_standalone(&program, "round-trip", 42);
 }
 
 #[test]
@@ -336,6 +468,8 @@ fn closed_request_send_returns_the_intact_owned_request() {
     };
     core::verify(&program).unwrap();
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "closed", 42);
 }
 
 #[test]
@@ -539,4 +673,6 @@ fn request_service_parks_then_completes_parent_reply() {
     };
     core::verify(&program).unwrap();
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "service", 42);
 }

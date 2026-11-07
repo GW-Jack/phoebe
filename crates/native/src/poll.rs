@@ -98,6 +98,18 @@ pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable,
         "phoebe_rt_v1_spawn_poll_caps",
         runtime::phoebe_spawn_poll_caps as *const u8,
     );
+    jit.symbol(
+        "phoebe_rt_v1_request_channel_new_i64",
+        runtime::phoebe_request_channel_new_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_send_request_i64",
+        runtime::phoebe_send_request_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_receive_request_i64",
+        runtime::phoebe_receive_request_i64 as *const u8,
+    );
     let mut module = JITModule::new(jit);
     let (entry, layout, clif) = compile_poll_module(&mut module, program, name, None)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
@@ -138,9 +150,6 @@ fn compile_poll_module<M: Module>(
     export_symbol: Option<&str>,
 ) -> Result<(FuncId, FrameWords, String), String> {
     core::verify(program)?;
-    if codegen::contains_request_ir(program) {
-        return Err("native request-message lowering is not implemented".into());
-    }
     let (root, entry_function) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
@@ -394,6 +403,7 @@ fn compile_poll_module<M: Module>(
         )
         .map_err(|e| e.to_string())?;
     let reply_imports = runtime_imports::declare_reply_imports(module, pointer)?;
+    let request_imports = runtime_imports::declare_request_imports(module, pointer)?;
     let mut signature = module.make_signature();
     signature
         .params
@@ -579,6 +589,10 @@ fn compile_poll_module<M: Module>(
                 module.declare_func_in_func(reply_imports.complete, builder.func);
             let reply_receive_ref =
                 module.declare_func_in_func(reply_imports.receive, builder.func);
+            let request_new_ref = module.declare_func_in_func(request_imports.create, builder.func);
+            let request_send_ref = module.declare_func_in_func(request_imports.send, builder.func);
+            let request_receive_ref =
+                module.declare_func_in_func(request_imports.receive, builder.func);
             for (block_id, block) in function.blocks.iter().enumerate() {
                 builder.switch_to_block(blocks[block_id]);
                 for (instruction_id, instruction) in block.instructions.iter().enumerate() {
@@ -842,8 +856,8 @@ fn compile_poll_module<M: Module>(
                         Operation::CloseHandle(value) => {
                             let token = get(*value, &mut builder)[0];
                             let kind = match function.value_types[value.0] {
-                                Type::SenderI64 => 0,
-                                Type::ReceiverI64 => 1,
+                                Type::SenderI64 | Type::RequestSenderI64 => 0,
+                                Type::ReceiverI64 | Type::RequestReceiverI64 => 1,
                                 _ => unreachable!(),
                             };
                             let kind = builder.ins().iconst(types::I64, kind);
@@ -856,6 +870,21 @@ fn compile_poll_module<M: Module>(
                                 i64::from(function.value_types[value.0] == Type::ReplyReceiverI64);
                             let kind = builder.ins().iconst(types::I64, kind);
                             let call = builder.ins().call(reply_close_ref, &[bridge, token, kind]);
+                            let status = builder.inst_results(call)[0];
+                            let valid = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                            let next = builder.create_block();
+                            builder.ins().brif(valid, next, &[], fault, &[]);
+                            builder.switch_to_block(next);
+                            None
+                        }
+                        Operation::PackRequest { value, right } => Some(vec![
+                            get(*value, &mut builder)[0],
+                            get(*right, &mut builder)[0],
+                        ]),
+                        Operation::CloseRequest(value) => {
+                            let right = get(*value, &mut builder)[1];
+                            let kind = builder.ins().iconst(types::I64, 0);
+                            let call = builder.ins().call(reply_close_ref, &[bridge, right, kind]);
                             let status = builder.inst_results(call)[0];
                             let valid = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
                             let next = builder.create_block();
@@ -989,6 +1018,11 @@ fn compile_poll_module<M: Module>(
                         capacity,
                         success,
                         failure,
+                    }
+                    | Terminator::RequestChannelNew {
+                        capacity,
+                        success,
+                        failure,
                     } => {
                         let sender_slot = builder.create_sized_stack_slot(StackSlotData::new(
                             StackSlotKind::ExplicitSlot,
@@ -1003,9 +1037,15 @@ fn compile_poll_module<M: Module>(
                         let sender_out = builder.ins().stack_addr(pointer, sender_slot, 0);
                         let receiver_out = builder.ins().stack_addr(pointer, receiver_slot, 0);
                         let capacity = builder.use_var(variables[capacity.0][0]);
+                        let create =
+                            if matches!(block.terminator, Terminator::RequestChannelNew { .. }) {
+                                request_new_ref
+                            } else {
+                                create_ref
+                            };
                         let created = builder
                             .ins()
-                            .call(create_ref, &[bridge, capacity, sender_out, receiver_out]);
+                            .call(create, &[bridge, capacity, sender_out, receiver_out]);
                         let status = builder.inst_results(created)[0];
                         let valid = builder.ins().icmp_imm_s(IntCC::NotEqual, status, 255);
                         let check = builder.create_block();
@@ -1135,12 +1175,18 @@ fn compile_poll_module<M: Module>(
                             .iter()
                             .filter_map(|arg| {
                                 let kind = match function.value_types[arg.0] {
-                                    Type::SenderI64 | Type::ReceiverI64 => 0,
+                                    Type::SenderI64
+                                    | Type::ReceiverI64
+                                    | Type::RequestSenderI64
+                                    | Type::RequestReceiverI64 => 0,
                                     Type::ReplyToI64 => 1,
                                     Type::ReplyReceiverI64 => 2,
+                                    Type::RequestI64 => 1,
                                     _ => return None,
                                 };
-                                Some((kind, builder.use_var(variables[arg.0][0])))
+                                let part =
+                                    usize::from(function.value_types[arg.0] == Type::RequestI64);
+                                Some((kind, builder.use_var(variables[arg.0][part])))
                             })
                             .collect::<Vec<_>>();
                         let transfer_count = i64::try_from(transfers.len())
@@ -1236,22 +1282,26 @@ fn compile_poll_module<M: Module>(
                             .ins()
                             .brif(closed_status, blocks[closed.0], &[], fault, &[]);
                     }
+                    Terminator::RequestUnpack { request, next } => {
+                        let params = &function.blocks[next.0].params;
+                        for (part, param) in params.iter().enumerate() {
+                            let value = builder.use_var(variables[request.0][part]);
+                            builder.def_var(variables[param.0][0], value);
+                        }
+                        builder.ins().jump(blocks[next.0], &[]);
+                    }
                     Terminator::Yield { .. }
                     | Terminator::ChannelReceive { .. }
                     | Terminator::ChannelSend { .. }
-                    | Terminator::ReplyReceive { .. } => {
+                    | Terminator::ReplyReceive { .. }
+                    | Terminator::RequestSend { .. }
+                    | Terminator::RequestReceive { .. } => {
                         let index = layout
                             .resumes
                             .iter()
                             .position(|slot| slot.block.0 == block_id)
                             .expect("verified retry point");
                         builder.ins().jump(retry_blocks[index], &[]);
-                    }
-                    Terminator::RequestChannelNew { .. }
-                    | Terminator::RequestUnpack { .. }
-                    | Terminator::RequestSend { .. }
-                    | Terminator::RequestReceive { .. } => {
-                        return Err("native request-message lowering is not implemented".into());
                     }
                 }
             }
@@ -1262,6 +1312,22 @@ fn compile_poll_module<M: Module>(
                 }
                 builder.switch_to_block(retry_blocks[index]);
                 let terminator = &function.blocks[point.block.0].terminator;
+                let request_slots = if matches!(terminator, Terminator::RequestReceive { .. }) {
+                    Some((
+                        builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        )),
+                        builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        )),
+                    ))
+                } else {
+                    None
+                };
                 let status = match terminator {
                     Terminator::Yield { .. } => {
                         let call = builder.ins().call(yield_ref, &[bridge]);
@@ -1283,12 +1349,33 @@ fn compile_poll_module<M: Module>(
                         let call = builder.ins().call(reply_receive_ref, &[bridge, token, out]);
                         builder.inst_results(call)[0]
                     }
+                    Terminator::RequestReceive { receiver, .. } => {
+                        let token = builder.use_var(variables[receiver.0][0]);
+                        let (value_slot, right_slot) = request_slots.expect("request output slots");
+                        let value_out = builder.ins().stack_addr(pointer, value_slot, 0);
+                        let right_out = builder.ins().stack_addr(pointer, right_slot, 0);
+                        let call = builder
+                            .ins()
+                            .call(request_receive_ref, &[bridge, token, value_out, right_out]);
+                        builder.inst_results(call)[0]
+                    }
                     Terminator::ChannelSend {
                         sender, message, ..
                     } => {
                         let token = builder.use_var(variables[sender.0][0]);
                         let message = builder.use_var(variables[message.0][0]);
                         let call = builder.ins().call(send_ref, &[bridge, token, message]);
+                        builder.inst_results(call)[0]
+                    }
+                    Terminator::RequestSend {
+                        sender, request, ..
+                    } => {
+                        let token = builder.use_var(variables[sender.0][0]);
+                        let value = builder.use_var(variables[request.0][0]);
+                        let right = builder.use_var(variables[request.0][1]);
+                        let call = builder
+                            .ins()
+                            .call(request_send_ref, &[bridge, token, value, right]);
                         builder.inst_results(call)[0]
                     }
                     _ => unreachable!("verified channel retry"),
@@ -1347,6 +1434,18 @@ fn compile_poll_module<M: Module>(
                     Terminator::ChannelSend { sent, .. } => {
                         builder.ins().jump(blocks[sent.0], &[]);
                     }
+                    Terminator::RequestReceive { value, .. } => {
+                        let (value_slot, right_slot) = request_slots.expect("request output slots");
+                        let received = builder.ins().stack_load(pointer, types::I64, value_slot, 0);
+                        let right = builder.ins().stack_load(pointer, types::I64, right_slot, 0);
+                        let param = function.blocks[value.0].params[0];
+                        builder.def_var(variables[param.0][0], received);
+                        builder.def_var(variables[param.0][1], right);
+                        builder.ins().jump(blocks[value.0], &[]);
+                    }
+                    Terminator::RequestSend { sent, .. } => {
+                        builder.ins().jump(blocks[sent.0], &[]);
+                    }
                     _ => unreachable!(),
                 }
                 builder.switch_to_block(check_other);
@@ -1356,7 +1455,8 @@ fn compile_poll_module<M: Module>(
                 builder.switch_to_block(terminal);
                 match terminator {
                     Terminator::ChannelReceive { end, .. }
-                    | Terminator::ReplyReceive { end, .. } => {
+                    | Terminator::ReplyReceive { end, .. }
+                    | Terminator::RequestReceive { end, .. } => {
                         builder.ins().jump(blocks[end.0], &[]);
                     }
                     Terminator::ChannelSend {
@@ -1365,6 +1465,18 @@ fn compile_poll_module<M: Module>(
                         if let Some(param) = function.blocks[closed.0].params.first() {
                             let message = builder.use_var(variables[message.0][0]);
                             builder.def_var(variables[param.0][0], message);
+                        }
+                        builder.ins().jump(blocks[closed.0], &[]);
+                    }
+                    Terminator::RequestSend {
+                        request, closed, ..
+                    } => {
+                        let param = function.blocks[closed.0].params[0];
+                        for (source, destination) in
+                            variables[request.0].iter().zip(&variables[param.0])
+                        {
+                            let component = builder.use_var(*source);
+                            builder.def_var(*destination, component);
                         }
                         builder.ins().jump(blocks[closed.0], &[]);
                     }
@@ -1479,6 +1591,8 @@ fn validate_poll_function(
             Terminator::ChannelReceive { .. }
                 | Terminator::ChannelSend { .. }
                 | Terminator::ReplyReceive { .. }
+                | Terminator::RequestReceive { .. }
+                | Terminator::RequestSend { .. }
                 | Terminator::Yield { .. }
         ) {
             return Err("unsupported retained poll point".into());
@@ -1511,6 +1625,8 @@ fn validate_poll_function(
                     | Operation::StoreRef(_, _)
                     | Operation::CloseHandle(_)
                     | Operation::CloseReply(_)
+                    | Operation::PackRequest { .. }
+                    | Operation::CloseRequest(_)
                     | Operation::Call(_, _)
             ) {
                 return Err("operation is not yet supported by retained poll".into());
@@ -1539,12 +1655,18 @@ fn validate_poll_function(
                 | Terminator::ChannelSend { .. }
                 | Terminator::ReplyComplete { .. }
                 | Terminator::ReplyReceive { .. }
+                | Terminator::RequestChannelNew { .. }
+                | Terminator::RequestUnpack { .. }
+                | Terminator::RequestSend { .. }
+                | Terminator::RequestReceive { .. }
                 | Terminator::Yield { .. }
         ) || matches!(
             block.terminator,
             Terminator::ChannelReceive { .. }
                 | Terminator::ChannelSend { .. }
                 | Terminator::ReplyReceive { .. }
+                | Terminator::RequestSend { .. }
+                | Terminator::RequestReceive { .. }
                 | Terminator::Yield { .. }
         ) && !layout
             .resumes

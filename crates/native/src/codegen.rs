@@ -1,17 +1,6 @@
 use super::*;
 
-use super::runtime_imports::declare_reply_imports;
-
-pub(super) fn contains_request_ir(program: &Program) -> bool {
-    program.functions.iter().any(|function| {
-        function.value_types.iter().any(|ty| {
-            matches!(
-                ty,
-                Type::RequestI64 | Type::RequestSenderI64 | Type::RequestReceiverI64
-            )
-        })
-    })
-}
+use super::runtime_imports::{declare_reply_imports, declare_request_imports};
 
 /// Phoebe currently flattens only integer and pointer-shaped return parts.
 /// Cranelift's supported host conventions allow eight such return registers
@@ -140,9 +129,6 @@ pub(super) fn compile_functions<M: Module>(
     // define every non-suspendable function.
     selected: Option<&[bool]>,
 ) -> Result<Vec<(FuncId, Signature)>, String> {
-    if contains_request_ir(program) {
-        return Err("native request-message lowering is not implemented".into());
-    }
     let uses_runtime = context_functions
         .iter()
         .enumerate()
@@ -231,6 +217,11 @@ pub(super) fn compile_functions<M: Module>(
     };
     let reply_imports = if uses_runtime {
         Some(declare_reply_imports(module, pointer_type)?)
+    } else {
+        None
+    };
+    let request_imports = if uses_runtime {
+        Some(declare_request_imports(module, pointer_type)?)
     } else {
         None
     };
@@ -584,8 +575,8 @@ pub(super) fn compile_functions<M: Module>(
                                 runtime_imports.expect("channel runtime imports");
                             let callee = module.declare_func_in_func(close, builder.func);
                             let kind = match function.value_types[value.0] {
-                                Type::SenderI64 => 0,
-                                Type::ReceiverI64 => 1,
+                                Type::SenderI64 | Type::RequestSenderI64 => 0,
+                                Type::ReceiverI64 | Type::RequestReceiverI64 => 1,
                                 _ => unreachable!("verified handle kind"),
                             };
                             let kind = builder.ins().iconst(types::I64, kind);
@@ -625,8 +616,22 @@ pub(super) fn compile_functions<M: Module>(
                                 })
                                 .collect(),
                         ),
-                        Operation::PackRequest { .. } | Operation::CloseRequest(_) => {
-                            return Err("native request-message lowering is not implemented".into());
+                        Operation::PackRequest { value, right } => {
+                            Some(vec![one(*value), one(*right)])
+                        }
+                        Operation::CloseRequest(value) => {
+                            let imports = reply_imports.expect("reply runtime imports");
+                            let callee = module.declare_func_in_func(imports.close, builder.func);
+                            let kind = builder.ins().iconst(types::I64, 0);
+                            builder.ins().call(
+                                callee,
+                                &[
+                                    runtime_context.expect("runtime context"),
+                                    get(*value)[1],
+                                    kind,
+                                ],
+                            );
+                            None
                         }
                     };
                     if let Some(result) = instruction.result {
@@ -937,9 +942,13 @@ pub(super) fn compile_functions<M: Module>(
                         let transfers = args
                             .iter()
                             .filter_map(|arg| match function.value_types[arg.0] {
-                                Type::SenderI64 | Type::ReceiverI64 => Some((0, get(*arg)[0])),
+                                Type::SenderI64
+                                | Type::ReceiverI64
+                                | Type::RequestSenderI64
+                                | Type::RequestReceiverI64 => Some((0, get(*arg)[0])),
                                 Type::ReplyToI64 => Some((1, get(*arg)[0])),
                                 Type::ReplyReceiverI64 => Some((2, get(*arg)[0])),
+                                Type::RequestI64 => Some((1, get(*arg)[1])),
                                 _ => None,
                             })
                             .collect::<Vec<_>>();
@@ -1048,11 +1057,66 @@ pub(super) fn compile_functions<M: Module>(
                     Terminator::ReplyReceive { .. } => {
                         return Err("native reply receive requires retained task frames".into());
                     }
-                    Terminator::RequestChannelNew { .. }
-                    | Terminator::RequestUnpack { .. }
-                    | Terminator::RequestSend { .. }
-                    | Terminator::RequestReceive { .. } => {
-                        return Err("native request-message lowering is not implemented".into());
+                    Terminator::RequestChannelNew {
+                        capacity,
+                        success,
+                        failure,
+                    } => {
+                        let imports = request_imports.expect("request runtime imports");
+                        let callee = module.declare_func_in_func(imports.create, builder.func);
+                        let sender_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let receiver_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let sender_out = builder.ins().stack_addr(pointer_type, sender_slot, 0);
+                        let receiver_out = builder.ins().stack_addr(pointer_type, receiver_slot, 0);
+                        let call = builder.ins().call(
+                            callee,
+                            &[
+                                runtime_context.expect("runtime context"),
+                                get(*capacity)[0],
+                                sender_out,
+                                receiver_out,
+                            ],
+                        );
+                        let status = builder.inst_results(call)[0];
+                        let succeeded = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                        let created = builder.create_block();
+                        builder.ins().brif(
+                            succeeded,
+                            created,
+                            &[],
+                            blocks[failure.0],
+                            &[status.into()],
+                        );
+                        builder.switch_to_block(created);
+                        let sender =
+                            builder
+                                .ins()
+                                .stack_load(pointer_type, types::I64, sender_slot, 0);
+                        let receiver =
+                            builder
+                                .ins()
+                                .stack_load(pointer_type, types::I64, receiver_slot, 0);
+                        builder
+                            .ins()
+                            .jump(blocks[success.0], &[sender.into(), receiver.into()]);
+                    }
+                    Terminator::RequestUnpack { request, next } => {
+                        let parts = get(*request)
+                            .into_iter()
+                            .map(Into::into)
+                            .collect::<Vec<_>>();
+                        builder.ins().jump(blocks[next.0], &parts);
+                    }
+                    Terminator::RequestSend { .. } | Terminator::RequestReceive { .. } => {
+                        return Err("native request traffic requires retained task frames".into());
                     }
                 }
             }

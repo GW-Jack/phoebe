@@ -117,6 +117,18 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
             "phoebe_rt_v1_spawn_poll_caps",
             runtime::phoebe_spawn_poll_caps as *const u8,
         );
+        jit.symbol(
+            "phoebe_rt_v1_request_channel_new_i64",
+            runtime::phoebe_request_channel_new_i64 as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_send_request_i64",
+            runtime::phoebe_send_request_i64 as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_receive_request_i64",
+            runtime::phoebe_receive_request_i64 as *const u8,
+        );
     }
     let mut module = JITModule::new(jit);
     let ids = compile_functions(&mut module, program, &context_functions, false, None, None)?;

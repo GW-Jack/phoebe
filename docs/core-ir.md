@@ -146,9 +146,10 @@ only on `Sent`, retains it on `Pending`, and passes the intact owned request
 to the `Closed` successor. Receive creates a request slot on `Value` and
 retains the receiver on `Pending`; `close.request` closes the nested right.
 The exact capability verifier checks these transitions with one dense slot
-for the request's known single right. Hand-built Core interpreter tests cover
+for the request's known single right. Hand-built Core tests across the
+interpreter, JIT, and standalone executable cover
 queue transfer, unpack and completion, closed-send recovery, a child service
 that waits for a request and completes its parent's reply, and rejected
-implicit loss. Native request code generation and source syntax are still
-open. This concrete layout does not establish the general nested aggregate
+implicit loss. Source syntax for requests is still open. This concrete
+layout does not establish the general nested aggregate
 capability rule.

@@ -138,12 +138,13 @@ Hand-built checked Core now models the runtime's concrete `Request<I64>`
 shape with explicit pack, unpack, request-channel, send, receive, and
 structural close operations. Its verifier tracks the nested reply right as
 one owned slot across each move and queue boundary; interpreter tests cover
-delivery and rejected-send recovery. Native lowering and source syntax for
-request messages remain open, as do general capability-bearing aggregates.
+delivery and rejected-send recovery across the interpreter, JIT, and standalone
+executable. Source syntax for request messages remains open, as do general
+capability-bearing aggregates.
 The runtime also has native ABI shims for this concrete request layout.
 Native poll tests cover atomic creation, enqueue/dequeue transfer, closed-send
-retention, and pending receive wakeup. Cranelift lowering has not yet been
-connected to these shims.
+retention, and pending receive wakeup. Cranelift lowering uses these shims for
+the concrete two-word request layout.
 Runtime task failure now cancels remaining scope tasks immediately after
 closing the failing task's rights. A host regression catches the case where
 the parent retained another sender and would otherwise report a deadlock
