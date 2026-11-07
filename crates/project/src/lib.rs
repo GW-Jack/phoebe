@@ -467,6 +467,19 @@ fn rewrite_expr(
                 )?;
             }
         }
+        ExprKind::With { value, body, .. } => {
+            nested(value)?;
+            rewrite_body(
+                body,
+                module,
+                root,
+                local_data,
+                local_functions,
+                imports,
+                modules,
+                results,
+            )?;
+        }
         ExprKind::Member(name, _) | ExprKind::VariantCall(name, _, _) => {
             if local_data.contains(name) {
                 *name = format!("{module}.{name}");
@@ -631,6 +644,10 @@ fn shift_expr(expr: &mut Expr, offset: usize) {
             shift_expr(condition, offset);
             shift_body(then_body, offset);
             shift_body(else_body, offset);
+        }
+        ExprKind::With { value, body, .. } => {
+            shift_expr(value, offset);
+            shift_body(body, offset);
         }
         ExprKind::VariantCall(_, _, payload) => shift_expr(payload, offset),
         ExprKind::QualifiedCall(_, _, args) | ExprKind::Call(_, args) => {

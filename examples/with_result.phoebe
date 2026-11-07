@@ -1,0 +1,20 @@
+fn acquire(capacity: I64) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  val answer = with output = sender {
+    with input = receiver {
+      val (extra_sender, extra_receiver) = channel<I64>(capacity = capacity)?;
+      extra_sender.close();
+      extra_receiver.close();
+      Result<I64, ResourceError>.Ok(42)
+    }
+  };
+  answer
+}
+
+fn unwrap(result: Result<I64, ResourceError>) -> I64 = when (result) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+
+fn main() -> I64 = unwrap(acquire(1))
+fn fail() -> I64 = unwrap(acquire(0))

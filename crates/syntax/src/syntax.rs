@@ -343,6 +343,11 @@ pub enum ExprKind {
     QualifiedCall(String, String, Vec<CallArgument>),
     Try(Box<Expr>),
     When(Box<Expr>, Vec<WhenArm>),
+    With {
+        name: String,
+        value: Box<Expr>,
+        body: Box<Body>,
+    },
     Call(String, Vec<CallArgument>),
 }
 
@@ -721,12 +726,34 @@ impl Parser {
                 self.expect(&TokenKind::Equal, "= after with binding")?;
                 let value = self.expr(0)?;
                 let body = self.block(false)?;
-                statements.push(Statement::With {
-                    name,
-                    span: start.span,
-                    value,
-                    body,
-                });
+                let span = start.span.join(self.tokens[self.pos - 1].span);
+                if body.tail.is_some() {
+                    let expr = Expr {
+                        kind: ExprKind::With {
+                            name,
+                            value: Box::new(value),
+                            body: Box::new(body),
+                        },
+                        span,
+                    };
+                    if self.eat(&TokenKind::Semicolon).is_some() {
+                        statements.push(Statement::Expr(expr));
+                    } else {
+                        self.expect(&TokenKind::RBrace, "} after with expression")?;
+                        return Ok(Body {
+                            statements,
+                            tail: Some(expr),
+                        });
+                    }
+                } else {
+                    self.eat(&TokenKind::Semicolon);
+                    statements.push(Statement::With {
+                        name,
+                        span,
+                        value,
+                        body,
+                    });
+                }
                 continue;
             }
             let assignment = matches!(self.current().kind, TokenKind::Ident(_))
@@ -769,6 +796,25 @@ impl Parser {
 
     fn expr(&mut self, min_bp: u8) -> Result<Expr, Diagnostic> {
         let mut lhs = match self.current().clone() {
+            Token {
+                kind: TokenKind::With,
+                span,
+            } => {
+                self.pos += 1;
+                let (name, _) = self.name()?;
+                self.expect(&TokenKind::Equal, "= after with binding")?;
+                let value = self.expr(0)?;
+                let body = self.block(true)?;
+                let end = self.tokens[self.pos - 1].span;
+                Expr {
+                    kind: ExprKind::With {
+                        name,
+                        value: Box::new(value),
+                        body: Box::new(body),
+                    },
+                    span: span.join(end),
+                }
+            }
             Token {
                 kind: TokenKind::Int(value),
                 span,

@@ -1,0 +1,25 @@
+fn producer(sender: Sender<I64>) -> I64 {
+  with output = sender {
+    when (output.send(42)) {
+      Send<I64>.Sent -> { 0 },
+      Send<I64>.Closed(value) -> { 1 },
+    }
+  }
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  spawn producer(sender)?;
+  val value = with input = receiver {
+    when (input.receive()) {
+      Receive<I64>.Value(message) -> { message },
+      Receive<I64>.End -> { 0 },
+    }
+  };
+  Result<I64, ResourceError>.Ok(value)
+}
+
+fn main() -> I64 = when (exchange()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}

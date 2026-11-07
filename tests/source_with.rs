@@ -82,3 +82,59 @@ fn consume(sender: Sender<I64>) -> I64 {
         .count();
     assert_eq!(closes, 1);
 }
+
+#[test]
+fn expression_with_returns_value_and_cleans_both_outcomes() {
+    let program =
+        core::lower(&syntax::parse(include_str!("../examples/with_result.phoebe")).unwrap())
+            .unwrap();
+    for (entry, expected) in [("main", 42), ("fail", 0)] {
+        assert_eq!(program.interpret(entry, &[]).unwrap(), expected);
+        assert_eq!(native::run(&program, entry, &[]).unwrap(), expected);
+    }
+    let path = std::env::temp_dir().join(format!("phoebe-with-result-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn expression_with_rejects_endpoint_escape_and_missing_tail() {
+    let escape = "fn bad(sender: Sender<I64>) -> Sender<I64> = with owned = sender { owned }";
+    let error = core::lower(&syntax::parse(escape).unwrap()).unwrap_err();
+    assert!(
+        error.message.contains("cannot return its endpoint"),
+        "{error:?}"
+    );
+
+    let missing = "fn bad(sender: Sender<I64>) -> I64 { val x = with owned = sender {}; 0 }";
+    let error = syntax::parse(missing).unwrap_err();
+    assert!(
+        error.message.contains("expected a final expression"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn expression_with_retains_owner_across_receive_park() {
+    let program =
+        core::lower(&syntax::parse(include_str!("../examples/with_wait.phoebe")).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-with-wait-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\n");
+}

@@ -187,10 +187,12 @@ and derives graphs for creation, close, send/receive, and jump edges. Pending
 send/receive uses a `Retry` suspension edge: it records the retained live
 slots but does not re-enter the block or replay its instructions. Source
 lowering invokes the exact checker so `phoebe check` rejects a forgotten
-right. A `with` statement closes one bare endpoint on lexical fall-through
+right. A `with` block closes one bare endpoint on lexical fall-through
 when its slot is still live after the body. Inner scopes are resolved first.
 On `?`, the existing error-edge cleanup closes all live bare endpoints.
 Neither path emits a close after explicit close or successful transfer.
+An expression-valued `with` passes its capability-free result through a
+block parameter after the close. Returning the scoped endpoint is rejected.
 Capability-bearing aggregates, place replacement, match discard, and
 structural `close_caps()` remain open.
 

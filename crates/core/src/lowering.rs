@@ -151,6 +151,52 @@ impl<'a> Lowerer<'a> {
         Ok(result_id)
     }
 
+    fn with_body(
+        &mut self,
+        name: &str,
+        span: Span,
+        value: &Expr,
+        body: &Body,
+        locals: &HashMap<String, Binding>,
+    ) -> Result<Option<TypedValue>, Diagnostic> {
+        let (owner, ty) = self.expr(value, locals)?;
+        if !matches!(ty, Type::SenderI64 | Type::ReceiverI64) {
+            return Err(Diagnostic::new(
+                value.span,
+                "with currently owns a Sender<I64> or Receiver<I64>",
+            ));
+        }
+        let mut scoped_locals = locals.clone();
+        if scoped_locals
+            .insert(name.to_owned(), Binding::Val(owner))
+            .is_some()
+        {
+            return Err(Diagnostic::new(span, format!("duplicate local {name}")));
+        }
+        let result = self.body(body, &mut scoped_locals)?;
+        if let Some((_, ty)) = result
+            && matches!(ty, Type::SenderI64 | Type::ReceiverI64)
+        {
+            return Err(Diagnostic::new(
+                body.tail.as_ref().map_or(span, |tail| tail.span),
+                "with cannot return its endpoint; move it to another owner inside the block",
+            ));
+        }
+        let exit = self.current;
+        let next = self.block();
+        let output = if let Some((value, ty)) = result {
+            let param = self.block_param(next, ty);
+            self.terminate(Terminator::Jump(next, vec![value]));
+            Some((param, ty))
+        } else {
+            self.terminate(Terminator::Jump(next, vec![]));
+            None
+        };
+        self.scoped_cleanup_exits.push((exit, owner, span));
+        self.current = next;
+        Ok(output)
+    }
+
     fn body(
         &mut self,
         body: &Body,
@@ -285,26 +331,7 @@ impl<'a> Lowerer<'a> {
                             "with body cannot end in a value expression; add a semicolon",
                         ));
                     }
-                    let (owner, ty) = self.expr(value, locals)?;
-                    if !matches!(ty, Type::SenderI64 | Type::ReceiverI64) {
-                        return Err(Diagnostic::new(
-                            value.span,
-                            "with currently owns a Sender<I64> or Receiver<I64>",
-                        ));
-                    }
-                    let mut scoped_locals = locals.clone();
-                    if scoped_locals
-                        .insert(name.clone(), Binding::Val(owner))
-                        .is_some()
-                    {
-                        return Err(Diagnostic::new(*span, format!("duplicate local {name}")));
-                    }
-                    self.body(body, &mut scoped_locals)?;
-                    let exit = self.current;
-                    let next = self.block();
-                    self.terminate(Terminator::Jump(next, vec![]));
-                    self.scoped_cleanup_exits.push((exit, owner, *span));
-                    self.current = next;
+                    self.with_body(name, *span, value, body, locals)?;
                 }
                 Statement::Val(name, span, expr) | Statement::Var(name, span, expr) => {
                     if locals.contains_key(name) {
@@ -884,6 +911,11 @@ impl<'a> Lowerer<'a> {
                 self.terminate(Terminator::Jump(join, vec![else_value]));
                 self.current = join;
                 return Ok((result, then_type));
+            }
+            ExprKind::With { name, value, body } => {
+                return self
+                    .with_body(name, expr.span, value, body, locals)?
+                    .ok_or_else(|| Diagnostic::new(expr.span, "with expression requires a value"));
             }
             ExprKind::When(subject, arms) => {
                 let (subject_value, subject_type) = self.expr(subject, locals)?;

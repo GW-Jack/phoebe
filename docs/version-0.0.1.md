@@ -128,7 +128,11 @@ cleanup for one bare `Sender<I64>` or `Receiver<I64>`. Exact capability flow
 adds a close only when that right remains live. Explicit close or successful
 transfer suppresses it; source `?` still closes live bare rights on its error
 edge. Nested endpoint scopes run in the interpreter, JIT, and standalone
-object path. Aggregate cleanup, expression-valued `with`, and general failure
+object path. A `with` body with a final expression can now return a
+capability-free value through a Core block parameter; the endpoint closes
+before that value leaves the block. `examples/with_result.phoebe` exercises
+normal and `?` exits; `examples/with_wait.phoebe` retains the owner across
+channel suspension before cleanup. Aggregate cleanup and general failure
 cleanup remain open.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
