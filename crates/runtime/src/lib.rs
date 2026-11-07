@@ -281,6 +281,7 @@ pub struct Scheduler {
     max_handles: usize,
     max_replies: usize,
     stats: RuntimeStats,
+    terminal_error: Option<String>,
 }
 
 pub struct Context<'a> {
@@ -347,6 +348,7 @@ impl Scheduler {
                 tasks_created: 1,
                 ..RuntimeStats::default()
             },
+            terminal_error: None,
         })
     }
 
@@ -376,6 +378,18 @@ impl Scheduler {
     pub fn verify(&self) -> Result<(), String> {
         if self.handles.len() > self.max_handles {
             return Err("scope handle budget exceeded".into());
+        }
+        if self
+            .tasks
+            .iter()
+            .all(|task| matches!(task.state, TaskState::Done(_) | TaskState::Failed(_)))
+            && (!self.ready.is_empty()
+                || self.channels.iter().any(|channel| {
+                    !channel.send_waiters.is_empty() || !channel.receive_waiters.is_empty()
+                })
+                || self.reply_slots.iter().any(|slot| !slot.waiters.is_empty()))
+        {
+            return Err("terminal scope retains waiter registrations".into());
         }
         let mut senders = vec![0usize; self.channels.len()];
         let mut receivers = vec![0usize; self.channels.len()];
@@ -676,7 +690,21 @@ impl Scheduler {
         self.wake_joiners();
     }
 
+    fn clear_terminal_waiters(&mut self) {
+        self.ready.clear();
+        for channel in &mut self.channels {
+            channel.send_waiters.clear();
+            channel.receive_waiters.clear();
+        }
+        for slot in &mut self.reply_slots {
+            slot.waiters.clear();
+        }
+    }
+
     pub fn run(&mut self) -> Result<i64, String> {
+        if let Some(error) = &self.terminal_error {
+            return Err(error.clone());
+        }
         while let Some(task) = self.ready.pop_front() {
             if !matches!(self.tasks[task.0].state, TaskState::Runnable) {
                 continue;
@@ -713,6 +741,22 @@ impl Scheduler {
                 Ok(Err(error)) => self.finish_task(task, Err(error)),
                 Err(_) => self.finish_task(task, Err("task panicked".into())),
             }
+            if let TaskState::Failed(error) = &self.tasks[task.0].state {
+                let cause = format!("task {} failed: {error}", task.0);
+                for other in 0..self.tasks.len() {
+                    if other != task.0
+                        && !matches!(
+                            self.tasks[other].state,
+                            TaskState::Done(_) | TaskState::Failed(_)
+                        )
+                    {
+                        self.finish_task(TaskId(other), Err("scope cancelled".into()));
+                    }
+                }
+                self.clear_terminal_waiters();
+                self.terminal_error = Some(cause.clone());
+                return Err(cause);
+            }
         }
         if self
             .tasks
@@ -731,6 +775,8 @@ impl Scheduler {
             for task in waiting {
                 self.finish_task(task, Err("scope deadlocked".into()));
             }
+            self.clear_terminal_waiters();
+            self.terminal_error = Some("scope deadlocked".into());
             return Err("scope deadlocked".into());
         }
         if let Some((index, task)) = self

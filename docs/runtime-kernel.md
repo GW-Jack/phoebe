@@ -88,9 +88,13 @@ without completion. These transitions are checked by the runtime tests and
 the optional table verifier.
 
 Normal task completion with an open handle or reply capability is a task
-failure. Task failure, panic, and detected scope deadlock close that task's
-owned capabilities, then wake affected peers. The root can join its child
-tasks and observe a child failure.
+failure. Task failure or panic closes that task's owned capabilities, then
+cancels every remaining task in the scope before another task poll. The first
+failure is reported to the host; cancellation closes siblings' capabilities
+and discards queued messages whose final receiver closes. A root waiting on
+its own still-open sender therefore cannot mask a child fault as a deadlock.
+Detected scope deadlock also closes all task-owned capabilities. The root
+can join successful children; a child fault fails the scope immediately.
 The optional `Scheduler::verify` scans handle counts, queue bounds, reply
 owners, message shapes, and waiter registrations in tests; ordinary polling
 does not run that scan.

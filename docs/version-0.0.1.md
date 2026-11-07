@@ -97,6 +97,12 @@ queued request discard, cancellation, close, failure cleanup, and deadlock
 cleanup. Recoverable runtime calls return the original frame or request on
 pre-commit failure. Checked Core and source lowering use this kernel for
 channel operations and task creation in the interpreter.
+Runtime task failure now cancels remaining scope tasks immediately after
+closing the failing task's rights. A host regression catches the case where
+the parent retained another sender and would otherwise report a deadlock
+instead of the child's fault. The bounded two-task Maude model includes
+atomic scope cancellation and queued-message discard; it remains an abstract
+model, not a proof about the executable scheduler.
 Typed resource creation errors now distinguish invalid capacity, table
 limits, and allocation failure without publishing partial endpoint pairs.
 `docs/runtime-kernel.md` describes the kernel and the compiler,

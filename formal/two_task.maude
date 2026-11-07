@@ -28,6 +28,15 @@ mod PHOEBE-TWO-TASK is
   vars PM CM : Mark .
   vars SC : Scope .
 
+  --- Scope cancellation closes every receiver. A queued message is then
+  --- discarded, while a delivered or rejected message keeps its disposition.
+  op cancelParentMark : Queue Mark -> Mark .
+  op cancelChildMark : Queue Mark -> Mark .
+  eq cancelParentMark(parentQueued, pending) = discarded .
+  eq cancelParentMark(Q, PM) = PM [owise] .
+  eq cancelChildMark(childQueued, pending) = discarded .
+  eq cancelChildMark(Q, CM) = CM [owise] .
+
   --- Fork creates an additional capability; spawn transfers its sole owner.
   rl [fork-sender] :
     st(pRunning, cDormant, heldParent, absent, R0, R1, Q, PM, CM, scopeOpen)
@@ -145,12 +154,13 @@ mod PHOEBE-TWO-TASK is
     => st(P, C, S0, S1, closed, closed,
           empty, PM, discarded, SC) .
 
-  --- Failure closes only capabilities owned by the child. Parent can drain
-  --- a pending message, then close its own handles and observe the failure.
+  --- On child failure the scheduler closes the child's rights, then cancels
+  --- the parent without another task poll. All remaining rights close and a
+  --- queued message is discarded. The child fault is the scope result.
   rl [child-fail] :
     st(pRunning, cRunning, S0, S1, R0, R1, Q, PM, CM, scopeOpen)
-    => st(pRunning, cFailed, S0, closed, R0, closed,
-          Q, PM, CM, scopeOpen) .
+    => st(pDone, cFailed, closed, closed, closed, closed,
+          empty, cancelParentMark(Q, PM), cancelChildMark(Q, CM), scopeFailed) .
   rl [child-complete] :
     st(pRunning, cRunning, S0, closed, R0, closed,
        Q, PM, CM, scopeOpen)
@@ -161,11 +171,6 @@ mod PHOEBE-TWO-TASK is
        empty, PM, CM, scopeOpen)
     => st(pDone, cDone, closed, closed, closed, closed,
           empty, PM, CM, scopeOk) .
-  rl [scope-failure] :
-    st(pRunning, cFailed, closed, closed, closed, closed,
-       empty, PM, CM, scopeOpen)
-    => st(pDone, cFailed, closed, closed, closed, closed,
-          empty, PM, CM, scopeFailed) .
 
   --- The predicate checks accounting rather than repeating rule guards.
   op bad : State -> Bool .

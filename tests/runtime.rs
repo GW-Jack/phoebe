@@ -221,10 +221,79 @@ impl Task for FailureRoot {
 }
 
 #[test]
-fn child_failure_closes_owned_sender_and_reports_at_scope_join() {
+fn child_failure_closes_owned_sender_and_fails_scope() {
     let mut scheduler = Scheduler::new(FailureRoot::default(), 2, 1, 0).unwrap();
     assert!(scheduler.run().unwrap_err().contains("task 1 failed: boom"));
     assert!(scheduler.stats().wakes >= 1);
+    assert_eq!(scheduler.open_handles(), 0);
+    scheduler.verify().unwrap();
+}
+
+#[derive(Default)]
+struct RetainedSenderFailureRoot {
+    sender: Option<Sender>,
+    receiver: Option<Receiver>,
+}
+
+impl Task for RetainedSenderFailureRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        if self.receiver.is_none() {
+            let (sender, receiver) = context.channel(1)?;
+            let fork = context.fork_sender(&sender)?;
+            let token = fork.token();
+            context.spawn(FailingSender { _sender: fork }, &[token])?;
+            self.sender = Some(sender);
+            self.receiver = Some(receiver);
+        }
+        assert_eq!(
+            context.receive(self.receiver.as_ref().expect("receiver"))?,
+            ReceiveResult::Pending
+        );
+        Ok(Poll::Pending)
+    }
+}
+
+#[test]
+fn child_failure_cancels_scope_before_a_retained_sender_masks_it_as_deadlock() {
+    let mut scheduler = Scheduler::new(RetainedSenderFailureRoot::default(), 2, 1, 0).unwrap();
+    assert_eq!(scheduler.run().unwrap_err(), "task 1 failed: boom");
+    assert_eq!(scheduler.run().unwrap_err(), "task 1 failed: boom");
+    assert_eq!(scheduler.open_handles(), 0);
+    scheduler.verify().unwrap();
+}
+
+struct UnpolledReceiver {
+    _receiver: Receiver,
+}
+
+impl Task for UnpolledReceiver {
+    fn poll(&mut self, _context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        Err("cancelled child must not run".into())
+    }
+}
+
+struct RootFailureWithQueuedMessage;
+
+impl Task for RootFailureWithQueuedMessage {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        let (sender, receiver) = context.channel(1)?;
+        let token = receiver.token();
+        context.spawn(
+            UnpolledReceiver {
+                _receiver: receiver,
+            },
+            &[token],
+        )?;
+        assert_eq!(context.send(&sender, 42)?, SendResult::Sent);
+        Err("root boom".into())
+    }
+}
+
+#[test]
+fn root_failure_cancels_unpolled_child_and_discards_its_queued_message() {
+    let mut scheduler = Scheduler::new(RootFailureWithQueuedMessage, 2, 1, 0).unwrap();
+    assert_eq!(scheduler.run().unwrap_err(), "task 0 failed: root boom");
+    assert_eq!(scheduler.stats().discarded_messages, 1);
     assert_eq!(scheduler.open_handles(), 0);
     scheduler.verify().unwrap();
 }

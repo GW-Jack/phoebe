@@ -9,7 +9,7 @@ reduce in PHOEBE-TWO-TASK : bad(st(pRunning, cDormant,
 search [1] in PHOEBE-TWO-TASK : initial =>* X:State
   such that bad(X:State) == true .
 
---- Witnesses: fork/spawn, child delivery, failure with pending data, and
+--- Witnesses: fork/spawn, child delivery, cancellation of pending data, and
 --- both scope outcomes. These guard against a vacuous safety search.
 search [1] in PHOEBE-TWO-TASK : initial =>*
   st(pRunning, cRunning, heldParent, heldChild,
@@ -27,8 +27,8 @@ search [1] in PHOEBE-TWO-TASK :
   =>+ st(pRunning, cRunning, heldParent, heldChild,
           closed, heldChild, empty, delivered, new, scopeOpen) .
 search [1] in PHOEBE-TWO-TASK : initial =>*
-  st(pRunning, cFailed, heldParent, closed,
-     heldParent, closed, parentQueued, pending, new, scopeOpen) .
+  st(pDone, cFailed, closed, closed,
+     closed, closed, empty, discarded, new, scopeFailed) .
 search [1] in PHOEBE-TWO-TASK : initial =>*
   st(pRunning, cRunning, heldParent, heldChild,
      closed, closed, empty, rejected, new, scopeOpen) .

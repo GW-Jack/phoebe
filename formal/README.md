@@ -21,12 +21,13 @@ capabilities to the child. Each task can send at most one distinct closed
 value; a one-slot queue carries either value. A message disposition is `new`,
 `pending`, `delivered`, `discarded` after all receivers close, or `rejected`
 when a send observes no receiver. The model allows all enabled actions in any
-order. Child failure closes its handles; parent may drain a pending message,
-then join the scope and observe failure.
+order. Child failure closes its handles and cancels the parent before another
+task poll. Cancellation closes remaining rights and discards a queued message;
+the scope reports the child fault.
 
 The bad-state predicate checks queue/disposition agreement, handle ownership
 relative to task status, and scope completion status. The initial search
-explored 398 reachable states with no encoded bad state. Queries also witness
+explored 340 reachable states with no encoded bad state. Queries also witness
 spawn, cross-task delivery, send rejection, explicit discard, normal scope
 completion, and failure reporting. A negative query confirms a closed sender
 cannot be forked back into existence.
