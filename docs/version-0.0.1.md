@@ -86,13 +86,14 @@ the absent external dependency, interface cache, and incremental rebuild
 support. The `examples/cost/` files other than scalar `identity` remain
 design fixtures, not executable acceptance tests.
 
-Separately, `src/runtime.rs` implements an unconnected cooperative scheduler
+`src/runtime.rs` implements a cooperative scheduler
 kernel for one scope, bounded `I64` and request channels, and a one-shot
 `ReplyTo<I64>` right. Its tests cover parking, backpressure, FIFO delivery,
 handle transfer, reply transfer through a request queue, rejected sends,
 queued request discard, cancellation, close, failure cleanup, and deadlock
 cleanup. Recoverable runtime calls return the original frame or request on
-pre-commit failure; source lowering does not use them yet.
+pre-commit failure. Checked Core uses this kernel for channel operations and
+task creation; source lowering currently uses it for channel creation and close.
 Typed resource creation errors now distinguish invalid capacity, table
 limits, and allocation failure without publishing partial endpoint pairs.
 `docs/runtime-kernel.md` describes the kernel and the compiler,
