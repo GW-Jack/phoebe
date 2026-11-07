@@ -399,6 +399,39 @@ fn compile_poll_module<M: Module>(
                 .collect::<Vec<_>>();
 
             builder.switch_to_block(dispatch);
+            let places = function
+                .place_types
+                .iter()
+                .enumerate()
+                .map(|(index, ty)| {
+                    let retained = layout.places.iter().find(|slot| slot.id.0 == index);
+                    shapes
+                        .types(*ty)
+                        .into_iter()
+                        .enumerate()
+                        .map(|(part, component)| {
+                            if let Some(slot) = retained {
+                                Ok(builder.ins().iadd_imm_s(
+                                    frame,
+                                    i64::from(word_offset(slot.words.start + part)),
+                                ))
+                            } else {
+                                let (size, align) = if component == types::I8 {
+                                    (1, 0)
+                                } else {
+                                    (8, 3)
+                                };
+                                let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                                    StackSlotKind::ExplicitSlot,
+                                    size,
+                                    align,
+                                ));
+                                Ok(builder.ins().stack_addr(pointer, slot, 0))
+                            }
+                        })
+                        .collect::<Result<Vec<_>, String>>()
+                })
+                .collect::<Result<Vec<_>, String>>()?;
             let pc = builder
                 .ins()
                 .load(types::I64, MemFlagsData::new(), frame, 0);
@@ -608,6 +641,45 @@ fn compile_poll_module<M: Module>(
                         }
                         Operation::Move(value) | Operation::Copy(value) => {
                             Some(get(*value, &mut builder))
+                        }
+                        Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
+                            for (component, address) in
+                                get(*value, &mut builder).into_iter().zip(&places[place.0])
+                            {
+                                builder
+                                    .ins()
+                                    .store(MemFlagsData::new(), component, *address, 0);
+                            }
+                            None
+                        }
+                        Operation::Load(place)
+                        | Operation::Take(place)
+                        | Operation::CopyPlace(place) => Some(
+                            shapes
+                                .types(function.place_types[place.0])
+                                .into_iter()
+                                .zip(&places[place.0])
+                                .map(|(ty, address)| {
+                                    builder.ins().load(ty, MemFlagsData::new(), *address, 0)
+                                })
+                                .collect(),
+                        ),
+                        Operation::ReadField(place, index) => {
+                            let Type::Data(data_id) = function.place_types[place.0] else {
+                                unreachable!("verified place field owner")
+                            };
+                            let fields = &program.data[data_id.0].fields;
+                            let offset = fields[..*index]
+                                .iter()
+                                .map(|(_, ty)| shapes.types(*ty).len())
+                                .sum::<usize>();
+                            let ty = shapes.types(fields[*index].1)[0];
+                            Some(vec![builder.ins().load(
+                                ty,
+                                MemFlagsData::new(),
+                                places[place.0][offset],
+                                0,
+                            )])
                         }
                         Operation::Variant(id, tag, payload) => {
                             let mut parts = vec![builder.ins().iconst(types::I64, *tag as i64)];
@@ -1114,9 +1186,8 @@ fn validate_poll_function(
         .param_modes
         .iter()
         .any(|mode| *mode != ParamMode::Own)
-        || !function.place_types.is_empty()
     {
-        return Err("retained poll requires owned parameters and no places".into());
+        return Err("retained poll requires owned parameters".into());
     }
     if layout.resumes.is_empty() {
         return Err("retained poll requires a suspension point".into());
@@ -1148,6 +1219,12 @@ fn validate_poll_function(
                     | Operation::Bool(_)
                     | Operation::Move(_)
                     | Operation::Copy(_)
+                    | Operation::PlaceInit(_, _)
+                    | Operation::Load(_)
+                    | Operation::Take(_)
+                    | Operation::CopyPlace(_)
+                    | Operation::Store(_, _)
+                    | Operation::ReadField(_, _)
                     | Operation::Variant(_, _, _)
                     | Operation::Add(_, _)
                     | Operation::Sub(_, _)

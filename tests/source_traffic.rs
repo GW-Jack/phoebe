@@ -84,6 +84,24 @@ fn native_poll_exchange_agrees_on_value_and_spawn_limit() {
 }
 
 #[test]
+fn retained_mutable_place_survives_receive_without_retaining_dead_place() {
+    let source = include_str!("../examples/channel_accumulator.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let (id, exchange) = program.function("exchange").unwrap();
+    let layout = native::frame_word_layouts(&program)
+        .unwrap()
+        .into_iter()
+        .find(|layout| layout.function == id)
+        .unwrap();
+    assert_eq!(exchange.place_types.len(), 2);
+    assert_eq!(layout.places.len(), 1);
+    assert_eq!(layout.places[0].id.0, 1);
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "channel-accumulator", 42);
+}
+
+#[test]
 fn suspendable_functions_call_direct_helpers_without_poll_continuations() {
     let source = include_str!("../examples/channel_exchange_helper.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

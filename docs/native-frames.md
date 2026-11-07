@@ -62,6 +62,9 @@ header and child-frame link.
 two receive points in `exchange`, and a call continuation in `main`.
 `examples/spawn_close.phoebe` needs no retained frame. Generated poll code
 uses this layout for the source exchange.
+`examples/channel_accumulator.phoebe` has a mutable total used after two
+receives, so its place lives in the stable frame. Its mutable channel capacity
+dies before the first receive and uses a local stack slot instead.
 
 ## Native ABI obligations
 

@@ -1,0 +1,40 @@
+fn producer(sender: Sender<I64>) -> I64 {
+  val first = sender.send(20);
+  val second = when (first) {
+    Send<I64>.Sent -> { sender.send(22) },
+    Send<I64>.Closed(unsent) -> { Send<I64>.Closed(unsent) }
+  };
+  sender.close();
+  when (second) {
+    Send<I64>.Sent -> { 0 },
+    Send<I64>.Closed(unsent) -> { unsent }
+  }
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  var capacity = 1;
+  val (sender, receiver) = channel<I64>(capacity = capacity)?;
+  var total = 0;
+  spawn producer(sender)?;
+  val first = receiver.receive();
+  val first_value = when (first) {
+    Receive<I64>.Value(value) -> { value },
+    Receive<I64>.End -> { 0 }
+  };
+  total = total + first_value;
+  val second = receiver.receive();
+  val second_value = when (second) {
+    Receive<I64>.Value(value) -> { value },
+    Receive<I64>.End -> { 0 }
+  };
+  total = total + second_value;
+  receiver.close();
+  Result<I64, ResourceError>.Ok(total)
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

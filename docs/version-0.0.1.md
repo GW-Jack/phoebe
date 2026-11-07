@@ -165,8 +165,11 @@ and values and places live across a pending operation. Entry parameters
 already in the spill set share their slots. Stable per-function resume IDs
 identify the retry site. The poll generator consumes these ranges for channel
 retries and call continuations. A single reusable call-result area holds the
-widest child result in a frame. General retained code generation still needs
-places and borrowed parameters.
+widest child result in a frame. Retained code generation now keeps mutable
+places that cross suspension in frame words and uses local stack slots for
+places that die before suspension. The accumulator example exercises this
+through interpreter, JIT, and standalone executable paths. General retained
+code generation still needs borrowed parameters.
 The runtime has a tested same-task native call mailbox and child frame stack;
 generated Cranelift calls use that continuation ABI.
 

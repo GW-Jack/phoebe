@@ -38,6 +38,7 @@ rust_test(
         "tests/source_traffic.rs",
         "examples/channel_exchange.phoebe",
         "examples/channel_exchange_helper.phoebe",
+        "examples/channel_accumulator.phoebe",
         "examples/spawn_direct_from_poll.phoebe",
     ],
     edition = "2024",
