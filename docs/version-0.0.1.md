@@ -91,7 +91,9 @@ kernel for one scope, bounded `I64` and request channels, and a one-shot
 `ReplyTo<I64>` right. Its tests cover parking, backpressure, FIFO delivery,
 handle transfer, reply transfer through a request queue, rejected sends,
 queued request discard, cancellation, close, failure cleanup, and deadlock
-cleanup. `docs/runtime-kernel.md` describes the kernel and the compiler,
+cleanup. Recoverable runtime calls return the original frame or request on
+pre-commit failure; source lowering does not use them yet.
+`docs/runtime-kernel.md` describes the kernel and the compiler,
 general typed-message, and native-runtime integration still required.
 `src/capability_flow.rs` separately checks exact slot ownership in abstract
 control-flow graphs and derives failure/suspension live-slot maps. Core IR

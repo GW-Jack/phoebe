@@ -25,6 +25,17 @@ the last receiver discards queued `I64` values and wakes blocked senders;
 closing the last sender wakes receivers to observe `End` after draining.
 Scalar sends and receives cannot operate on request channels.
 
+Compiler-generated frames should use `spawn_owned` and
+`send_request_owned`. On a validation, capacity, or waiter-allocation error,
+these methods return the original child frame or request before transferring
+any capability. The older `spawn` and `send_request` convenience methods
+convert those errors to strings for Rust tasks that fail immediately; they
+discard the wrapper, after which task-failure cleanup closes any table-owned
+rights. A generated task must not use those convenience methods for a
+recoverable source-language failure edge. Runtime validation still cannot
+inspect arbitrary fields of a handwritten Rust child frame; checked Core IR
+must supply and verify its transfer list.
+
 `reply()` creates a one-shot right and receiver. A `Request` holds an `I64`
 value and that right. `send_request` on a full or closed queue returns the
 intact request to its task; a successful send changes the right's owner to the

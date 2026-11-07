@@ -83,6 +83,12 @@ pending edge retains it in the frame. A successful dequeue wakes one blocked
 sender. Source `?`, `when`, cancellation, and failure must preserve the same
 edge accounting.
 
+The runtime kernel's `spawn_owned` and `send_request_owned` now preserve the
+child frame or request on pre-commit failure. A Core lowering must use these
+recoverable paths so its failure edge can retain or explicitly close the
+returned capability slots. The Rust convenience wrappers that reduce an
+error to a string are suitable only for immediate task failure and cleanup.
+
 The scheduler owns a pending task's frame, so suspension does not release any
 of its rights. The generated frame has a fixed layout and a compiler-derived
 cleanup table listing every possible capability slot. A discriminant records

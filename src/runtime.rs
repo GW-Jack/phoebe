@@ -44,6 +44,13 @@ pub enum RequestSendResult {
 }
 
 #[derive(Debug)]
+/// A pre-commit runtime error that returns ownership of its input unchanged.
+pub struct OwnedError<T> {
+    pub message: String,
+    pub value: T,
+}
+
+#[derive(Debug)]
 pub enum RequestReceiveResult {
     Value(Request),
     Pending,
@@ -747,19 +754,48 @@ impl Context<'_> {
         sender: &Sender,
         request: Request,
     ) -> Result<RequestSendResult, String> {
-        let channel = self
+        self.send_request_owned(sender, request)
+            .map_err(|error| error.message)
+    }
+
+    /// Send a request while preserving the entire request on a pre-commit error.
+    pub fn send_request_owned(
+        &mut self,
+        sender: &Sender,
+        request: Request,
+    ) -> Result<RequestSendResult, OwnedError<Request>> {
+        let channel = match self
             .scheduler
-            .check_handle(self.task, sender.token, HandleKind::Sender)?;
+            .check_handle(self.task, sender.token, HandleKind::Sender)
+        {
+            Ok(channel) => channel,
+            Err(message) => {
+                return Err(OwnedError {
+                    message,
+                    value: request,
+                });
+            }
+        };
         if self.scheduler.channels[channel].kind != ChannelKind::Request {
-            return Err("request send requires a request channel".into());
+            return Err(OwnedError {
+                message: "request send requires a request channel".into(),
+                value: request,
+            });
         }
-        let right = self
-            .scheduler
-            .reply_rights
-            .get(request.reply.token.0)
-            .ok_or("invalid reply token")?;
+        let right = match self.scheduler.reply_rights.get(request.reply.token.0) {
+            Some(right) => right,
+            None => {
+                return Err(OwnedError {
+                    message: "invalid reply token".into(),
+                    value: request,
+                });
+            }
+        };
         if right.owner != ReplyOwner::Task(self.task) {
-            return Err("reply right is closed or owned elsewhere".into());
+            return Err(OwnedError {
+                message: "reply right is closed or owned elsewhere".into(),
+                value: request,
+            });
         }
         if self.scheduler.channels[channel].receivers == 0 {
             return Ok(RequestSendResult::Closed(request));
@@ -767,12 +803,17 @@ impl Context<'_> {
         if self.scheduler.channels[channel].queue.len() == self.scheduler.channels[channel].capacity
         {
             if self.wait.is_some() {
-                return Err("task already registered a wait in this poll".into());
+                return Err(OwnedError {
+                    message: "task already registered a wait in this poll".into(),
+                    value: request,
+                });
             }
-            self.scheduler.channels[channel]
-                .send_waiters
-                .try_reserve(1)
-                .map_err(|error| error.to_string())?;
+            if let Err(error) = self.scheduler.channels[channel].send_waiters.try_reserve(1) {
+                return Err(OwnedError {
+                    message: error.to_string(),
+                    value: request,
+                });
+            }
             self.scheduler.channels[channel]
                 .send_waiters
                 .push_back(self.task);
@@ -952,30 +993,54 @@ impl Context<'_> {
         child: impl Task + 'static,
         transfers: &[Token],
     ) -> Result<TaskId, String> {
+        self.spawn_owned(child, transfers)
+            .map_err(|error| error.message)
+    }
+
+    /// Spawn a child while preserving its frame on a pre-commit error.
+    pub fn spawn_owned<T: Task + 'static>(
+        &mut self,
+        child: T,
+        transfers: &[Token],
+    ) -> Result<TaskId, OwnedError<T>> {
         if self.scheduler.tasks.len() >= self.scheduler.max_tasks {
-            return Err("scope task limit exceeded".into());
+            return Err(OwnedError {
+                message: "scope task limit exceeded".into(),
+                value: child,
+            });
         }
         for (index, token) in transfers.iter().enumerate() {
             if transfers[..index].contains(token) {
-                return Err("duplicate capability transfer".into());
+                return Err(OwnedError {
+                    message: "duplicate capability transfer".into(),
+                    value: child,
+                });
             }
-            let handle = self
-                .scheduler
-                .handles
-                .get(token.0)
-                .ok_or("invalid capability token")?;
+            let Some(handle) = self.scheduler.handles.get(token.0) else {
+                return Err(OwnedError {
+                    message: "invalid capability token".into(),
+                    value: child,
+                });
+            };
             if handle.owner != Some(self.task) {
-                return Err("capability is closed or owned by another task".into());
+                return Err(OwnedError {
+                    message: "capability is closed or owned by another task".into(),
+                    value: child,
+                });
             }
         }
-        self.scheduler
-            .tasks
-            .try_reserve(1)
-            .map_err(|error| error.to_string())?;
-        self.scheduler
-            .ready
-            .try_reserve(1)
-            .map_err(|error| error.to_string())?;
+        if let Err(error) = self.scheduler.tasks.try_reserve(1) {
+            return Err(OwnedError {
+                message: error.to_string(),
+                value: child,
+            });
+        }
+        if let Err(error) = self.scheduler.ready.try_reserve(1) {
+            return Err(OwnedError {
+                message: error.to_string(),
+                value: child,
+            });
+        }
         let id = TaskId(self.scheduler.tasks.len());
         self.scheduler.tasks.push(TaskRecord {
             body: Some(Box::new(child)),
