@@ -120,9 +120,16 @@ Cranelift JIT and standalone object path.
 Source `send` and `receive` now yield explicit `Send<I64>` and `Receive<I64>`
 outcomes. A two-message source exchange over a one-slot channel exercises
 parking and wakeup in the interpreter. The outcome types are added to Core
-only when used. General source capability safety, lexical scope
-cleanup, and cancellation cleanup remain open. `docs/capability-ir.md` specifies
+only when used. General source capability safety and cancellation cleanup
+remain open. `docs/capability-ir.md` specifies
 the integration boundary.
+Source `with name = endpoint { ... }` now provides lexical fall-through
+cleanup for one bare `Sender<I64>` or `Receiver<I64>`. Exact capability flow
+adds a close only when that right remains live. Explicit close or successful
+transfer suppresses it; source `?` still closes live bare rights on its error
+edge. Nested endpoint scopes run in the interpreter, JIT, and standalone
+object path. Aggregate cleanup, expression-valued `with`, and general failure
+cleanup remain open.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
 retry across both operations. Generated send and receive leaves use retained

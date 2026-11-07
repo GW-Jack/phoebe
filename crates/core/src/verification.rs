@@ -957,7 +957,7 @@ fn is_channel_handle(ty: Type) -> bool {
 
 pub(super) fn verify_capability_edges(program: &Program) -> Result<(), String> {
     for function in &program.functions {
-        let Some((graph, _)) = capability_graph(function, &[]) else {
+        let Some((graph, _)) = capability_graph(function, &[], &[]) else {
             continue;
         };
         capability_flow::verify(&graph).map_err(|error| format!("{}: {error}", function.name))?;
@@ -968,6 +968,7 @@ pub(super) fn verify_capability_edges(program: &Program) -> Result<(), String> {
 pub(super) fn capability_graph(
     function: &Function,
     implicit_cleanup_returns: &[BlockId],
+    scoped_cleanup_exits: &[(BlockId, ValueId, Span)],
 ) -> Option<(capability_flow::Graph, Vec<ValueId>)> {
     if !function.value_types.iter().copied().any(is_channel_handle) {
         return None;
@@ -986,6 +987,14 @@ pub(super) fn capability_graph(
         }
     }
     let slot = |value: ValueId| slots[value.0].expect("channel handle has a capability slot");
+    let mut lexical = vec![None; function.blocks.len()];
+    for (block, value, _) in scoped_cleanup_exits {
+        lexical[block.0] = Some(slot(*value));
+    }
+    let mut cleanup_return = vec![false; function.blocks.len()];
+    for block in implicit_cleanup_returns {
+        cleanup_return[block.0] = true;
+    }
     let entry_live = function.blocks[0]
         .params
         .iter()
@@ -1013,10 +1022,13 @@ pub(super) fn capability_graph(
                     _ => {}
                 }
             }
+            if let Some(slot) = lexical[block_id] {
+                actions.push(CapAction::CloseIfLive(slot));
+            }
             let edge = |target: CapTarget, actions| capability_flow::Edge { target, actions };
             let exits = match &block.terminator {
                 Terminator::Return(_) => vec![edge(
-                    if implicit_cleanup_returns.contains(&BlockId(block_id)) {
+                    if cleanup_return[block_id] {
                         CapTarget::Failure
                     } else {
                         CapTarget::Return

@@ -396,6 +396,19 @@ fn rewrite_body(
                     results,
                 )?;
             }
+            Statement::With { value, body, .. } => {
+                rewrite(value)?;
+                rewrite_body(
+                    body,
+                    module,
+                    root,
+                    local_data,
+                    local_functions,
+                    imports,
+                    modules,
+                    results,
+                )?;
+            }
         }
     }
     if let Some(tail) = &mut body.tail {
@@ -582,6 +595,13 @@ fn shift_body(body: &mut Body, offset: usize) {
             }
             Statement::While(condition, body) => {
                 shift_expr(condition, offset);
+                shift_body(body, offset);
+            }
+            Statement::With {
+                span, value, body, ..
+            } => {
+                shift_span(span, offset);
+                shift_expr(value, offset);
                 shift_body(body, offset);
             }
             Statement::Expr(value) => shift_expr(value, offset),

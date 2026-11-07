@@ -11,9 +11,17 @@ pub struct Slot(pub usize);
 pub enum Action {
     Require(Slot),
     Create(Slot),
-    CreatePair { first: Slot, second: Slot },
-    Move { from: Slot, to: Slot },
+    CreatePair {
+        first: Slot,
+        second: Slot,
+    },
+    Move {
+        from: Slot,
+        to: Slot,
+    },
     Close(Slot),
+    /// Provisional lexical cleanup: close only if this scope still owns it.
+    CloseIfLive(Slot),
     Transfer(Slot),
 }
 
@@ -64,6 +72,7 @@ pub struct Suspension {
 pub struct FlowFacts {
     pub failures: Vec<FailureCleanup>,
     pub suspensions: Vec<Suspension>,
+    pub lexical_closes: Vec<(usize, Slot)>,
 }
 
 fn live_slots(state: &[bool]) -> Vec<Slot> {
@@ -74,7 +83,8 @@ fn live_slots(state: &[bool]) -> Vec<Slot> {
         .collect()
 }
 
-fn apply(actions: &[Action], state: &mut [bool], block: usize) -> Result<(), String> {
+fn apply(actions: &[Action], state: &mut [bool], block: usize) -> Result<Vec<Slot>, String> {
+    let mut lexical_closes = Vec::new();
     for action in actions {
         let require = |slot: Slot| -> Result<(), String> {
             match state.get(slot.0) {
@@ -137,9 +147,17 @@ fn apply(actions: &[Action], state: &mut [bool], block: usize) -> Result<(), Str
                 require(slot)?;
                 state[slot.0] = false;
             }
+            Action::CloseIfLive(slot) => match state.get_mut(slot.0) {
+                Some(live) if *live => {
+                    *live = false;
+                    lexical_closes.push(slot);
+                }
+                Some(_) => {}
+                None => return Err(format!("block {block}: invalid capability slot {}", slot.0)),
+            },
         }
     }
-    Ok(())
+    Ok(lexical_closes)
 }
 
 pub fn verify(graph: &Graph) -> Result<FlowFacts, String> {
@@ -166,10 +184,18 @@ pub fn verify(graph: &Graph) -> Result<FlowFacts, String> {
         let mut state = incoming[block_id]
             .clone()
             .expect("reachable block has state");
-        apply(&block.actions, &mut state, block_id)?;
+        facts.lexical_closes.extend(
+            apply(&block.actions, &mut state, block_id)?
+                .into_iter()
+                .map(|slot| (block_id, slot)),
+        );
         for (edge_id, edge) in block.exits.iter().enumerate() {
             let mut outgoing = state.clone();
-            apply(&edge.actions, &mut outgoing, block_id)?;
+            if !apply(&edge.actions, &mut outgoing, block_id)?.is_empty() {
+                return Err(format!(
+                    "block {block_id}: lexical close must be a block action"
+                ));
+            }
             match edge.target {
                 Target::Retry => {
                     if outgoing != state {

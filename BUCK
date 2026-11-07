@@ -76,3 +76,12 @@ rust_test(
     deps = [":phoebe_lib"],
     resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
 )
+
+rust_test(
+    name = "source_with_tests",
+    crate_root = "tests/source_with.rs",
+    srcs = ["tests/source_with.rs", "examples/with_channel.phoebe"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)

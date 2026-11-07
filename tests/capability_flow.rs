@@ -5,6 +5,35 @@ fn edge(target: Target, actions: Vec<Action>) -> Edge {
 }
 
 #[test]
+fn lexical_close_records_only_a_still_owned_right() {
+    for (actions, expected) in [
+        (vec![Action::CloseIfLive(Slot(0))], vec![(0, Slot(0))]),
+        (
+            vec![Action::Close(Slot(0)), Action::CloseIfLive(Slot(0))],
+            vec![],
+        ),
+        (
+            vec![Action::Transfer(Slot(0)), Action::CloseIfLive(Slot(0))],
+            vec![],
+        ),
+        (
+            vec![Action::CloseIfLive(Slot(0)), Action::CloseIfLive(Slot(0))],
+            vec![(0, Slot(0))],
+        ),
+    ] {
+        let graph = Graph {
+            slots: 1,
+            entry_live: vec![Slot(0)],
+            blocks: vec![Block {
+                actions,
+                exits: vec![edge(Target::Return, vec![])],
+            }],
+        };
+        assert_eq!(verify(&graph).unwrap().lexical_closes, expected);
+    }
+}
+
+#[test]
 fn branch_cannot_hide_a_live_right_at_join() {
     let graph = Graph {
         slots: 1,

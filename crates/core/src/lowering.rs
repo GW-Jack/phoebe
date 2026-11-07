@@ -13,6 +13,11 @@ struct FunctionSignature {
     return_type: Type,
 }
 
+struct CleanupSites {
+    returns: Vec<(BlockId, Span)>,
+    scopes: Vec<(BlockId, ValueId, Span)>,
+}
+
 struct Lowerer<'a> {
     functions: &'a HashMap<String, FunctionSignature>,
     data: &'a [DataDef],
@@ -24,6 +29,7 @@ struct Lowerer<'a> {
     return_type: Type,
     current: BlockId,
     implicit_cleanup_returns: Vec<(BlockId, Span)>,
+    scoped_cleanup_exits: Vec<(BlockId, ValueId, Span)>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -49,6 +55,7 @@ impl<'a> Lowerer<'a> {
             return_type,
             current: BlockId(0),
             implicit_cleanup_returns: Vec::new(),
+            scoped_cleanup_exits: Vec::new(),
         };
         for (mode, own_type) in params {
             let ty = match mode {
@@ -265,6 +272,39 @@ impl<'a> Lowerer<'a> {
                     self.terminate(Terminator::Return(failed));
                     self.implicit_cleanup_returns.push((self.current, *span));
                     self.current = success;
+                }
+                Statement::With {
+                    name,
+                    span,
+                    value,
+                    body,
+                } => {
+                    if let Some(tail) = &body.tail {
+                        return Err(Diagnostic::new(
+                            tail.span,
+                            "with body cannot end in a value expression; add a semicolon",
+                        ));
+                    }
+                    let (owner, ty) = self.expr(value, locals)?;
+                    if !matches!(ty, Type::SenderI64 | Type::ReceiverI64) {
+                        return Err(Diagnostic::new(
+                            value.span,
+                            "with currently owns a Sender<I64> or Receiver<I64>",
+                        ));
+                    }
+                    let mut scoped_locals = locals.clone();
+                    if scoped_locals
+                        .insert(name.clone(), Binding::Val(owner))
+                        .is_some()
+                    {
+                        return Err(Diagnostic::new(*span, format!("duplicate local {name}")));
+                    }
+                    self.body(body, &mut scoped_locals)?;
+                    let exit = self.current;
+                    let next = self.block();
+                    self.terminate(Terminator::Jump(next, vec![]));
+                    self.scoped_cleanup_exits.push((exit, owner, *span));
+                    self.current = next;
                 }
                 Statement::Val(name, span, expr) | Statement::Var(name, span, expr) => {
                     if locals.contains_key(name) {
@@ -947,7 +987,7 @@ impl<'a> Lowerer<'a> {
         Ok((value, ty))
     }
 
-    fn finish(self, name: String) -> Result<(Function, Vec<(BlockId, Span)>), Diagnostic> {
+    fn finish(self, name: String) -> Result<(Function, CleanupSites), Diagnostic> {
         let mut blocks = Vec::with_capacity(self.blocks.len());
         for block in self.blocks {
             let Some(terminator) = block.terminator else {
@@ -971,7 +1011,10 @@ impl<'a> Lowerer<'a> {
                 param_modes: self.param_modes,
                 return_type: self.return_type,
             },
-            self.implicit_cleanup_returns,
+            CleanupSites {
+                returns: self.implicit_cleanup_returns,
+                scopes: self.scoped_cleanup_exits,
+            },
         ))
     }
 }
@@ -1198,7 +1241,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         }
     }
     let mut lowered = Vec::with_capacity(ast.functions.len());
-    let mut cleanup_returns = Vec::with_capacity(ast.functions.len());
+    let mut cleanup_sites = Vec::with_capacity(ast.functions.len());
     for function in &ast.functions {
         let mut lowerer = Lowerer::new(
             &functions,
@@ -1235,7 +1278,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         lowerer.terminate(Terminator::Return(value));
         let (function, cleanup) = lowerer.finish(function.name.clone())?;
         lowered.push(function);
-        cleanup_returns.push(cleanup);
+        cleanup_sites.push(cleanup);
     }
     let mut program = Program {
         data,
@@ -1244,21 +1287,64 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     verify_structure(&program)
         .map_err(|message| Diagnostic::new(Span { start: 0, end: 0 }, message))?;
     verify_ownership(&program).map_err(|error| Diagnostic::new(error.span, error.message))?;
+    // A single abstract flow pass decides lexical closes in control-flow
+    // order. Provisional closes alter the abstract state, so nested aliases
+    // close once. The final Core contains only the closes actually needed.
+    for ((function, exits), source_function) in program
+        .functions
+        .iter_mut()
+        .zip(&cleanup_sites)
+        .zip(&ast.functions)
+    {
+        if exits.scopes.is_empty() {
+            continue;
+        }
+        let returns = function
+            .blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, block)| {
+                matches!(block.terminator, Terminator::Return(_)).then_some(BlockId(index))
+            })
+            .collect::<Vec<_>>();
+        let Some((graph, values)) = capability_graph(function, &returns, &exits.scopes) else {
+            continue;
+        };
+        let facts = capability_flow::verify(&graph)
+            .map_err(|message| Diagnostic::new(source_function.name_span, message))?;
+        let mut spans = vec![None; function.blocks.len()];
+        for (block, _, span) in &exits.scopes {
+            spans[block.0] = Some(*span);
+        }
+        for (block, slot) in facts.lexical_closes {
+            let span = spans[block].expect("lexical close belongs to a with exit");
+            function.blocks[block].instructions.push(Instruction {
+                result: None,
+                operation: Operation::CloseHandle(values[slot.0]),
+                span,
+            });
+        }
+    }
     // Treat only source `?` returns as cleanup exits. The exact checker gives
     // each such exit its live slots; then the ordinary verifier checks the
     // completed Core, including every inserted close.
     for ((function, returns), source_function) in program
         .functions
         .iter_mut()
-        .zip(&cleanup_returns)
+        .zip(&cleanup_sites)
         .zip(&ast.functions)
     {
-        let cleanup_blocks = returns.iter().map(|(block, _)| *block).collect::<Vec<_>>();
-        if let Some((graph, values)) = capability_graph(function, &cleanup_blocks) {
+        let cleanup_blocks = returns
+            .returns
+            .iter()
+            .map(|(block, _)| *block)
+            .collect::<Vec<_>>();
+        if let Some((graph, values)) = capability_graph(function, &cleanup_blocks, &[]) {
             let facts = capability_flow::verify(&graph)
                 .map_err(|message| Diagnostic::new(source_function.name_span, message))?;
             for exit in facts.failures {
                 let span = returns
+                    .returns
                     .iter()
                     .find(|(block, _)| block.0 == exit.block)
                     .map(|(_, span)| *span)

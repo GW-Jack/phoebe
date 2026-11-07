@@ -12,6 +12,7 @@ enum TokenKind {
     Copy,
     While,
     Spawn,
+    With,
     If,
     Else,
     True,
@@ -79,6 +80,7 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     "copy" => TokenKind::Copy,
                     "while" => TokenKind::While,
                     "spawn" => TokenKind::Spawn,
+                    "with" => TokenKind::With,
                     "if" => TokenKind::If,
                     "else" => TokenKind::Else,
                     "true" => TokenKind::True,
@@ -304,6 +306,12 @@ pub enum Statement {
         child: String,
         args: Vec<CallArgument>,
         span: Span,
+    },
+    With {
+        name: String,
+        span: Span,
+        value: Expr,
+        body: Body,
     },
     Var(String, Span, Expr),
     Assign(String, Span, Expr),
@@ -705,6 +713,19 @@ impl Parser {
                     child,
                     args,
                     span: start.span.join(end.span),
+                });
+                continue;
+            }
+            if let Some(start) = self.eat(&TokenKind::With) {
+                let (name, _) = self.name()?;
+                self.expect(&TokenKind::Equal, "= after with binding")?;
+                let value = self.expr(0)?;
+                let body = self.block(false)?;
+                statements.push(Statement::With {
+                    name,
+                    span: start.span,
+                    value,
+                    body,
                 });
                 continue;
             }

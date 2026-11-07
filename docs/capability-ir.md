@@ -185,16 +185,14 @@ including differing branch states, loop backedges, duplicate creation, and
 normal return. Core now classifies bare `SenderI64` and `ReceiverI64` values
 and derives graphs for creation, close, send/receive, and jump edges. Pending
 send/receive uses a `Retry` suspension edge: it records the retained live
-slots but does not re-enter the block or replay its instructions. Source lowering invokes
-the exact checker so `phoebe check` rejects a forgotten right. It does not yet handle
-capability-bearing aggregates, place replacement, or match discard. Next,
-extend that integration and lower `with` and structural cleanup. Scalar
-send/receive and spawn terminators and interpreter frames now exist; reply
-operations and native retained frames remain. Interpreter and Cranelift
-executions must agree on the same IR, including failed and canceled paths.
-Source syntax exposes creation, explicit close, fallible spawn, and scalar
-send/receive outcomes. Native retained frames and aggregate rights remain
-open.
+slots but does not re-enter the block or replay its instructions. Source
+lowering invokes the exact checker so `phoebe check` rejects a forgotten
+right. A `with` statement closes one bare endpoint on lexical fall-through
+when its slot is still live after the body. Inner scopes are resolved first.
+On `?`, the existing error-edge cleanup closes all live bare endpoints.
+Neither path emits a close after explicit close or successful transfer.
+Capability-bearing aggregates, place replacement, match discard, and
+structural `close_caps()` remain open.
 
 An internal Core function may own a bare endpoint parameter. A synchronous
 call transfers the caller's slot to the callee's entry slot; the callee must
@@ -203,8 +201,8 @@ same task throughout that call. The verifier rejects a second caller-side
 use after transfer. A retry edge may check a slot with `Require`, but it must
 leave the exact slot set unchanged so a later poll can safely repeat the
 terminator. The interpreter retains values, places, and call frames across
-that retry. Core task spawn now executes in the interpreter; native and source
-task spawn remain future work.
+that retry. Source spawn and native retained frames execute the current
+scalar subset.
 
 The verifier establishes a property of the checked IR, conditional on its
 implementation and runtime ABI. It does not prove that Rust cleanup, Cranelift
