@@ -27,6 +27,61 @@ fn main() -> I64 {
 }
 
 #[test]
+fn direct_parent_spawns_suspending_child_in_jit_and_object() {
+    let source = include_str!("../examples/spawn_pair.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let suspendable = phoebe::frame_layout::suspendable_functions(&program).unwrap();
+    assert!(suspendable[0]);
+    assert!(suspendable[1]);
+    assert!(!suspendable[2]);
+    assert!(!suspendable[3]);
+    let clif = native::clif(&program).unwrap();
+    assert!(clif.contains("Phoebe function main"));
+    assert!(clif.contains("Phoebe poll function producer"));
+    assert!(clif.contains("Phoebe poll function consumer"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 7);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 7);
+    let limited = ScopeLimits {
+        tasks: 1,
+        channels: 1,
+        replies: 0,
+    };
+    assert_eq!(
+        program.interpret_with_limits("main", &[], limited).unwrap(),
+        0
+    );
+    assert_eq!(
+        native::run_with_limits(&program, "main", &[], limited).unwrap(),
+        0
+    );
+    let second_spawn_limited = ScopeLimits {
+        tasks: 2,
+        channels: 1,
+        replies: 0,
+    };
+    assert_eq!(
+        program
+            .interpret_with_limits("main", &[], second_spawn_limited)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        native::run_with_limits(&program, "main", &[], second_spawn_limited).unwrap(),
+        0
+    );
+    let path = std::env::temp_dir().join(format!("phoebe-mixed-spawn-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"7\n");
+}
+
+#[test]
 fn source_spawn_transfers_endpoint_and_failure_closes_parent_rights() {
     let program = core::lower(&syntax::parse(source()).unwrap()).unwrap();
     assert!(program.to_string().contains("spawn worker("));

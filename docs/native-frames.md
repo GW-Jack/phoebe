@@ -5,8 +5,10 @@ verified Core. The runtime can allocate and poll stable native frames through
 the versioned v1 ABI. Generated Cranelift poll functions handle scalar channel
 retries, same-task calls into suspendable functions, channel creation, and
 spawned poll children. The public `run` and standalone `build` paths select
-this backend when `main` can suspend. The object path uses the same lowering
-as the JIT; standalone exchange and closed-send tests execute linked binaries.
+this backend when `main` can suspend. A direct parent can spawn a suspendable
+child through a separately compiled poll entry; its own calls retain the
+direct ABI. The object path uses the same poll lowering as the JIT;
+standalone exchange, closed-send, and mixed-spawn tests execute linked binaries.
 The analysis is tested, not formally proved.
 
 ## Suspension boundary

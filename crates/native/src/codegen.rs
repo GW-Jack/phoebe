@@ -55,6 +55,13 @@ pub fn frame_word_layouts(program: &Program) -> Result<Vec<FrameWords>, String> 
         .collect()
 }
 
+#[derive(Clone)]
+struct SpawnEntry {
+    id: FuncId,
+    layout: FrameWords,
+    needs_wrapper: bool,
+}
+
 pub(super) fn compile_functions<M: Module>(
     module: &mut M,
     program: &Program,
@@ -63,6 +70,18 @@ pub(super) fn compile_functions<M: Module>(
     mut clif: Option<&mut String>,
 ) -> Result<Vec<(FuncId, Signature)>, String> {
     let uses_runtime = context_functions.iter().any(|needed| *needed);
+    let suspendable = frame_layout::suspendable_functions(program)?;
+    let mut poll_layouts = vec![None; program.functions.len()];
+    if program.functions.iter().any(|function| {
+        function.blocks.iter().any(|block| {
+            matches!(block.terminator, Terminator::Spawn { child, .. } if suspendable[child.0])
+        })
+    }) {
+        for layout in frame_word_layouts(program)? {
+            let index = layout.function.0;
+            poll_layouts[index] = Some(layout);
+        }
+    }
     let pointer_type = module.target_config().pointer_type();
     let shapes = AbiShapes::new(program, pointer_type);
     let runtime_imports = if uses_runtime {
@@ -140,7 +159,9 @@ pub(super) fn compile_functions<M: Module>(
         } else {
             format!("phoebe_fn_{index}")
         };
-        let linkage = if export_main && function.name == "main" {
+        let linkage = if suspendable[index] {
+            Linkage::Import
+        } else if export_main && function.name == "main" {
             Linkage::Export
         } else {
             Linkage::Local
@@ -150,12 +171,36 @@ pub(super) fn compile_functions<M: Module>(
             .map_err(|e| e.to_string())?;
         ids.push((id, signature));
     }
-    let mut spawn_wrappers: Vec<Option<(FuncId, FrameWords)>> = vec![None; program.functions.len()];
+    let mut spawn_wrappers: Vec<Option<SpawnEntry>> = vec![None; program.functions.len()];
     for function in &program.functions {
         for block in &function.blocks {
             if let Terminator::Spawn { child, .. } = block.terminator
                 && spawn_wrappers[child.0].is_none()
             {
+                if suspendable[child.0] {
+                    let mut signature = module.make_signature();
+                    signature
+                        .params
+                        .extend([AbiParam::new(pointer_type), AbiParam::new(pointer_type)]);
+                    signature.returns.push(AbiParam::new(types::I64));
+                    let id = module
+                        .declare_function(
+                            &format!("phoebe_spawn_poll_{}", child.0),
+                            Linkage::Import,
+                            &signature,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    let layout = poll_layouts[child.0]
+                        .as_ref()
+                        .ok_or("suspendable spawn child has no frame")?
+                        .clone();
+                    spawn_wrappers[child.0] = Some(SpawnEntry {
+                        id,
+                        layout,
+                        needs_wrapper: false,
+                    });
+                    continue;
+                }
                 let empty_frame = FunctionFrame {
                     function: child,
                     points: Vec::new(),
@@ -176,13 +221,20 @@ pub(super) fn compile_functions<M: Module>(
                         &signature,
                     )
                     .map_err(|error| error.to_string())?;
-                spawn_wrappers[child.0] = Some((id, layout));
+                spawn_wrappers[child.0] = Some(SpawnEntry {
+                    id,
+                    layout,
+                    needs_wrapper: true,
+                });
             }
         }
     }
     let mut ctx = module.make_context();
     let mut builder_context = FunctionBuilderContext::new();
     for (index, function) in program.functions.iter().enumerate() {
+        if suspendable[index] {
+            continue;
+        }
         let (id, signature) = &ids[index];
         ctx.func.signature = signature.clone();
         ctx.func.name = UserFuncName::user(0, id.as_u32());
@@ -550,10 +602,11 @@ pub(super) fn compile_functions<M: Module>(
                         failure,
                     } => {
                         let (_, _, spawn) = runtime_imports.expect("spawn runtime import");
-                        let (wrapper, layout) = spawn_wrappers[child.0]
+                        let entry = spawn_wrappers[child.0]
                             .as_ref()
                             .expect("declared spawn wrapper");
-                        let wrapper_ref = module.declare_func_in_func(*wrapper, builder.func);
+                        let layout = &entry.layout;
+                        let wrapper_ref = module.declare_func_in_func(entry.id, builder.func);
                         let entry = builder.ins().func_addr(pointer_type, wrapper_ref);
                         let mut initial = Vec::new();
                         for (arg, slot) in args.iter().zip(&layout.entry_params) {
@@ -703,9 +756,14 @@ pub(super) fn compile_functions<M: Module>(
         module.clear_context(&mut ctx);
     }
     for (child, wrapper) in spawn_wrappers.iter().enumerate() {
-        let Some((wrapper_id, layout)) = wrapper else {
+        let Some(entry) = wrapper else {
             continue;
         };
+        if !entry.needs_wrapper {
+            continue;
+        }
+        let wrapper_id = entry.id;
+        let layout = &entry.layout;
         let mut signature = module.make_signature();
         signature
             .params
@@ -759,7 +817,7 @@ pub(super) fn compile_functions<M: Module>(
             .map_err(|error| error.to_string())?;
         }
         module
-            .define_function(*wrapper_id, &mut ctx)
+            .define_function(wrapper_id, &mut ctx)
             .map_err(|e| e.to_string())?;
         module.clear_context(&mut ctx);
     }

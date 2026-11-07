@@ -36,6 +36,7 @@ buck2 run //:phoebe -- run examples/hello.phoebe
 buck2 build //crates/core:phoebe_core
 buck2 test //crates/core:unit_tests //crates/runtime:unit_tests //crates/native:unit_tests
 buck2 test //:source_traffic_tests
+buck2 test //:source_spawn_tests
 ```
 
 The root `BUCK` and each `crates/*/BUCK` explicitly declare first-party

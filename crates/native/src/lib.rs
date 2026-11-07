@@ -30,6 +30,7 @@ pub use poll::{PollExecutable, PollLeafExecutable, compile_poll_jit, compile_pol
 
 pub struct JitExecutable {
     module: JITModule,
+    _poll_children: Vec<PollExecutable>,
     entry: FuncId,
     arity: usize,
     name: String,
@@ -38,9 +39,12 @@ pub struct JitExecutable {
 
 pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, String> {
     core::verify(program)?;
-    let (_, entry) = program
+    let (entry_id, entry) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
+    if frame_layout::suspendable_functions(program)?[entry_id.0] {
+        return Err("suspendable entry requires the retained native backend".into());
+    }
     let arity = entry.blocks[0].params.len();
     if entry.param_modes.iter().any(|mode| *mode != ParamMode::Own) {
         return Err("borrowed parameters require a Phoebe caller".into());
@@ -63,6 +67,15 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
         .finish(settings::Flags::new(flags))
         .map_err(|e| e.to_string())?;
     let mut jit = JITBuilder::with_isa(isa, default_libcall_names());
+    let mut poll_children = Vec::new();
+    for child in spawned_poll_children(program)? {
+        let executable = compile_poll_jit(program, &program.functions[child.0].name)?;
+        jit.symbol(
+            format!("phoebe_spawn_poll_{}", child.0),
+            unsafe { executable.entry() } as *const u8,
+        );
+        poll_children.push(executable);
+    }
     let context_functions = program.runtime_context_functions();
     if context_functions.iter().any(|needed| *needed) {
         jit.symbol(
@@ -84,6 +97,7 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
     let (entry_id, _) = program.function(name).expect("checked above");
     Ok(JitExecutable {
         module,
+        _poll_children: poll_children,
         entry: ids[entry_id.0].0,
         arity,
         name: name.to_owned(),
@@ -240,10 +254,41 @@ pub fn run_with_limits(
 }
 
 pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
-    emit_object_with_poll_layout(program).map(|(object, _)| object)
+    let emitted = emit_object_with_poll_layout(program)?;
+    if !emitted.children.is_empty() {
+        return Err(
+            "mixed direct/poll program emits multiple objects; use build_executable".into(),
+        );
+    }
+    Ok(emitted.root)
 }
 
-fn emit_object_with_poll_layout(program: &Program) -> Result<(Vec<u8>, Option<usize>), String> {
+struct ObjectEmission {
+    root: Vec<u8>,
+    poll_words: Option<usize>,
+    children: Vec<Vec<u8>>,
+}
+
+fn spawned_poll_children(program: &Program) -> Result<Vec<core::FunctionId>, String> {
+    let suspendable = frame_layout::suspendable_functions(program)?;
+    let mut children = vec![false; program.functions.len()];
+    for function in &program.functions {
+        for block in &function.blocks {
+            if let Terminator::Spawn { child, .. } = block.terminator
+                && suspendable[child.0]
+            {
+                children[child.0] = true;
+            }
+        }
+    }
+    Ok(children
+        .iter()
+        .enumerate()
+        .filter_map(|(index, found)| found.then_some(core::FunctionId(index)))
+        .collect())
+}
+
+fn emit_object_with_poll_layout(program: &Program) -> Result<ObjectEmission, String> {
     core::verify(program)?;
     let context_functions = program.runtime_context_functions();
     let (main, entry) = program
@@ -256,8 +301,21 @@ fn emit_object_with_poll_layout(program: &Program) -> Result<(Vec<u8>, Option<us
         return Err("standalone `main` must return I64".into());
     }
     if frame_layout::suspendable_functions(program)?[main.0] {
-        let (object, words) = poll::emit_poll_object(program)?;
-        return Ok((object, Some(words)));
+        let (object, words) = poll::emit_poll_object(program, "main", "phoebe_main_poll")?;
+        return Ok(ObjectEmission {
+            root: object,
+            poll_words: Some(words),
+            children: Vec::new(),
+        });
+    }
+    let mut poll_objects = Vec::new();
+    for child in spawned_poll_children(program)? {
+        let (object, _) = poll::emit_poll_object(
+            program,
+            &program.functions[child.0].name,
+            &format!("phoebe_spawn_poll_{}", child.0),
+        )?;
+        poll_objects.push(object);
     }
     let mut flags = settings::builder();
     flags
@@ -272,7 +330,11 @@ fn emit_object_with_poll_layout(program: &Program) -> Result<(Vec<u8>, Option<us
         ObjectBuilder::new(isa, "phoebe", default_libcall_names()).map_err(|e| e.to_string())?;
     let mut module = ObjectModule::new(builder);
     compile_functions(&mut module, program, &context_functions, true, None)?;
-    Ok((module.finish().emit().map_err(|e| e.to_string())?, None))
+    Ok(ObjectEmission {
+        root: module.finish().emit().map_err(|e| e.to_string())?,
+        poll_words: None,
+        children: poll_objects,
+    })
 }
 
 /// Print the pre-legalization Cranelift IR that Phoebe submits for each function.
@@ -302,12 +364,16 @@ pub fn clif(program: &Program) -> Result<String, String> {
         false,
         Some(&mut output),
     )?;
+    for child in spawned_poll_children(program)? {
+        output.push_str(compile_poll_jit(program, &program.functions[child.0].name)?.clif());
+    }
     Ok(output)
 }
 
 pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> {
-    let (object, poll_words) = emit_object_with_poll_layout(program)?;
-    let runtime_archive = if poll_words.is_some()
+    let emitted = emit_object_with_poll_layout(program)?;
+    let runtime_archive = if emitted.poll_words.is_some()
+        || !emitted.children.is_empty()
         || program
             .runtime_context_functions()
             .iter()
@@ -318,12 +384,19 @@ pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> 
         None
     };
     let object_path = output.with_extension(format!("phoebe-{}.o", std::process::id()));
-    fs::write(&object_path, object).map_err(|e| format!("{}: {e}", object_path.display()))?;
+    fs::write(&object_path, emitted.root).map_err(|e| format!("{}: {e}", object_path.display()))?;
+    let mut child_paths = Vec::new();
+    for (index, child) in emitted.children.into_iter().enumerate() {
+        let path = output.with_extension(format!("phoebe-{}-{index}.o", std::process::id()));
+        fs::write(&path, child).map_err(|e| format!("{}: {e}", path.display()))?;
+        child_paths.push(path);
+    }
     let linked = (|| -> Result<(), String> {
         let mut command = Command::new("cc");
         command
             .args(["-x", "c", "-", "-x", "none"])
             .arg(&object_path);
+        command.args(&child_paths);
         if let Some(archive) = &runtime_archive {
             command.arg(archive);
         }
@@ -334,7 +407,7 @@ pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> 
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("failed to launch C linker: {e}"))?;
-        let wrapper = if let Some(words) = poll_words {
+        let wrapper = if let Some(words) = emitted.poll_words {
             format!(
                 "#include <stdio.h>\nextern long long phoebe_main_poll(void *, long long *);\nextern int phoebe_rt_v1_main_poll(long long (*)(void *, long long *), long long, long long *);\nint main(void) {{ long long value = 0; if (phoebe_rt_v1_main_poll(phoebe_main_poll, {words}, &value)) {{ fputs(\"phoebe runtime failed\\n\", stderr); return 1; }} printf(\"%lld\\n\", value); return 0; }}\n"
             )
@@ -359,6 +432,9 @@ pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> 
         Ok(())
     })();
     let _ = fs::remove_file(&object_path);
+    for path in child_paths {
+        let _ = fs::remove_file(path);
+    }
     linked
 }
 

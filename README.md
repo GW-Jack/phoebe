@@ -53,6 +53,7 @@ cargo run -- run examples/nested_result.phoebe
 cargo run -- run examples/nested_variant.phoebe
 cargo run -- run examples/copy.phoebe
 cargo run -- run examples/channel_exchange.phoebe
+cargo run -- run examples/spawn_pair.phoebe
 cargo run -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 /tmp/phoebe-exchange
 cargo run -- run examples/multi_module

@@ -124,7 +124,9 @@ The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
 retry across both operations. Generated send and receive leaves use retained
 task frames. The native JIT and object paths use the same generated call
-continuations and spawned poll children for the source exchange.
+continuations and spawned poll children for the source exchange. A direct
+parent can also spawn a suspendable child using a separate poll code object,
+so the parent keeps its direct calling convention.
 Core now checks scalar send/receive terminators and derives live-right maps
 for retry suspension. Its interpreter retains frames and places across a
 pending operation, and executes buffered scalar traffic. Core `spawn` now

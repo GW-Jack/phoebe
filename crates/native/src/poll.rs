@@ -74,7 +74,7 @@ pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable,
         runtime::phoebe_spawn_poll as *const u8,
     );
     let mut module = JITModule::new(jit);
-    let (entry, layout, clif) = compile_poll_module(&mut module, program, name, false)?;
+    let (entry, layout, clif) = compile_poll_module(&mut module, program, name, None)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
     Ok(PollExecutable {
         module,
@@ -84,7 +84,11 @@ pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable,
     })
 }
 
-pub(crate) fn emit_poll_object(program: &Program) -> Result<(Vec<u8>, usize), String> {
+pub(crate) fn emit_poll_object(
+    program: &Program,
+    name: &str,
+    symbol: &str,
+) -> Result<(Vec<u8>, usize), String> {
     let mut flags = settings::builder();
     flags
         .set("use_colocated_libcalls", "false")
@@ -97,7 +101,7 @@ pub(crate) fn emit_poll_object(program: &Program) -> Result<(Vec<u8>, usize), St
     let builder =
         ObjectBuilder::new(isa, "phoebe", default_libcall_names()).map_err(|e| e.to_string())?;
     let mut module = ObjectModule::new(builder);
-    let (_, layout, _) = compile_poll_module(&mut module, program, "main", true)?;
+    let (_, layout, _) = compile_poll_module(&mut module, program, name, Some(symbol))?;
     let object = module.finish().emit().map_err(|e| e.to_string())?;
     Ok((object, layout.total_words))
 }
@@ -106,7 +110,7 @@ fn compile_poll_module<M: Module>(
     module: &mut M,
     program: &Program,
     name: &str,
-    exported: bool,
+    export_symbol: Option<&str>,
 ) -> Result<(FuncId, FrameWords, String), String> {
     core::verify(program)?;
     let (root, entry_function) = program
@@ -243,8 +247,11 @@ fn compile_poll_module<M: Module>(
     signature.returns.push(AbiParam::new(types::I64));
     let mut ids = vec![None; program.functions.len()];
     for id in &reachable {
-        let (symbol, linkage) = if exported && *id == root {
-            ("phoebe_main_poll".to_owned(), Linkage::Export)
+        let (symbol, linkage) = if *id == root {
+            match export_symbol {
+                Some(symbol) => (symbol.to_owned(), Linkage::Export),
+                None => (format!("phoebe_poll_{}", id.0), Linkage::Local),
+            }
         } else {
             (format!("phoebe_poll_{}", id.0), Linkage::Local)
         };

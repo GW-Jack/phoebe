@@ -34,3 +34,14 @@ rust_test(
     edition = "2024",
     deps = [":phoebe_lib"],
 )
+
+rust_test(
+    name = "source_spawn_tests",
+    crate_root = "tests/source_spawn.rs",
+    srcs = [
+        "tests/source_spawn.rs",
+        "examples/spawn_pair.phoebe",
+    ],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+)
