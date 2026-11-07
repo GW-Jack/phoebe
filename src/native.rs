@@ -223,6 +223,9 @@ impl AbiShapes {
             Type::Bool => vec![types::I8],
             Type::Data(id) => self.data[id.0].clone(),
             Type::RefI64 | Type::RefMutI64 => vec![self.pointer_type],
+            Type::SenderI64 | Type::ReceiverI64 | Type::ResourceError => {
+                unreachable!("capability functions are rejected before native lowering")
+            }
         }
     }
 }
@@ -233,6 +236,16 @@ fn compile_functions<M: Module>(
     export_main: bool,
     mut clif: Option<&mut String>,
 ) -> Result<Vec<(FuncId, Signature)>, String> {
+    if program.functions.iter().any(|function| {
+        function.value_types.iter().any(|ty| {
+            matches!(
+                ty,
+                Type::SenderI64 | Type::ReceiverI64 | Type::ResourceError
+            )
+        })
+    }) {
+        return Err("native channel creation requires the runtime ABI".into());
+    }
     let pointer_type = module.target_config().pointer_type();
     let shapes = AbiShapes::new(program, pointer_type);
     let mut ids = Vec::with_capacity(program.functions.len());
@@ -337,6 +350,7 @@ fn compile_functions<M: Module>(
                         ..
                     } => vec![then_block.0, else_block.0],
                     Terminator::Match { arms, .. } => arms.iter().map(|arm| arm.target.0).collect(),
+                    Terminator::ChannelNew { .. } => unreachable!("runtime ABI guard"),
                 };
                 for target in successors {
                     if !seen[target] {
@@ -457,6 +471,7 @@ fn compile_functions<M: Module>(
                             );
                             None
                         }
+                        Operation::CloseHandle(_) => unreachable!("runtime ABI guard"),
                         Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                             for (component, slot) in get(*value).into_iter().zip(&places[place.0]) {
                                 builder.ins().stack_store(pointer_type, component, *slot, 0);
@@ -550,6 +565,7 @@ fn compile_functions<M: Module>(
                             }
                         }
                     }
+                    Terminator::ChannelNew { .. } => unreachable!("runtime ABI guard"),
                 }
             }
             builder.seal_all_blocks();

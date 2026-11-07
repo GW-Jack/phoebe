@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 
+use crate::capability_flow::{self, Action as CapAction, Target as CapTarget};
 use crate::syntax::{self, Body, CallArgument, Expr, ExprKind, ParamMode, Statement, TypeName};
 use crate::{Diagnostic, Span};
 
@@ -26,6 +27,9 @@ pub enum Type {
     Data(DataId),
     RefI64,
     RefMutI64,
+    SenderI64,
+    ReceiverI64,
+    ResourceError,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,6 +97,7 @@ pub enum Operation {
     Take(PlaceId),
     CopyPlace(PlaceId),
     Store(PlaceId, ValueId),
+    CloseHandle(ValueId),
 }
 
 #[derive(Clone, Debug)]
@@ -127,6 +132,11 @@ pub enum Terminator {
     Match {
         subject: ValueId,
         arms: Vec<MatchArm>,
+    },
+    ChannelNew {
+        capacity: ValueId,
+        success: BlockId,
+        failure: BlockId,
     },
 }
 
@@ -1288,6 +1298,12 @@ fn op_type(
             }
             Ok(None)
         }
+        Operation::CloseHandle(value) => {
+            if !matches!(ty(*value), Type::SenderI64 | Type::ReceiverI64) {
+                return Err("close.handle requires a channel endpoint".into());
+            }
+            Ok(None)
+        }
         Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
             let place_ty = function
                 .place_types
@@ -1324,7 +1340,8 @@ fn operands(operation: &Operation) -> Vec<ValueId> {
         Operation::Variant(_, _, payload) => payload.iter().copied().collect(),
         Operation::Product(_, fields) => fields.clone(),
         Operation::Field(value, _) => vec![*value],
-        Operation::Neg(a)
+        Operation::CloseHandle(a)
+        | Operation::Neg(a)
         | Operation::PlaceInit(_, a)
         | Operation::Store(_, a)
         | Operation::LoadRef(a) => vec![*a],
@@ -1516,6 +1533,9 @@ fn verify_ownership(program: &Program) -> Result<(), OwnershipError> {
                     value_use(&mut state, *subject, true, span)?;
                     arms.iter().map(|arm| arm.target.0).collect()
                 }
+                Terminator::ChannelNew {
+                    success, failure, ..
+                } => vec![success.0, failure.0],
             };
             for target in successors {
                 match &mut incoming[target] {
@@ -1558,7 +1578,11 @@ fn verify_structure(program: &Program) -> Result<(), String> {
         if definition.payloads.iter().flatten().any(|ty| match ty {
             Type::I64 | Type::Bool => false,
             Type::Data(id) => id.0 >= index,
-            Type::RefI64 | Type::RefMutI64 => true,
+            Type::RefI64
+            | Type::RefMutI64
+            | Type::SenderI64
+            | Type::ReceiverI64
+            | Type::ResourceError => true,
         }) {
             return Err("invalid variant payload type".into());
         }
@@ -1568,7 +1592,11 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                 || match ty {
                     Type::I64 | Type::Bool => false,
                     Type::Data(id) => id.0 >= index,
-                    Type::RefI64 | Type::RefMutI64 => true,
+                    Type::RefI64
+                    | Type::RefMutI64
+                    | Type::SenderI64
+                    | Type::ReceiverI64
+                    | Type::ResourceError => true,
                 }
             {
                 return Err("invalid product field".into());
@@ -1684,6 +1712,17 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                     ..
                 } => vec![*then_block, *else_block],
                 Terminator::Match { arms, .. } => arms.iter().map(|arm| arm.target).collect(),
+                Terminator::ChannelNew {
+                    success, failure, ..
+                } => {
+                    if success == failure {
+                        return Err(format!(
+                            "{}: creation edges must be distinct",
+                            function.name
+                        ));
+                    }
+                    vec![*success, *failure]
+                }
             };
             for target in targets {
                 if target.0 >= function.blocks.len() {
@@ -1867,6 +1906,29 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                         }
                     }
                 }
+                Terminator::ChannelNew {
+                    capacity,
+                    success,
+                    failure,
+                } => {
+                    check_use(*capacity, block_id, end)?;
+                    if function.value_types[capacity.0] != Type::I64 {
+                        return Err(format!("{}: channel capacity must be I64", function.name));
+                    }
+                    let success_params = &function.blocks[success.0].params;
+                    let failure_params = &function.blocks[failure.0].params;
+                    if success_params.len() != 2
+                        || function.value_types[success_params[0].0] != Type::SenderI64
+                        || function.value_types[success_params[1].0] != Type::ReceiverI64
+                        || failure_params.len() != 1
+                        || function.value_types[failure_params[0].0] != Type::ResourceError
+                    {
+                        return Err(format!(
+                            "{}: channel creation edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
             }
         }
     }
@@ -1907,7 +1969,93 @@ fn verify_structure(program: &Program) -> Result<(), String> {
 
 pub fn verify(program: &Program) -> Result<(), String> {
     verify_structure(program)?;
-    verify_ownership(program).map_err(|error| error.message)
+    verify_ownership(program).map_err(|error| error.message)?;
+    verify_capability_edges(program)
+}
+
+fn is_channel_handle(ty: Type) -> bool {
+    matches!(ty, Type::SenderI64 | Type::ReceiverI64)
+}
+
+fn verify_capability_edges(program: &Program) -> Result<(), String> {
+    for function in &program.functions {
+        if !function.value_types.iter().copied().any(is_channel_handle) {
+            continue;
+        }
+        let entry_live = function.blocks[0]
+            .params
+            .iter()
+            .filter(|value| is_channel_handle(function.value_types[value.0]))
+            .map(|value| capability_flow::Slot(value.0))
+            .collect();
+        let blocks = function
+            .blocks
+            .iter()
+            .map(|block| {
+                let actions = block
+                    .instructions
+                    .iter()
+                    .filter_map(|instruction| match instruction.operation {
+                        Operation::CloseHandle(value) => {
+                            Some(CapAction::Close(capability_flow::Slot(value.0)))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let edge = |target: CapTarget, actions| capability_flow::Edge { target, actions };
+                let exits = match &block.terminator {
+                    Terminator::Return(_) => vec![edge(CapTarget::Return, vec![])],
+                    Terminator::Jump(target, args) => {
+                        let moves = args
+                            .iter()
+                            .zip(&function.blocks[target.0].params)
+                            .filter(|(arg, _)| is_channel_handle(function.value_types[arg.0]))
+                            .map(|(arg, param)| CapAction::Move {
+                                from: capability_flow::Slot(arg.0),
+                                to: capability_flow::Slot(param.0),
+                            })
+                            .collect();
+                        vec![edge(CapTarget::Block(target.0), moves)]
+                    }
+                    Terminator::Branch {
+                        then_block,
+                        else_block,
+                        ..
+                    } => vec![
+                        edge(CapTarget::Block(then_block.0), vec![]),
+                        edge(CapTarget::Block(else_block.0), vec![]),
+                    ],
+                    Terminator::Match { arms, .. } => arms
+                        .iter()
+                        .map(|arm| edge(CapTarget::Block(arm.target.0), vec![]))
+                        .collect(),
+                    Terminator::ChannelNew {
+                        success, failure, ..
+                    } => {
+                        let params = &function.blocks[success.0].params;
+                        vec![
+                            edge(
+                                CapTarget::Block(success.0),
+                                vec![CapAction::CreatePair {
+                                    first: capability_flow::Slot(params[0].0),
+                                    second: capability_flow::Slot(params[1].0),
+                                }],
+                            ),
+                            edge(CapTarget::Block(failure.0), vec![]),
+                        ]
+                    }
+                };
+                capability_flow::Block { actions, exits }
+            })
+            .collect();
+        capability_flow::verify(&capability_flow::Graph {
+            slots: function.value_types.len(),
+            entry_live,
+            blocks,
+        })
+        .map_err(|error| format!("{}: {error}", function.name))?;
+    }
+    Ok(())
 }
 
 impl Program {
@@ -1949,6 +2097,16 @@ impl Program {
 
     pub fn interpret(&self, name: &str, args: &[i64]) -> Result<i64, String> {
         verify(self)?;
+        if self.functions.iter().any(|function| {
+            function.value_types.iter().any(|ty| {
+                matches!(
+                    ty,
+                    Type::SenderI64 | Type::ReceiverI64 | Type::ResourceError
+                )
+            })
+        }) {
+            return Err("interpreted channel creation requires the runtime bridge".into());
+        }
         let (id, function) = self
             .function(name)
             .ok_or_else(|| format!("unknown function {name}"))?;
@@ -2082,6 +2240,7 @@ impl Program {
                         stores[slot] = Some(get(*value));
                         None
                     }
+                    Operation::CloseHandle(_) => unreachable!("runtime bridge guard"),
                 };
                 if let Some(result) = instruction.result {
                     values[result.0] = value;
@@ -2127,6 +2286,7 @@ impl Program {
                     }
                     current = arm.target.0;
                 }
+                Terminator::ChannelNew { .. } => unreachable!("runtime bridge guard"),
             }
         }
     }
@@ -2245,6 +2405,7 @@ impl fmt::Display for Program {
                         Operation::StoreRef(reference, value) => {
                             write!(f, "ref.store v{}, v{}", reference.0, value.0)?
                         }
+                        Operation::CloseHandle(value) => write!(f, "close.handle v{}", value.0)?,
                     }
                     writeln!(f, "  @{}..{}", instruction.span.start, instruction.span.end)?;
                 }
@@ -2278,6 +2439,15 @@ impl fmt::Display for Program {
                         }
                         writeln!(f)?;
                     }
+                    Terminator::ChannelNew {
+                        capacity,
+                        success,
+                        failure,
+                    } => writeln!(
+                        f,
+                        "    channel.new.i64 v{} success block{} failure block{}",
+                        capacity.0, success.0, failure.0
+                    )?,
                 }
             }
             writeln!(f, "}}")?;

@@ -99,8 +99,11 @@ limits, and allocation failure without publishing partial endpoint pairs.
 general typed-message, and native-runtime integration still required.
 `src/capability_flow.rs` separately checks exact slot ownership in abstract
 control-flow graphs and derives failure/suspension live-slot maps. Core IR
-does not yet produce those graphs; this check is not a source-level capability
-safety guarantee. `docs/capability-ir.md` specifies the integration boundary.
+now produces those graphs for hand-built `channel.new.i64`, endpoint closes,
+and capability jumps. The interpreter and native backend explicitly reject
+these programs until the runtime bridge is implemented; this is not yet a
+source-level capability safety guarantee. `docs/capability-ir.md` specifies
+the integration boundary.
 
 ## Commands
 

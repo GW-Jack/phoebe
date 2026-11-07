@@ -1,11 +1,11 @@
 # Capability flow in Core IR
 
-Status: design contract and preparatory executable flow checker. The checker
+Status: design contract with an initial checked Core creation edge. The checker
 in `src/capability_flow.rs` verifies exact capability-slot states at joins and
 normal returns, and derives live-slot maps for failure and suspension edges.
-The executable Core IR does not yet produce these graphs or contain these
-types and operations. The runtime has a bounded `I64` request/reply
-implementation, but it is not connected to source code.
+Core now derives a graph for `channel.new.i64`, endpoint closes, and jumps
+between capability-bearing block parameters. Source lowering and execution
+still do not connect to the bounded runtime kernel.
 
 ## Why the current affine rule is insufficient
 
@@ -80,11 +80,12 @@ same edge form handles `spawn_owned`: success transfers the child frame's
 slots to the new task; failure returns the intact frame and retains its slots
 with the parent.
 
-The preparatory flow checker has an atomic `CreatePair` edge action and tests
-the resulting success and failure ownership states. It rejects aliased or
-already-live result slots. It does not yet know which Core successor is the
-resource failure successor; that association must be generated and checked
-when the typed creation terminator enters Core IR.
+The Core verifier now generates the paired `CreatePair` action exclusively for
+the typed success edge and no creation action for the failure edge. It checks
+their parameter types and exact capability disposition on return. This
+integration currently covers scalar `I64` channels and explicit endpoint
+closes; request/reply creation, nested capability slots, suspension, and
+cleanup metadata are still separate work.
 
 | Operation | Required task ownership | Success transition | Other edge |
 | --- | --- | --- | --- |
@@ -144,11 +145,12 @@ in printable IR and avoids a second, implicit compiler cleanup algorithm.
 
 ## Verification boundary and implementation order
 
-The preparatory flow checker rejects implicit capability loss in an abstract
-graph, including differing branch states, loop backedges, duplicate creation,
-and normal return. It does not yet classify Core types, derive graphs from
-Core, or check place replacement and match discard. Next, add that type and
-graph integration, lower `with` and structural cleanup, then add the
+The flow checker rejects implicit capability loss in an abstract graph,
+including differing branch states, loop backedges, duplicate creation, and
+normal return. Core now classifies bare `SenderI64` and `ReceiverI64` values
+and derives graphs for creation, close, and jump edges. It does not yet handle
+capability-bearing aggregates, place replacement, or match discard. Next,
+extend that integration, lower `with` and structural cleanup, then add the
 send/receive/reply terminators and retained frame layout. Interpreter and
 Cranelift executions must agree on the same IR, including failed and canceled
 paths. Only after those steps should source syntax expose the operations.

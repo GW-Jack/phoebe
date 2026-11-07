@@ -5,7 +5,8 @@ IR is not yet Phoebe's complete checked IR or a proven semantics.
 
 A function contains typed SSA values, numbered basic blocks, and numbered
 mutable places. Each block has zero or more typed parameters, an instruction
-sequence, and exactly one `return`, `jump`, `branch`, or `match` terminator. A `jump`
+sequence, and exactly one `return`, `jump`, `branch`, `match`, or
+`channel.new.i64` terminator. A `jump`
 supplies one typed value per destination parameter. An `if` expression lowers
 to a conditional branch and a join block whose parameter carries the chosen
 arm's result. A `while` statement lowers to a loop head, body, exit, and
@@ -65,12 +66,23 @@ correct. Differential tests compare interpreter and JIT results on supported
 programs. The Maude models cover different bounded abstract machines; they
 do not model this executable IR.
 
-The current check is affine: unused closed values may be dropped. It is not a
-capability cleanup proof. Replacing an owned `var` currently discards the old
-closed value, and `match` may discard a payload. Before capability-bearing
-types enter this IR, those exits need structural cleanup or explicit transfer.
+The current nominal-value check is affine: unused closed values may be dropped.
+Replacing an owned `var` currently discards the old closed value, and `match`
+may discard a payload. The new endpoint-only capability check has exact
+disposition at return, but nested capabilities still need structural cleanup
+or explicit transfer on those exits.
 General loan lifetimes, region begin/end, cleanup edges,
 and cost events remain next steps. The verifier will need to check those
 without turning ordinary compilation into proof search.
 `capability-ir.md` gives the intended edge accounting and suspension rules
 for the next implementation slice.
+
+`channel.new.i64` is currently a checked Core-only edge. It takes an `I64`
+capacity and has a success successor with `SenderI64` and `ReceiverI64` block
+parameters, plus a failure successor with a `ResourceError` parameter.
+`close.handle` consumes either endpoint. Core derives a capability-flow graph
+from these operations: only the success edge creates the two rights, jumps
+move rights to destination parameters, and normal return requires both rights
+to be closed. This is exercised with hand-built Core programs. Source lowering,
+runtime interpretation, and Cranelift lowering reject this slice until their
+runtime bridge is implemented.
