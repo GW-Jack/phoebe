@@ -20,8 +20,8 @@ as a blocked channel operation. Source `yield;` now lowers to a retained
 continuation in the interpreter and native ABI. Compiler-generated backedge
 checkpoints are still needed to make CPU-heavy Phoebe loops fair without an
 explicit yield.
-The default source-run scope permits 64 tasks, 64 channels, and 256 total
-channel handles, with no reply slots; callers can set tighter limits through
+The default source-run scope permits 64 tasks, 64 channels, 256 total
+channel handles, and 64 reply pairs; callers can set tighter limits through
 the Rust API. Task creation
 therefore succeeds in the ordinary interpreter CLI example, while a one-task
 limit exercises the typed failure edge.
@@ -133,8 +133,8 @@ receivers, and commits all transfers together. Synthetic native poll tests
 cover pair creation, one-shot completion, cancellation, resource failure,
 a parked reply receiver waking after a cross-task transfer, and native spawn
 success and task-limit rejection. Hand-built checked Core uses the Rust
-kernel operations through its interpreter; source lowering and Cranelift
-lowering remain open, so these tests do not establish source-level `ReplyTo`
+kernel operations through its interpreter and generated Cranelift code. Source
+lowering remains open, so these tests do not establish source-level `ReplyTo`
 support.
 The C ABI creation call publishes both output tokens only on
 success; native generated code loads them only on that edge. Standalone builds

@@ -1,5 +1,7 @@
 use super::*;
 
+use super::runtime_imports::declare_reply_imports;
+
 /// Phoebe currently flattens only integer and pointer-shaped return parts.
 /// Cranelift's supported host conventions allow eight such return registers
 /// on AArch64 and two on x86-64. Other hosts conservatively use two.
@@ -200,9 +202,18 @@ pub(super) fn compile_functions<M: Module>(
         ]);
         spawn_signature.returns.push(AbiParam::new(types::I64));
         let spawn = module
-            .declare_function("phoebe_rt_v1_spawn_poll", Linkage::Import, &spawn_signature)
+            .declare_function(
+                "phoebe_rt_v1_spawn_poll_caps",
+                Linkage::Import,
+                &spawn_signature,
+            )
             .map_err(|error| error.to_string())?;
         Some((create, close, spawn, fork))
+    } else {
+        None
+    };
+    let reply_imports = if uses_runtime {
+        Some(declare_reply_imports(module, pointer_type)?)
     } else {
         None
     };
@@ -561,8 +572,17 @@ pub(super) fn compile_functions<M: Module>(
                             );
                             None
                         }
-                        Operation::CloseReply(_) => {
-                            return Err("native reply lowering is not implemented".into());
+                        Operation::CloseReply(value) => {
+                            let imports = reply_imports.expect("reply runtime imports");
+                            let callee = module.declare_func_in_func(imports.close, builder.func);
+                            let kind =
+                                i64::from(function.value_types[value.0] == Type::ReplyReceiverI64);
+                            let kind = builder.ins().iconst(types::I64, kind);
+                            builder.ins().call(
+                                callee,
+                                &[runtime_context.expect("runtime context"), one(*value), kind],
+                            );
+                            None
                         }
                         Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                             for (component, slot) in get(*value).into_iter().zip(&places[place.0]) {
@@ -734,6 +754,52 @@ pub(super) fn compile_functions<M: Module>(
                             .ins()
                             .jump(blocks[success.0], &[sender.into(), receiver.into()]);
                     }
+                    Terminator::ReplyNew { success, failure } => {
+                        let imports = reply_imports.expect("reply runtime imports");
+                        let callee = module.declare_func_in_func(imports.create, builder.func);
+                        let right_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let receiver_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let right_out = builder.ins().stack_addr(pointer_type, right_slot, 0);
+                        let receiver_out = builder.ins().stack_addr(pointer_type, receiver_slot, 0);
+                        let call = builder.ins().call(
+                            callee,
+                            &[
+                                runtime_context.expect("runtime context"),
+                                right_out,
+                                receiver_out,
+                            ],
+                        );
+                        let status = builder.inst_results(call)[0];
+                        let succeeded = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                        let created = builder.create_block();
+                        builder.ins().brif(
+                            succeeded,
+                            created,
+                            &[],
+                            blocks[failure.0],
+                            &[status.into()],
+                        );
+                        builder.switch_to_block(created);
+                        let right =
+                            builder
+                                .ins()
+                                .stack_load(pointer_type, types::I64, right_slot, 0);
+                        let receiver =
+                            builder
+                                .ins()
+                                .stack_load(pointer_type, types::I64, receiver_slot, 0);
+                        builder
+                            .ins()
+                            .jump(blocks[success.0], &[right.into(), receiver.into()]);
+                    }
                     Terminator::Fork {
                         source,
                         success,
@@ -845,7 +911,9 @@ pub(super) fn compile_functions<M: Module>(
                         let transfers = args
                             .iter()
                             .filter_map(|arg| match function.value_types[arg.0] {
-                                Type::SenderI64 | Type::ReceiverI64 => Some(get(*arg)[0]),
+                                Type::SenderI64 | Type::ReceiverI64 => Some((0, get(*arg)[0])),
+                                Type::ReplyToI64 => Some((1, get(*arg)[0])),
+                                Type::ReplyReceiverI64 => Some((2, get(*arg)[0])),
                                 _ => None,
                             })
                             .collect::<Vec<_>>();
@@ -855,7 +923,7 @@ pub(super) fn compile_functions<M: Module>(
                             let bytes = u32::try_from(
                                 transfers
                                     .len()
-                                    .checked_mul(8)
+                                    .checked_mul(16)
                                     .ok_or("spawn transfer list overflow")?,
                             )
                             .map_err(|_| "spawn transfer list exceeds stack slot")?;
@@ -864,12 +932,20 @@ pub(super) fn compile_functions<M: Module>(
                                 bytes,
                                 3,
                             ));
-                            for (index, value) in transfers.iter().enumerate() {
+                            for (index, (kind, value)) in transfers.iter().enumerate() {
+                                let kind = builder.ins().iconst(types::I64, *kind);
+                                builder.ins().stack_store(
+                                    pointer_type,
+                                    kind,
+                                    slot,
+                                    i32::try_from(index * 16)
+                                        .map_err(|_| "spawn transfer offset overflow")?,
+                                );
                                 builder.ins().stack_store(
                                     pointer_type,
                                     *value,
                                     slot,
-                                    i32::try_from(index * 8)
+                                    i32::try_from(index * 16 + 8)
                                         .map_err(|_| "spawn transfer offset overflow")?,
                                 );
                             }
@@ -917,10 +993,34 @@ pub(super) fn compile_functions<M: Module>(
                     Terminator::ChannelSend { .. } | Terminator::ChannelReceive { .. } => {
                         return Err("native channel traffic requires retained task frames".into());
                     }
-                    Terminator::ReplyNew { .. }
-                    | Terminator::ReplyComplete { .. }
-                    | Terminator::ReplyReceive { .. } => {
-                        return Err("native reply lowering is not implemented".into());
+                    Terminator::ReplyComplete {
+                        right,
+                        value,
+                        delivered,
+                        closed,
+                    } => {
+                        let imports = reply_imports.expect("reply runtime imports");
+                        let callee = module.declare_func_in_func(imports.complete, builder.func);
+                        let call = builder.ins().call(
+                            callee,
+                            &[
+                                runtime_context.expect("runtime context"),
+                                get(*right)[0],
+                                get(*value)[0],
+                            ],
+                        );
+                        let status = builder.inst_results(call)[0];
+                        let succeeded = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                        builder.ins().brif(
+                            succeeded,
+                            blocks[delivered.0],
+                            &[],
+                            blocks[closed.0],
+                            &[],
+                        );
+                    }
+                    Terminator::ReplyReceive { .. } => {
+                        return Err("native reply receive requires retained task frames".into());
                     }
                 }
             }

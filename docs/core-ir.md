@@ -130,6 +130,8 @@ consumes the right on both delivered and closed edges. Receiving a value or
 end consumes the receiver; pending retains it for retry. `close.reply`
 consumes either right. The exact capability-flow verifier checks these edges,
 including child spawn transfer and failure retention. The interpreter runs a
-parent that moves a reply right to a child and parks on the receiver. Source
-lowering and Cranelift lowering for these Core operations remain open; native
-compilation reports an unsupported reply operation instead of emitting code.
+parent that moves a reply right to a child and parks on the receiver. Cranelift
+JIT and standalone binaries agree on delivered, canceled, ended, spawn, and
+resource-failure paths in hand-built Core fixtures. Generated spawns use typed
+capability descriptors for both channels and replies. Source lowering remains
+open, so user programs cannot yet write these operations.

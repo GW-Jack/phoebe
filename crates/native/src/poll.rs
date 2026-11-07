@@ -78,6 +78,26 @@ pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable,
         "phoebe_rt_v1_spawn_poll",
         runtime::phoebe_spawn_poll as *const u8,
     );
+    jit.symbol(
+        "phoebe_rt_v1_reply_new_i64",
+        runtime::phoebe_reply_new_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_reply_close_i64",
+        runtime::phoebe_reply_close_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_reply_complete_i64",
+        runtime::phoebe_reply_complete_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_reply_receive_i64",
+        runtime::phoebe_reply_receive_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_spawn_poll_caps",
+        runtime::phoebe_spawn_poll_caps as *const u8,
+    );
     let mut module = JITModule::new(jit);
     let (entry, layout, clif) = compile_poll_module(&mut module, program, name, None)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
@@ -364,8 +384,13 @@ fn compile_poll_module<M: Module>(
     ]);
     spawn_signature.returns.push(AbiParam::new(types::I64));
     let spawn = module
-        .declare_function("phoebe_rt_v1_spawn_poll", Linkage::Import, &spawn_signature)
+        .declare_function(
+            "phoebe_rt_v1_spawn_poll_caps",
+            Linkage::Import,
+            &spawn_signature,
+        )
         .map_err(|e| e.to_string())?;
+    let reply_imports = runtime_imports::declare_reply_imports(module, pointer)?;
     let mut signature = module.make_signature();
     signature
         .params
@@ -545,6 +570,12 @@ fn compile_poll_module<M: Module>(
             let create_ref = module.declare_func_in_func(create, builder.func);
             let fork_ref = module.declare_func_in_func(fork, builder.func);
             let spawn_ref = module.declare_func_in_func(spawn, builder.func);
+            let reply_new_ref = module.declare_func_in_func(reply_imports.create, builder.func);
+            let reply_close_ref = module.declare_func_in_func(reply_imports.close, builder.func);
+            let reply_complete_ref =
+                module.declare_func_in_func(reply_imports.complete, builder.func);
+            let reply_receive_ref =
+                module.declare_func_in_func(reply_imports.receive, builder.func);
             for (block_id, block) in function.blocks.iter().enumerate() {
                 builder.switch_to_block(blocks[block_id]);
                 for (instruction_id, instruction) in block.instructions.iter().enumerate() {
@@ -816,6 +847,19 @@ fn compile_poll_module<M: Module>(
                             builder.ins().call(close_ref, &[bridge, token, kind]);
                             None
                         }
+                        Operation::CloseReply(value) => {
+                            let token = get(*value, &mut builder)[0];
+                            let kind =
+                                i64::from(function.value_types[value.0] == Type::ReplyReceiverI64);
+                            let kind = builder.ins().iconst(types::I64, kind);
+                            let call = builder.ins().call(reply_close_ref, &[bridge, token, kind]);
+                            let status = builder.inst_results(call)[0];
+                            let valid = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                            let next = builder.create_block();
+                            builder.ins().brif(valid, next, &[], fault, &[]);
+                            builder.switch_to_block(next);
+                            None
+                        }
                         _ => unreachable!("validated poll operation"),
                     };
                     if let Some(id) = instruction.result {
@@ -985,6 +1029,46 @@ fn compile_poll_module<M: Module>(
                         builder.def_var(variables[error.0][0], status);
                         builder.ins().jump(blocks[failure.0], &[]);
                     }
+                    Terminator::ReplyNew { success, failure } => {
+                        let right_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let receiver_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let right_out = builder.ins().stack_addr(pointer, right_slot, 0);
+                        let receiver_out = builder.ins().stack_addr(pointer, receiver_slot, 0);
+                        let call = builder
+                            .ins()
+                            .call(reply_new_ref, &[bridge, right_out, receiver_out]);
+                        let status = builder.inst_results(call)[0];
+                        let valid = builder.ins().icmp_imm_s(IntCC::NotEqual, status, 255);
+                        let check = builder.create_block();
+                        builder.ins().brif(valid, check, &[], fault, &[]);
+                        builder.switch_to_block(check);
+                        let succeeded = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                        let created = builder.create_block();
+                        let failed = builder.create_block();
+                        builder.ins().brif(succeeded, created, &[], failed, &[]);
+                        builder.switch_to_block(created);
+                        let right = builder.ins().stack_load(pointer, types::I64, right_slot, 0);
+                        let receiver =
+                            builder
+                                .ins()
+                                .stack_load(pointer, types::I64, receiver_slot, 0);
+                        let params = &function.blocks[success.0].params;
+                        builder.def_var(variables[params[0].0][0], right);
+                        builder.def_var(variables[params[1].0][0], receiver);
+                        builder.ins().jump(blocks[success.0], &[]);
+                        builder.switch_to_block(failed);
+                        let error = function.blocks[failure.0].params[0];
+                        builder.def_var(variables[error.0][0], status);
+                        builder.ins().jump(blocks[failure.0], &[]);
+                    }
                     Terminator::Fork {
                         source,
                         success,
@@ -1046,13 +1130,15 @@ fn compile_poll_module<M: Module>(
                         )?;
                         let transfers = args
                             .iter()
-                            .filter(|arg| {
-                                matches!(
-                                    function.value_types[arg.0],
-                                    Type::SenderI64 | Type::ReceiverI64
-                                )
+                            .filter_map(|arg| {
+                                let kind = match function.value_types[arg.0] {
+                                    Type::SenderI64 | Type::ReceiverI64 => 0,
+                                    Type::ReplyToI64 => 1,
+                                    Type::ReplyReceiverI64 => 2,
+                                    _ => return None,
+                                };
+                                Some((kind, builder.use_var(variables[arg.0][0])))
                             })
-                            .map(|arg| builder.use_var(variables[arg.0][0]))
                             .collect::<Vec<_>>();
                         let transfer_count = i64::try_from(transfers.len())
                             .map_err(|_| "spawn transfer count overflow")?;
@@ -1062,7 +1148,7 @@ fn compile_poll_module<M: Module>(
                             let bytes = u32::try_from(
                                 transfers
                                     .len()
-                                    .checked_mul(8)
+                                    .checked_mul(16)
                                     .ok_or("spawn transfer overflow")?,
                             )
                             .map_err(|_| "spawn transfer list exceeds stack slot")?;
@@ -1071,12 +1157,20 @@ fn compile_poll_module<M: Module>(
                                 bytes,
                                 3,
                             ));
-                            for (index, token) in transfers.iter().enumerate() {
+                            for (index, (kind, token)) in transfers.iter().enumerate() {
+                                let kind = builder.ins().iconst(types::I64, *kind);
+                                builder.ins().stack_store(
+                                    pointer,
+                                    kind,
+                                    slot,
+                                    i32::try_from(index * 16)
+                                        .map_err(|_| "spawn transfer offset overflow")?,
+                                );
                                 builder.ins().stack_store(
                                     pointer,
                                     *token,
                                     slot,
-                                    i32::try_from(index * 8)
+                                    i32::try_from(index * 16 + 8)
                                         .map_err(|_| "spawn transfer offset overflow")?,
                                 );
                             }
@@ -1116,20 +1210,39 @@ fn compile_poll_module<M: Module>(
                         builder.def_var(variables[error.0][0], status);
                         builder.ins().jump(blocks[failure.0], &[]);
                     }
+                    Terminator::ReplyComplete {
+                        right,
+                        value,
+                        delivered,
+                        closed,
+                    } => {
+                        let right = builder.use_var(variables[right.0][0]);
+                        let value = builder.use_var(variables[value.0][0]);
+                        let call = builder
+                            .ins()
+                            .call(reply_complete_ref, &[bridge, right, value]);
+                        let status = builder.inst_results(call)[0];
+                        let delivered_status = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                        let check = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(delivered_status, blocks[delivered.0], &[], check, &[]);
+                        builder.switch_to_block(check);
+                        let closed_status = builder.ins().icmp_imm_s(IntCC::Equal, status, 2);
+                        builder
+                            .ins()
+                            .brif(closed_status, blocks[closed.0], &[], fault, &[]);
+                    }
                     Terminator::Yield { .. }
                     | Terminator::ChannelReceive { .. }
-                    | Terminator::ChannelSend { .. } => {
+                    | Terminator::ChannelSend { .. }
+                    | Terminator::ReplyReceive { .. } => {
                         let index = layout
                             .resumes
                             .iter()
                             .position(|slot| slot.block.0 == block_id)
                             .expect("verified retry point");
                         builder.ins().jump(retry_blocks[index], &[]);
-                    }
-                    Terminator::ReplyNew { .. }
-                    | Terminator::ReplyComplete { .. }
-                    | Terminator::ReplyReceive { .. } => {
-                        return Err("native reply lowering is not implemented".into());
                     }
                 }
             }
@@ -1151,6 +1264,14 @@ fn compile_poll_module<M: Module>(
                             .ins()
                             .iadd_imm_s(frame, word_offset(layout.result.start) as i64);
                         let call = builder.ins().call(receive_ref, &[bridge, token, out]);
+                        builder.inst_results(call)[0]
+                    }
+                    Terminator::ReplyReceive { receiver, .. } => {
+                        let token = builder.use_var(variables[receiver.0][0]);
+                        let out = builder
+                            .ins()
+                            .iadd_imm_s(frame, word_offset(layout.result.start) as i64);
+                        let call = builder.ins().call(reply_receive_ref, &[bridge, token, out]);
                         builder.inst_results(call)[0]
                     }
                     Terminator::ChannelSend {
@@ -1202,7 +1323,8 @@ fn compile_poll_module<M: Module>(
                     .brif(is_success, success, &[], check_other, &[]);
                 builder.switch_to_block(success);
                 match terminator {
-                    Terminator::ChannelReceive { value, .. } => {
+                    Terminator::ChannelReceive { value, .. }
+                    | Terminator::ReplyReceive { value, .. } => {
                         let received = builder.ins().load(
                             types::I64,
                             MemFlagsData::new(),
@@ -1224,7 +1346,8 @@ fn compile_poll_module<M: Module>(
                 builder.ins().brif(is_terminal, terminal, &[], fault, &[]);
                 builder.switch_to_block(terminal);
                 match terminator {
-                    Terminator::ChannelReceive { end, .. } => {
+                    Terminator::ChannelReceive { end, .. }
+                    | Terminator::ReplyReceive { end, .. } => {
                         builder.ins().jump(blocks[end.0], &[]);
                     }
                     Terminator::ChannelSend {
@@ -1342,15 +1465,11 @@ fn validate_poll_function(
             if layouts[target.0].is_none() {
                 return Err("retained call requires a poll callee".into());
             }
-        } else if matches!(
-            function.blocks[point.block.0].terminator,
-            Terminator::ReplyReceive { .. }
-        ) {
-            return Err("native reply receive lowering is not implemented".into());
         } else if !matches!(
             function.blocks[point.block.0].terminator,
             Terminator::ChannelReceive { .. }
                 | Terminator::ChannelSend { .. }
+                | Terminator::ReplyReceive { .. }
                 | Terminator::Yield { .. }
         ) {
             return Err("unsupported retained poll point".into());
@@ -1382,6 +1501,7 @@ fn validate_poll_function(
                     | Operation::LoadRef(_)
                     | Operation::StoreRef(_, _)
                     | Operation::CloseHandle(_)
+                    | Operation::CloseReply(_)
                     | Operation::Call(_, _)
             ) {
                 return Err("operation is not yet supported by retained poll".into());
@@ -1403,15 +1523,19 @@ fn validate_poll_function(
                 | Terminator::Branch { .. }
                 | Terminator::Match { .. }
                 | Terminator::ChannelNew { .. }
+                | Terminator::ReplyNew { .. }
                 | Terminator::Fork { .. }
                 | Terminator::Spawn { .. }
                 | Terminator::ChannelReceive { .. }
                 | Terminator::ChannelSend { .. }
+                | Terminator::ReplyComplete { .. }
+                | Terminator::ReplyReceive { .. }
                 | Terminator::Yield { .. }
         ) || matches!(
             block.terminator,
             Terminator::ChannelReceive { .. }
                 | Terminator::ChannelSend { .. }
+                | Terminator::ReplyReceive { .. }
                 | Terminator::Yield { .. }
         ) && !layout
             .resumes

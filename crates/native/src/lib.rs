@@ -27,6 +27,7 @@ use phoebe_syntax::syntax::ParamMode;
 
 mod poll;
 mod reachability;
+mod runtime_imports;
 pub use poll::{PollExecutable, PollLeafExecutable, compile_poll_jit, compile_poll_leaf_jit};
 use reachability::{spawned_poll_children, spawned_poll_children_in, standalone_direct_functions};
 
@@ -95,6 +96,26 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
         jit.symbol(
             "phoebe_rt_v1_spawn_poll",
             runtime::phoebe_spawn_poll as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_reply_new_i64",
+            runtime::phoebe_reply_new_i64 as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_reply_close_i64",
+            runtime::phoebe_reply_close_i64 as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_reply_complete_i64",
+            runtime::phoebe_reply_complete_i64 as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_reply_receive_i64",
+            runtime::phoebe_reply_receive_i64 as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_spawn_poll_caps",
+            runtime::phoebe_spawn_poll_caps as *const u8,
         );
     }
     let mut module = JITModule::new(jit);

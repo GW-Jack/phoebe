@@ -220,7 +220,7 @@ impl Default for ScopeLimits {
             tasks: 64,
             channels: 64,
             handles: 256,
-            replies: 0,
+            replies: 64,
         }
     }
 }

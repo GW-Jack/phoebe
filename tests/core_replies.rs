@@ -4,6 +4,7 @@ use phoebe::core::{
 };
 use phoebe::native;
 use phoebe::runtime::ScopeLimits;
+use std::process::Command;
 
 fn span() -> Span {
     Span { start: 0, end: 0 }
@@ -22,6 +23,22 @@ fn limits(replies: usize) -> ScopeLimits {
         replies,
         ..ScopeLimits::default()
     }
+}
+
+fn assert_standalone(program: &Program, label: &str, expected: i64) {
+    let path = std::env::temp_dir().join(format!("phoebe-reply-{label}-{}", std::process::id()));
+    native::build_executable(program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("{expected}\n")
+    );
 }
 
 fn completed_reply() -> Program {
@@ -115,8 +132,12 @@ fn checked_core_reply_completion_consumes_both_rights() {
             .unwrap(),
         0
     );
-    let error = native::run(&program, "main", &[]).unwrap_err();
-    assert!(error.contains("reply"), "{error}");
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_eq!(
+        native::run_with_limits(&program, "main", &[], limits(0)).unwrap(),
+        0
+    );
+    assert_standalone(&program, "complete", 42);
 }
 
 #[test]
@@ -132,6 +153,129 @@ fn verifier_rejects_leaked_and_twice_closed_reply_capabilities() {
         .insert(1, instruction(None, Operation::CloseReply(ValueId(1))));
     let error = core::verify(&program).unwrap_err();
     assert!(error.contains("not live"), "{error}");
+}
+
+#[test]
+fn canceled_reply_takes_closed_edge_in_direct_native_code() {
+    let program = Program {
+        data: vec![],
+        functions: vec![Function {
+            name: "main".into(),
+            param_modes: vec![],
+            return_type: Type::I64,
+            value_types: vec![
+                Type::ReplyToI64,
+                Type::ReplyReceiverI64,
+                Type::ResourceError,
+                Type::I64,
+                Type::I64,
+                Type::I64,
+                Type::I64,
+            ],
+            place_types: vec![],
+            blocks: vec![
+                Block {
+                    params: vec![],
+                    instructions: vec![],
+                    terminator: Terminator::ReplyNew {
+                        success: BlockId(1),
+                        failure: BlockId(2),
+                    },
+                },
+                Block {
+                    params: vec![ValueId(0), ValueId(1)],
+                    instructions: vec![
+                        instruction(None, Operation::CloseReply(ValueId(1))),
+                        instruction(Some(3), Operation::Const(42)),
+                    ],
+                    terminator: Terminator::ReplyComplete {
+                        right: ValueId(0),
+                        value: ValueId(3),
+                        delivered: BlockId(3),
+                        closed: BlockId(4),
+                    },
+                },
+                Block {
+                    params: vec![ValueId(2)],
+                    instructions: vec![instruction(Some(6), Operation::Const(0))],
+                    terminator: Terminator::Return(ValueId(6)),
+                },
+                Block {
+                    params: vec![],
+                    instructions: vec![instruction(Some(4), Operation::Const(0))],
+                    terminator: Terminator::Return(ValueId(4)),
+                },
+                Block {
+                    params: vec![],
+                    instructions: vec![instruction(Some(5), Operation::Const(42))],
+                    terminator: Terminator::Return(ValueId(5)),
+                },
+            ],
+        }],
+    };
+    core::verify(&program).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "canceled", 42);
+}
+
+#[test]
+fn closed_right_makes_reply_receiver_observe_end() {
+    let program = Program {
+        data: vec![],
+        functions: vec![Function {
+            name: "main".into(),
+            param_modes: vec![],
+            return_type: Type::I64,
+            value_types: vec![
+                Type::ReplyToI64,
+                Type::ReplyReceiverI64,
+                Type::ResourceError,
+                Type::I64,
+                Type::I64,
+                Type::I64,
+            ],
+            place_types: vec![],
+            blocks: vec![
+                Block {
+                    params: vec![],
+                    instructions: vec![],
+                    terminator: Terminator::ReplyNew {
+                        success: BlockId(1),
+                        failure: BlockId(2),
+                    },
+                },
+                Block {
+                    params: vec![ValueId(0), ValueId(1)],
+                    instructions: vec![instruction(None, Operation::CloseReply(ValueId(0)))],
+                    terminator: Terminator::ReplyReceive {
+                        receiver: ValueId(1),
+                        value: BlockId(3),
+                        end: BlockId(4),
+                    },
+                },
+                Block {
+                    params: vec![ValueId(2)],
+                    instructions: vec![instruction(Some(3), Operation::Const(0))],
+                    terminator: Terminator::Return(ValueId(3)),
+                },
+                Block {
+                    params: vec![ValueId(4)],
+                    instructions: vec![],
+                    terminator: Terminator::Return(ValueId(4)),
+                },
+                Block {
+                    params: vec![],
+                    instructions: vec![instruction(Some(5), Operation::Const(42))],
+                    terminator: Terminator::Return(ValueId(5)),
+                },
+            ],
+        }],
+    };
+    core::verify(&program).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "ended", 42);
 }
 
 fn spawned_reply() -> Program {
@@ -263,4 +407,19 @@ fn checked_core_spawn_moves_reply_right_and_retries_receive() {
             .unwrap(),
         0
     );
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_eq!(
+        native::run_with_limits(
+            &program,
+            "main",
+            &[],
+            ScopeLimits {
+                tasks: 1,
+                ..limits(1)
+            }
+        )
+        .unwrap(),
+        0
+    );
+    assert_standalone(&program, "spawn", 42);
 }
