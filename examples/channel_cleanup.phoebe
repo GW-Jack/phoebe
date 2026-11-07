@@ -1,0 +1,16 @@
+fn acquire(second_capacity: I64) -> Result<I64, ResourceError> {
+  val (first_sender, first_receiver) = channel<I64>(capacity = 1)?;
+  val (second_sender, second_receiver) = channel<I64>(capacity = second_capacity)?;
+  second_sender.close();
+  second_receiver.close();
+  first_sender.close();
+  first_receiver.close();
+  Result<I64, ResourceError>.Ok(7)
+}
+
+fn main() -> I64 {
+  when (acquire(0)) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

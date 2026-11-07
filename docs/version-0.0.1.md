@@ -107,8 +107,10 @@ typed resource-failure edge. Source now supports
 `val (sender, receiver) = channel<I64>(capacity = n)?` inside a function
 returning `Result<_, ResourceError>`, with explicit endpoint `close()`.
 `phoebe check` runs the exact capability verifier and rejects leaked or
-twice-closed endpoints. General source capability safety, send/receive, and
-lexical cleanup remain open. `docs/capability-ir.md` specifies
+twice-closed endpoints. Source `?` now closes exactly the live bare endpoints
+on its early error return; ordinary returns still require explicit
+disposition. General source capability safety, send/receive, lexical scope
+cleanup, and cancellation cleanup remain open. `docs/capability-ir.md` specifies
 the integration boundary.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
@@ -140,6 +142,7 @@ cargo run -- run examples/nested_result.phoebe
 cargo run -- run examples/nested_variant.phoebe
 cargo run -- run examples/copy.phoebe
 cargo run -- run examples/channel_create.phoebe
+cargo run -- run examples/channel_cleanup.phoebe
 cargo run -- cost examples/copy.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe

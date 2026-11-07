@@ -228,6 +228,7 @@ struct Lowerer<'a> {
     param_modes: Vec<ParamMode>,
     return_type: Type,
     current: BlockId,
+    implicit_cleanup_returns: Vec<(BlockId, Span)>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -252,6 +253,7 @@ impl<'a> Lowerer<'a> {
             param_modes: params.iter().map(|(mode, _)| *mode).collect(),
             return_type,
             current: BlockId(0),
+            implicit_cleanup_returns: Vec::new(),
         };
         for (mode, own_type) in params {
             let ty = match mode {
@@ -383,6 +385,7 @@ impl<'a> Lowerer<'a> {
                         *span,
                     );
                     self.terminate(Terminator::Return(failed));
+                    self.implicit_cleanup_returns.push((self.current, *span));
                     self.current = success;
                     locals.insert(sender.0.clone(), Binding::Val(send_value));
                     locals.insert(receiver.0.clone(), Binding::Val(receive_value));
@@ -637,6 +640,8 @@ impl<'a> Lowerer<'a> {
                 });
                 self.current = failure;
                 self.terminate(Terminator::Return(original));
+                self.implicit_cleanup_returns
+                    .push((self.current, expr.span));
                 self.current = success;
                 return Ok((payload, ok_ty));
             }
@@ -989,7 +994,7 @@ impl<'a> Lowerer<'a> {
         Ok((value, ty))
     }
 
-    fn finish(self, name: String) -> Result<Function, Diagnostic> {
+    fn finish(self, name: String) -> Result<(Function, Vec<(BlockId, Span)>), Diagnostic> {
         let mut blocks = Vec::with_capacity(self.blocks.len());
         for block in self.blocks {
             let Some(terminator) = block.terminator else {
@@ -1004,14 +1009,17 @@ impl<'a> Lowerer<'a> {
                 terminator,
             });
         }
-        Ok(Function {
-            name,
-            blocks,
-            value_types: self.value_types,
-            place_types: self.place_types,
-            param_modes: self.param_modes,
-            return_type: self.return_type,
-        })
+        Ok((
+            Function {
+                name,
+                blocks,
+                value_types: self.value_types,
+                place_types: self.place_types,
+                param_modes: self.param_modes,
+                return_type: self.return_type,
+            },
+            self.implicit_cleanup_returns,
+        ))
     }
 }
 
@@ -1187,6 +1195,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         }
     }
     let mut lowered = Vec::with_capacity(ast.functions.len());
+    let mut cleanup_returns = Vec::with_capacity(ast.functions.len());
     for function in &ast.functions {
         let mut lowerer = Lowerer::new(
             &functions,
@@ -1221,15 +1230,46 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
             function.body.tail.as_ref().expect("tail").span,
         )?;
         lowerer.terminate(Terminator::Return(value));
-        lowered.push(lowerer.finish(function.name.clone())?);
+        let (function, cleanup) = lowerer.finish(function.name.clone())?;
+        lowered.push(function);
+        cleanup_returns.push(cleanup);
     }
-    let program = Program {
+    let mut program = Program {
         data,
         functions: lowered,
     };
     verify_structure(&program)
         .map_err(|message| Diagnostic::new(Span { start: 0, end: 0 }, message))?;
     verify_ownership(&program).map_err(|error| Diagnostic::new(error.span, error.message))?;
+    // Treat only source `?` returns as cleanup exits. The exact checker gives
+    // each such exit its live slots; then the ordinary verifier checks the
+    // completed Core, including every inserted close.
+    for ((function, returns), source_function) in program
+        .functions
+        .iter_mut()
+        .zip(&cleanup_returns)
+        .zip(&ast.functions)
+    {
+        let cleanup_blocks = returns.iter().map(|(block, _)| *block).collect::<Vec<_>>();
+        if let Some((graph, values)) = capability_graph(function, &cleanup_blocks) {
+            let facts = capability_flow::verify(&graph)
+                .map_err(|message| Diagnostic::new(source_function.name_span, message))?;
+            for exit in facts.failures {
+                let span = returns
+                    .iter()
+                    .find(|(block, _)| block.0 == exit.block)
+                    .map(|(_, span)| *span)
+                    .expect("failure fact belongs to an implicit return");
+                for slot in exit.live {
+                    function.blocks[exit.block].instructions.push(Instruction {
+                        result: None,
+                        operation: Operation::CloseHandle(values[slot.0]),
+                        span,
+                    });
+                }
+            }
+        }
+    }
     verify_capability_edges(&program).map_err(|message| {
         let span = ast
             .functions
@@ -2198,144 +2238,164 @@ fn is_channel_handle(ty: Type) -> bool {
 
 fn verify_capability_edges(program: &Program) -> Result<(), String> {
     for function in &program.functions {
-        if !function.value_types.iter().copied().any(is_channel_handle) {
+        let Some((graph, _)) = capability_graph(function, &[]) else {
             continue;
+        };
+        capability_flow::verify(&graph).map_err(|error| format!("{}: {error}", function.name))?;
+    }
+    Ok(())
+}
+
+fn capability_graph(
+    function: &Function,
+    implicit_cleanup_returns: &[BlockId],
+) -> Option<(capability_flow::Graph, Vec<ValueId>)> {
+    if !function.value_types.iter().copied().any(is_channel_handle) {
+        return None;
+    }
+    // Capability flow only needs ownership state for rights, not for every
+    // scalar SSA value in the function. Keep this numbering separate from
+    // ValueId so adding ordinary computations does not enlarge each state.
+    let mut slots = vec![None; function.value_types.len()];
+    let mut values = Vec::new();
+    let mut slot_count = 0;
+    for (value, ty) in function.value_types.iter().enumerate() {
+        if is_channel_handle(*ty) {
+            slots[value] = Some(capability_flow::Slot(slot_count));
+            values.push(ValueId(value));
+            slot_count += 1;
         }
-        // Capability flow only needs ownership state for rights, not for every
-        // scalar SSA value in the function. Keep this numbering separate from
-        // ValueId so adding ordinary computations does not enlarge each state.
-        let mut slots = vec![None; function.value_types.len()];
-        let mut slot_count = 0;
-        for (value, ty) in function.value_types.iter().enumerate() {
-            if is_channel_handle(*ty) {
-                slots[value] = Some(capability_flow::Slot(slot_count));
-                slot_count += 1;
-            }
-        }
-        let slot = |value: ValueId| slots[value.0].expect("channel handle has a capability slot");
-        let entry_live = function.blocks[0]
-            .params
-            .iter()
-            .filter(|value| is_channel_handle(function.value_types[value.0]))
-            .map(|value| slot(*value))
-            .collect();
-        let blocks = function
-            .blocks
-            .iter()
-            .map(|block| {
-                let mut actions = Vec::new();
-                for instruction in &block.instructions {
-                    match &instruction.operation {
-                        Operation::CloseHandle(value) => {
-                            actions.push(CapAction::Close(slot(*value)))
-                        }
-                        Operation::Call(_, args) => {
-                            for arg in args {
-                                if let CallArg::Value(value) = arg
-                                    && is_channel_handle(function.value_types[value.0])
-                                {
-                                    actions.push(CapAction::Transfer(slot(*value)));
-                                }
+    }
+    let slot = |value: ValueId| slots[value.0].expect("channel handle has a capability slot");
+    let entry_live = function.blocks[0]
+        .params
+        .iter()
+        .filter(|value| is_channel_handle(function.value_types[value.0]))
+        .map(|value| slot(*value))
+        .collect();
+    let blocks = function
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(block_id, block)| {
+            let mut actions = Vec::new();
+            for instruction in &block.instructions {
+                match &instruction.operation {
+                    Operation::CloseHandle(value) => actions.push(CapAction::Close(slot(*value))),
+                    Operation::Call(_, args) => {
+                        for arg in args {
+                            if let CallArg::Value(value) = arg
+                                && is_channel_handle(function.value_types[value.0])
+                            {
+                                actions.push(CapAction::Transfer(slot(*value)));
                             }
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
-                let edge = |target: CapTarget, actions| capability_flow::Edge { target, actions };
-                let exits = match &block.terminator {
-                    Terminator::Return(_) => vec![edge(CapTarget::Return, vec![])],
-                    Terminator::Jump(target, args) => {
-                        let moves = args
-                            .iter()
-                            .zip(&function.blocks[target.0].params)
-                            .filter(|(arg, _)| is_channel_handle(function.value_types[arg.0]))
-                            .map(|(arg, param)| CapAction::Move {
-                                from: slot(*arg),
-                                to: slot(*param),
-                            })
-                            .collect();
-                        vec![edge(CapTarget::Block(target.0), moves)]
-                    }
-                    Terminator::Branch {
-                        then_block,
-                        else_block,
-                        ..
-                    } => vec![
-                        edge(CapTarget::Block(then_block.0), vec![]),
-                        edge(CapTarget::Block(else_block.0), vec![]),
-                    ],
-                    Terminator::Match { arms, .. } => arms
+            }
+            let edge = |target: CapTarget, actions| capability_flow::Edge { target, actions };
+            let exits = match &block.terminator {
+                Terminator::Return(_) => vec![edge(
+                    if implicit_cleanup_returns.contains(&BlockId(block_id)) {
+                        CapTarget::Failure
+                    } else {
+                        CapTarget::Return
+                    },
+                    vec![],
+                )],
+                Terminator::Jump(target, args) => {
+                    let moves = args
                         .iter()
-                        .map(|arm| edge(CapTarget::Block(arm.target.0), vec![]))
-                        .collect(),
-                    Terminator::ChannelNew {
-                        success, failure, ..
-                    } => {
-                        let params = &function.blocks[success.0].params;
-                        vec![
-                            edge(
-                                CapTarget::Block(success.0),
-                                vec![CapAction::CreatePair {
-                                    first: slot(params[0]),
-                                    second: slot(params[1]),
-                                }],
-                            ),
-                            edge(CapTarget::Block(failure.0), vec![]),
-                        ]
-                    }
-                    Terminator::ChannelSend {
-                        sender,
-                        sent,
-                        closed,
-                        ..
-                    } => {
-                        let require = vec![CapAction::Require(slot(*sender))];
-                        vec![
-                            edge(CapTarget::Block(sent.0), require.clone()),
-                            edge(CapTarget::Block(closed.0), require.clone()),
-                            edge(CapTarget::Retry, require),
-                        ]
-                    }
-                    Terminator::ChannelReceive {
-                        receiver,
-                        value,
-                        end,
-                    } => {
-                        let require = vec![CapAction::Require(slot(*receiver))];
-                        vec![
-                            edge(CapTarget::Block(value.0), require.clone()),
-                            edge(CapTarget::Block(end.0), require.clone()),
-                            edge(CapTarget::Retry, require),
-                        ]
-                    }
-                    Terminator::Spawn {
-                        args,
-                        success,
-                        failure,
-                        ..
-                    } => {
-                        let transfers = args
-                            .iter()
-                            .filter(|value| is_channel_handle(function.value_types[value.0]))
-                            .map(|value| CapAction::Transfer(slot(*value)))
-                            .collect();
-                        vec![
-                            edge(CapTarget::Block(success.0), transfers),
-                            edge(CapTarget::Block(failure.0), vec![]),
-                        ]
-                    }
-                };
-                capability_flow::Block { actions, exits }
-            })
-            .collect();
-        capability_flow::verify(&capability_flow::Graph {
+                        .zip(&function.blocks[target.0].params)
+                        .filter(|(arg, _)| is_channel_handle(function.value_types[arg.0]))
+                        .map(|(arg, param)| CapAction::Move {
+                            from: slot(*arg),
+                            to: slot(*param),
+                        })
+                        .collect();
+                    vec![edge(CapTarget::Block(target.0), moves)]
+                }
+                Terminator::Branch {
+                    then_block,
+                    else_block,
+                    ..
+                } => vec![
+                    edge(CapTarget::Block(then_block.0), vec![]),
+                    edge(CapTarget::Block(else_block.0), vec![]),
+                ],
+                Terminator::Match { arms, .. } => arms
+                    .iter()
+                    .map(|arm| edge(CapTarget::Block(arm.target.0), vec![]))
+                    .collect(),
+                Terminator::ChannelNew {
+                    success, failure, ..
+                } => {
+                    let params = &function.blocks[success.0].params;
+                    vec![
+                        edge(
+                            CapTarget::Block(success.0),
+                            vec![CapAction::CreatePair {
+                                first: slot(params[0]),
+                                second: slot(params[1]),
+                            }],
+                        ),
+                        edge(CapTarget::Block(failure.0), vec![]),
+                    ]
+                }
+                Terminator::ChannelSend {
+                    sender,
+                    sent,
+                    closed,
+                    ..
+                } => {
+                    let require = vec![CapAction::Require(slot(*sender))];
+                    vec![
+                        edge(CapTarget::Block(sent.0), require.clone()),
+                        edge(CapTarget::Block(closed.0), require.clone()),
+                        edge(CapTarget::Retry, require),
+                    ]
+                }
+                Terminator::ChannelReceive {
+                    receiver,
+                    value,
+                    end,
+                } => {
+                    let require = vec![CapAction::Require(slot(*receiver))];
+                    vec![
+                        edge(CapTarget::Block(value.0), require.clone()),
+                        edge(CapTarget::Block(end.0), require.clone()),
+                        edge(CapTarget::Retry, require),
+                    ]
+                }
+                Terminator::Spawn {
+                    args,
+                    success,
+                    failure,
+                    ..
+                } => {
+                    let transfers = args
+                        .iter()
+                        .filter(|value| is_channel_handle(function.value_types[value.0]))
+                        .map(|value| CapAction::Transfer(slot(*value)))
+                        .collect();
+                    vec![
+                        edge(CapTarget::Block(success.0), transfers),
+                        edge(CapTarget::Block(failure.0), vec![]),
+                    ]
+                }
+            };
+            capability_flow::Block { actions, exits }
+        })
+        .collect();
+    Some((
+        capability_flow::Graph {
             slots: slot_count,
             entry_live,
             blocks,
-        })
-        .map_err(|error| format!("{}: {error}", function.name))?;
-    }
-    Ok(())
+        },
+        values,
+    ))
 }
 
 impl Program {

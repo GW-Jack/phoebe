@@ -139,6 +139,15 @@ typed resource causes; an invalid transfer is an internal runtime fault.
 The verifier transfers endpoint slots only on the success edge. Its affine
 check similarly moves closed nominal arguments only on success.
 
+Source `?` exits now use the same exact flow graph as the verifier. The
+lowerer marks an implicit error return as a cleanup exit, reads its live
+capability slots, and emits one `close.handle` per live bare endpoint before
+returning. A first channel-creation failure therefore has no cleanup calls;
+a later failure closes only the earlier, still-owned endpoints. Ordinary
+returns continue to reject leaks, and hand-built Core must spell out every
+disposition. This is the first cleanup rule, not a general lexical or
+cancellation cleanup implementation.
+
 The scheduler owns a pending task's frame, so suspension does not release any
 of its rights. The generated frame has a fixed layout and a compiler-derived
 cleanup table listing every possible capability slot. A discriminant records
