@@ -1,3 +1,5 @@
+data Pair { left: I64, right: I64 }
+
 fn producer(sender: Sender<I64>) -> I64 {
   val first = sender.send(20);
   val second = when (first) {
@@ -29,7 +31,11 @@ fn exchange() -> Result<I64, ResourceError> {
   };
   total = total + second_value;
   receiver.close();
-  Result<I64, ResourceError>.Ok(total)
+  val pair = Pair(total, -1);
+  val answer = if (pair.left == 42) {
+    if (pair.right < 0) { pair.left * 2 - 42 } else { 0 }
+  } else { 0 };
+  Result<I64, ResourceError>.Ok(answer)
 }
 
 fn main() -> I64 {

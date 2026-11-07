@@ -64,7 +64,8 @@ two receive points in `exchange`, and a call continuation in `main`.
 uses this layout for the source exchange.
 `examples/channel_accumulator.phoebe` has a mutable total used after two
 receives, so its place lives in the stable frame. Its mutable channel capacity
-dies before the first receive and uses a local stack slot instead.
+dies before the first receive and uses a local stack slot instead. The example
+also evaluates product fields, arithmetic, and comparisons after resumption.
 
 ## Native ABI obligations
 

@@ -700,6 +700,28 @@ fn compile_poll_module<M: Module>(
                             }
                             Some(parts)
                         }
+                        Operation::Product(_, fields) => Some(
+                            fields
+                                .iter()
+                                .flat_map(|field| get(*field, &mut builder))
+                                .collect(),
+                        ),
+                        Operation::Field(owner, index) => {
+                            let Type::Data(data_id) = function.value_types[owner.0] else {
+                                unreachable!("verified field owner")
+                            };
+                            let fields = &program.data[data_id.0].fields;
+                            let offset = fields[..*index]
+                                .iter()
+                                .map(|(_, ty)| shapes.types(*ty).len())
+                                .sum::<usize>();
+                            let width = shapes.types(fields[*index].1).len();
+                            Some(get(*owner, &mut builder)[offset..offset + width].to_vec())
+                        }
+                        Operation::Neg(value) => {
+                            let value = get(*value, &mut builder)[0];
+                            Some(vec![builder.ins().ineg(value)])
+                        }
                         Operation::Add(a, b) | Operation::Sub(a, b) => {
                             let a = get(*a, &mut builder)[0];
                             let b = get(*b, &mut builder)[0];
@@ -710,6 +732,21 @@ fn compile_poll_module<M: Module>(
                                     builder.ins().isub(a, b)
                                 },
                             ])
+                        }
+                        Operation::Mul(a, b) => {
+                            let a = get(*a, &mut builder)[0];
+                            let b = get(*b, &mut builder)[0];
+                            Some(vec![builder.ins().imul(a, b)])
+                        }
+                        Operation::Eq(a, b) | Operation::Lt(a, b) => {
+                            let a = get(*a, &mut builder)[0];
+                            let b = get(*b, &mut builder)[0];
+                            let cc = if matches!(instruction.operation, Operation::Eq(_, _)) {
+                                IntCC::Equal
+                            } else {
+                                IntCC::SignedLessThan
+                            };
+                            Some(vec![builder.ins().icmp(cc, a, b)])
                         }
                         Operation::CloseHandle(value) => {
                             let token = get(*value, &mut builder)[0];
@@ -1226,8 +1263,14 @@ fn validate_poll_function(
                     | Operation::Store(_, _)
                     | Operation::ReadField(_, _)
                     | Operation::Variant(_, _, _)
+                    | Operation::Product(_, _)
+                    | Operation::Field(_, _)
+                    | Operation::Neg(_)
                     | Operation::Add(_, _)
                     | Operation::Sub(_, _)
+                    | Operation::Mul(_, _)
+                    | Operation::Eq(_, _)
+                    | Operation::Lt(_, _)
                     | Operation::CloseHandle(_)
                     | Operation::Call(_, _)
             ) {
