@@ -70,6 +70,24 @@ fn statement(a: &Statement, b: &Statement, delta: isize) -> bool {
                 && span(*asp, *bsp, delta)
         }
         (
+            Statement::ReplyVal {
+                right: ar,
+                receiver: av,
+                span: aspan,
+            },
+            Statement::ReplyVal {
+                right: br,
+                receiver: bv,
+                span: bspan,
+            },
+        ) => {
+            ar.0 == br.0
+                && span(ar.1, br.1, delta)
+                && av.0 == bv.0
+                && span(av.1, bv.1, delta)
+                && span(*aspan, *bspan, delta)
+        }
+        (
             Statement::Spawn {
                 child: ac,
                 args: aa,

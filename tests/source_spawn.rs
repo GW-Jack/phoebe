@@ -190,7 +190,7 @@ fn source_spawn_rejects_ownership_and_signature_errors() {
         syntax::parse(&wrong_type)
             .unwrap_err()
             .message
-            .contains("only I64 channels")
+            .contains("only I64 communication values")
     );
 
     let wrong_return = source().replace(

@@ -160,10 +160,13 @@ impl<'a> Lowerer<'a> {
         locals: &HashMap<String, Binding>,
     ) -> Result<Option<TypedValue>, Diagnostic> {
         let (owner, ty) = self.expr(value, locals)?;
-        if !matches!(ty, Type::SenderI64 | Type::ReceiverI64) {
+        if !matches!(
+            ty,
+            Type::SenderI64 | Type::ReceiverI64 | Type::ReplyToI64 | Type::ReplyReceiverI64
+        ) {
             return Err(Diagnostic::new(
                 value.span,
-                "with currently owns a Sender<I64> or Receiver<I64>",
+                "with requires a communication capability",
             ));
         }
         let mut scoped_locals = locals.clone();
@@ -175,7 +178,10 @@ impl<'a> Lowerer<'a> {
         }
         let result = self.body(body, &mut scoped_locals)?;
         if let Some((_, ty)) = result
-            && matches!(ty, Type::SenderI64 | Type::ReceiverI64)
+            && matches!(
+                ty,
+                Type::SenderI64 | Type::ReceiverI64 | Type::ReplyToI64 | Type::ReplyReceiverI64
+            )
         {
             return Err(Diagnostic::new(
                 body.tail.as_ref().map_or(span, |tail| tail.span),
@@ -248,6 +254,38 @@ impl<'a> Lowerer<'a> {
                     locals.insert(sender.0.clone(), Binding::Val(send_value));
                     locals.insert(receiver.0.clone(), Binding::Val(receive_value));
                 }
+                Statement::ReplyVal {
+                    right,
+                    receiver,
+                    span,
+                } => {
+                    for (name, name_span) in [right, receiver] {
+                        if locals.contains_key(name) || right.0 == receiver.0 {
+                            return Err(Diagnostic::new(
+                                *name_span,
+                                format!("duplicate local {name}"),
+                            ));
+                        }
+                    }
+                    let result_id = self.resource_result_id(*span)?;
+                    let success = self.block();
+                    let right_value = self.block_param(success, Type::ReplyToI64);
+                    let receiver_value = self.block_param(success, Type::ReplyReceiverI64);
+                    let failure = self.block();
+                    let error = self.block_param(failure, Type::ResourceError);
+                    self.terminate(Terminator::ReplyNew { success, failure });
+                    self.current = failure;
+                    let failed = self.emit(
+                        Operation::Variant(result_id, 1, Some(error)),
+                        self.return_type,
+                        *span,
+                    );
+                    self.terminate(Terminator::Return(failed));
+                    self.implicit_cleanup_returns.push((self.current, *span));
+                    self.current = success;
+                    locals.insert(right.0.clone(), Binding::Val(right_value));
+                    locals.insert(receiver.0.clone(), Binding::Val(receiver_value));
+                }
                 Statement::Spawn { child, args, span } => {
                     let result_id = self.resource_result_id(*span)?;
                     let signature = self.functions.get(child).cloned().ok_or_else(|| {
@@ -276,7 +314,11 @@ impl<'a> Lowerer<'a> {
                                 Some(Binding::Var(place))
                                     if matches!(
                                         self.place_types[place.0],
-                                        Type::Data(_) | Type::SenderI64 | Type::ReceiverI64
+                                        Type::Data(_)
+                                            | Type::SenderI64
+                                            | Type::ReceiverI64
+                                            | Type::ReplyToI64
+                                            | Type::ReplyReceiverI64
                                     ) =>
                                 {
                                     return Err(Diagnostic::new(
@@ -290,8 +332,14 @@ impl<'a> Lowerer<'a> {
                             self.expr(expr, locals)?
                         };
                         self.require(ty, *expected, expr.span)?;
-                        if matches!(ty, Type::Data(_) | Type::SenderI64 | Type::ReceiverI64)
-                            && !matches!(expr.kind, ExprKind::Name(_))
+                        if matches!(
+                            ty,
+                            Type::Data(_)
+                                | Type::SenderI64
+                                | Type::ReceiverI64
+                                | Type::ReplyToI64
+                                | Type::ReplyReceiverI64
+                        ) && !matches!(expr.kind, ExprKind::Name(_))
                         {
                             return Err(Diagnostic::new(
                                 expr.span,
@@ -459,6 +507,16 @@ impl<'a> Lowerer<'a> {
                         )
                     {
                         self.emit_effect(Operation::CloseHandle(value), expr.span);
+                    } else if let ExprKind::QualifiedCall(name, method, args) = &expr.kind
+                        && method == "close"
+                        && args.is_empty()
+                        && let Some(Binding::Val(value)) = locals.get(name).copied()
+                        && matches!(
+                            self.value_types[value.0],
+                            Type::ReplyToI64 | Type::ReplyReceiverI64
+                        )
+                    {
+                        self.emit_effect(Operation::CloseReply(value), expr.span);
                     } else {
                         self.expr(expr, locals)?;
                     }
@@ -592,6 +650,78 @@ impl<'a> Lowerer<'a> {
                             let join = self.block();
                             let result = self.block_param(join, Type::Data(outcome));
                             self.terminate(Terminator::ChannelReceive {
+                                receiver: endpoint,
+                                value,
+                                end,
+                            });
+                            self.current = value;
+                            let some_value = self.emit(
+                                Operation::Variant(outcome, 0, Some(item)),
+                                Type::Data(outcome),
+                                expr.span,
+                            );
+                            self.terminate(Terminator::Jump(join, vec![some_value]));
+                            self.current = end;
+                            let end_value = self.emit(
+                                Operation::Variant(outcome, 1, None),
+                                Type::Data(outcome),
+                                expr.span,
+                            );
+                            self.terminate(Terminator::Jump(join, vec![end_value]));
+                            self.current = join;
+                            return Ok((result, Type::Data(outcome)));
+                        }
+                        (Type::ReplyToI64, "complete") => {
+                            let [CallArgument::Value(message)] = args.as_slice() else {
+                                return Err(Diagnostic::new(
+                                    expr.span,
+                                    "complete requires one owned I64 value",
+                                ));
+                            };
+                            let (message_value, message_type) = self.expr(message, locals)?;
+                            self.require(message_type, Type::I64, message.span)?;
+                            let outcome = self.data_names["Complete<I64>"];
+                            let delivered = self.block();
+                            let closed = self.block();
+                            let join = self.block();
+                            let result = self.block_param(join, Type::Data(outcome));
+                            self.terminate(Terminator::ReplyComplete {
+                                right: endpoint,
+                                value: message_value,
+                                delivered,
+                                closed,
+                            });
+                            self.current = delivered;
+                            let delivered_value = self.emit(
+                                Operation::Variant(outcome, 0, None),
+                                Type::Data(outcome),
+                                expr.span,
+                            );
+                            self.terminate(Terminator::Jump(join, vec![delivered_value]));
+                            self.current = closed;
+                            let closed_value = self.emit(
+                                Operation::Variant(outcome, 1, Some(message_value)),
+                                Type::Data(outcome),
+                                expr.span,
+                            );
+                            self.terminate(Terminator::Jump(join, vec![closed_value]));
+                            self.current = join;
+                            return Ok((result, Type::Data(outcome)));
+                        }
+                        (Type::ReplyReceiverI64, "receive") => {
+                            if !args.is_empty() {
+                                return Err(Diagnostic::new(
+                                    expr.span,
+                                    "receive takes no arguments",
+                                ));
+                            }
+                            let outcome = self.data_names["Reply<I64>"];
+                            let value = self.block();
+                            let item = self.block_param(value, Type::I64);
+                            let end = self.block();
+                            let join = self.block();
+                            let result = self.block_param(join, Type::Data(outcome));
+                            self.terminate(Terminator::ReplyReceive {
                                 receiver: endpoint,
                                 value,
                                 end,
@@ -1123,9 +1253,12 @@ fn register_result_application(
         match ty {
             TypeName::I64 => Ok(Type::I64),
             TypeName::Bool => Ok(Type::Bool),
-            TypeName::SenderI64 | TypeName::ReceiverI64 => Err(Diagnostic::new(
+            TypeName::SenderI64
+            | TypeName::ReceiverI64
+            | TypeName::ReplyToI64
+            | TypeName::ReplyReceiverI64 => Err(Diagnostic::new(
                 span,
-                "Result cannot carry channel endpoints yet",
+                "Result cannot carry communication capabilities yet",
             )),
             TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
             TypeName::Named(name) => data_names
@@ -1221,6 +1354,10 @@ fn lower_internal(
                 | "Receiver"
                 | "Send"
                 | "Receive"
+                | "ReplyTo"
+                | "ReplyReceiver"
+                | "Complete"
+                | "Reply"
         ) || data_names.contains_key(&declaration.name)
         {
             return Err(Diagnostic::new(declaration.span, "duplicate data type"));
@@ -1235,7 +1372,12 @@ fn lower_internal(
                 None => None,
                 Some(TypeName::I64) => Some(Type::I64),
                 Some(TypeName::Bool) => Some(Type::Bool),
-                Some(TypeName::SenderI64 | TypeName::ReceiverI64) => {
+                Some(
+                    TypeName::SenderI64
+                    | TypeName::ReceiverI64
+                    | TypeName::ReplyToI64
+                    | TypeName::ReplyReceiverI64,
+                ) => {
                     return Err(Diagnostic::new(
                         variant.span,
                         "channel endpoints cannot be stored in data yet",
@@ -1273,7 +1415,10 @@ fn lower_internal(
                 match &field.ty {
                     TypeName::I64 => Type::I64,
                     TypeName::Bool => Type::Bool,
-                    TypeName::SenderI64 | TypeName::ReceiverI64 => {
+                    TypeName::SenderI64
+                    | TypeName::ReceiverI64
+                    | TypeName::ReplyToI64
+                    | TypeName::ReplyReceiverI64 => {
                         return Err(Diagnostic::new(
                             field.span,
                             "channel endpoints cannot be stored in data yet",
@@ -1320,6 +1465,18 @@ fn lower_internal(
             vec!["Value", "End"],
             vec![Some(Type::I64), None],
         ),
+        (
+            ast.uses_complete_outcome,
+            "Complete<I64>",
+            vec!["Delivered", "Closed"],
+            vec![None, Some(Type::I64)],
+        ),
+        (
+            ast.uses_reply_outcome,
+            "Reply<I64>",
+            vec!["Value", "End"],
+            vec![Some(Type::I64), None],
+        ),
     ] {
         if !used {
             continue;
@@ -1341,6 +1498,8 @@ fn lower_internal(
             TypeName::Bool => Ok(Type::Bool),
             TypeName::SenderI64 => Ok(Type::SenderI64),
             TypeName::ReceiverI64 => Ok(Type::ReceiverI64),
+            TypeName::ReplyToI64 => Ok(Type::ReplyToI64),
+            TypeName::ReplyReceiverI64 => Ok(Type::ReplyReceiverI64),
             TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
             TypeName::Named(name) => data_names
                 .get(name)
@@ -1516,9 +1675,14 @@ fn lower_internal(
         }
         for (block, slot) in facts.lexical_closes {
             let span = spans[block].expect("lexical close belongs to a with exit");
+            let value = values[slot.0];
+            let operation = match function.value_types[value.0] {
+                Type::ReplyToI64 | Type::ReplyReceiverI64 => Operation::CloseReply(value),
+                _ => Operation::CloseHandle(value),
+            };
             function.blocks[block].instructions.push(Instruction {
                 result: None,
-                operation: Operation::CloseHandle(values[slot.0]),
+                operation,
                 span,
             });
         }
@@ -1548,9 +1712,14 @@ fn lower_internal(
                     .map(|(_, span)| *span)
                     .expect("failure fact belongs to an implicit return");
                 for slot in exit.live {
+                    let value = values[slot.0];
+                    let operation = match function.value_types[value.0] {
+                        Type::ReplyToI64 | Type::ReplyReceiverI64 => Operation::CloseReply(value),
+                        _ => Operation::CloseHandle(value),
+                    };
                     function.blocks[exit.block].instructions.push(Instruction {
                         result: None,
-                        operation: Operation::CloseHandle(values[slot.0]),
+                        operation,
                         span,
                     });
                 }

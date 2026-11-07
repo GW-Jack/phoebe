@@ -19,6 +19,7 @@ fn assert_standalone(program: &core::Program, name: &str, expected: i64) {
 fn source_two_message_exchange_parks_and_wakes() {
     let source = include_str!("../examples/channel_exchange.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert!(program.data.iter().all(|data| data.name != "Reply<I64>"));
     let printed = program.to_string();
     assert!(printed.contains("channel.send.i64"));
     assert!(printed.contains("channel.receive.i64"));

@@ -52,7 +52,9 @@ fn with_rejects_non_capability_and_double_close() {
     let wrong_type = "fn main() -> I64 { with x = 1 {} 0 }";
     let error = core::lower(&syntax::parse(wrong_type).unwrap()).unwrap_err();
     assert!(
-        error.message.contains("currently owns a Sender"),
+        error
+            .message
+            .contains("requires a communication capability"),
         "{error:?}"
     );
 

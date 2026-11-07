@@ -133,5 +133,7 @@ including child spawn transfer and failure retention. The interpreter runs a
 parent that moves a reply right to a child and parks on the receiver. Cranelift
 JIT and standalone binaries agree on delivered, canceled, ended, spawn, and
 resource-failure paths in hand-built Core fixtures. Generated spawns use typed
-capability descriptors for both channels and replies. Source lowering remains
-open, so user programs cannot yet write these operations.
+capability descriptors for both channels and replies. Source lowering now
+emits these operations for `reply<I64>()?`, `complete`, `receive`, `close`, and
+owned spawn arguments. Lexical and early-error cleanup select `close.reply`
+for reply capabilities. Source request messages carrying rights remain open.

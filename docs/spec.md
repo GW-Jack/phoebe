@@ -122,6 +122,15 @@ can receive one value or be canceled; canceling it discards a queued reply.
 capability-transfer case; general transferable handle types still need their
 own semantics and proofs.
 
+The implemented `I64` surface binds both rights with
+`val (right, receiver) = reply<I64>()?`. `right.complete(value)` returns
+`Complete<I64>.Delivered` or `Complete<I64>.Closed(value)` and consumes the
+right on either path. `receiver.receive()` returns `Reply<I64>.Value(value)`
+or `Reply<I64>.End` and consumes the receiver. Either right can be explicitly
+closed; a `with` block closes an unspent right on exit. A `ReplyTo<I64>` may
+move to a spawned child. General request messages that contain reply rights
+remain a separate implementation step.
+
 Scoped tasks and channels are the concurrency core. An actor is a library or
 surface abstraction: one scoped task owns its state, reads a mailbox, and runs
 one handler at a time. Its mailbox obeys the same bounded channel and linear

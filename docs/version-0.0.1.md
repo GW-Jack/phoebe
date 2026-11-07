@@ -128,7 +128,12 @@ and a task-limit rejection that retains the parent's right. Hand-built checked
 Core now verifies and interprets reply creation, completion, receive, close,
 and child transfer. Cranelift JIT and standalone object output now run these
 checked Core paths, including pending receive, cancellation, end, and spawn
-failure. Source syntax does not yet expose reply operations.
+failure. Source programs now expose `reply<I64>()?`, `ReplyTo<I64>.complete`,
+`ReplyReceiver<I64>.receive`, explicit close, and spawn transfer. Completion
+returns `Complete<I64>.Delivered | Closed(value)`; receive returns
+`Reply<I64>.Value(value) | End`. Source tests compare interpreter, JIT, and
+standalone execution for delivery, cancellation, and lexical close. General
+request messages containing reply rights remain open.
 Runtime task failure now cancels remaining scope tasks immediately after
 closing the failing task's rights. A host regression catches the case where
 the parent retained another sender and would otherwise report a deadlock
@@ -267,6 +272,7 @@ buck2 run //:phoebe -- run examples/channel_cleanup.phoebe
 buck2 run //:phoebe -- run examples/spawn_close.phoebe --interp
 buck2 run //:phoebe -- run examples/channel_exchange.phoebe --interp
 buck2 run //:phoebe -- run examples/channel_exchange.phoebe
+buck2 run //:phoebe -- run examples/reply_exchange.phoebe
 buck2 run //:phoebe -- frames examples/channel_exchange.phoebe
 buck2 run //:phoebe -- cost examples/copy.phoebe
 buck2 run //:phoebe -- ir examples/hello.phoebe

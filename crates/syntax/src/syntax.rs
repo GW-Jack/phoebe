@@ -205,6 +205,8 @@ pub struct Program {
     pub applied_results: Vec<(TypeName, Span)>,
     pub uses_send_outcome: bool,
     pub uses_receive_outcome: bool,
+    pub uses_complete_outcome: bool,
+    pub uses_reply_outcome: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -252,6 +254,8 @@ pub enum TypeName {
     Bool,
     SenderI64,
     ReceiverI64,
+    ReplyToI64,
+    ReplyReceiverI64,
     Named(String),
     Result(Box<TypeName>, Box<TypeName>),
 }
@@ -263,6 +267,8 @@ impl TypeName {
             Self::Bool => "Bool".into(),
             Self::SenderI64 => "Sender<I64>".into(),
             Self::ReceiverI64 => "Receiver<I64>".into(),
+            Self::ReplyToI64 => "ReplyTo<I64>".into(),
+            Self::ReplyReceiverI64 => "ReplyReceiver<I64>".into(),
             Self::Named(name) => name.clone(),
             Self::Result(ok, err) => format!("Result<{},{}>", ok.key(), err.key()),
         }
@@ -307,6 +313,11 @@ pub enum Statement {
         sender: (String, Span),
         receiver: (String, Span),
         capacity: Expr,
+        span: Span,
+    },
+    ReplyVal {
+        right: (String, Span),
+        receiver: (String, Span),
         span: Span,
     },
     Spawn {
@@ -375,6 +386,8 @@ struct Parser {
     applied_results: Vec<(TypeName, Span)>,
     uses_send_outcome: bool,
     uses_receive_outcome: bool,
+    uses_complete_outcome: bool,
+    uses_reply_outcome: bool,
 }
 
 const MAX_PARSE_DEPTH: usize = 48;
@@ -403,13 +416,16 @@ impl Parser {
 
     fn type_name_inner(&mut self, borrowed: bool) -> Result<TypeName, Diagnostic> {
         let (name, span) = self.name()?;
-        if matches!(name.as_str(), "Sender" | "Receiver") {
+        if matches!(
+            name.as_str(),
+            "Sender" | "Receiver" | "ReplyTo" | "ReplyReceiver"
+        ) {
             self.expect(&TokenKind::Less, "< after channel endpoint type")?;
             let (element, element_span) = self.name()?;
             if element != "I64" {
                 return Err(Diagnostic::new(
                     element_span,
-                    "only I64 channels are implemented",
+                    "only I64 communication values are implemented",
                 ));
             }
             let end = self.expect(&TokenKind::Greater, ">")?.span;
@@ -419,13 +435,18 @@ impl Parser {
                     "endpoint borrows are not implemented",
                 ));
             }
-            return Ok(if name == "Sender" {
-                TypeName::SenderI64
-            } else {
-                TypeName::ReceiverI64
+            return Ok(match name.as_str() {
+                "Sender" => TypeName::SenderI64,
+                "Receiver" => TypeName::ReceiverI64,
+                "ReplyTo" => TypeName::ReplyToI64,
+                "ReplyReceiver" => {
+                    self.uses_reply_outcome = true;
+                    TypeName::ReplyReceiverI64
+                }
+                _ => unreachable!(),
             });
         }
-        if matches!(name.as_str(), "Send" | "Receive") {
+        if matches!(name.as_str(), "Send" | "Receive" | "Complete" | "Reply") {
             if borrowed {
                 return Err(Diagnostic::new(
                     span,
@@ -496,10 +517,12 @@ impl Parser {
             ));
         }
         self.expect(&TokenKind::Greater, ">")?;
-        if name == "Send" {
-            self.uses_send_outcome = true;
-        } else {
-            self.uses_receive_outcome = true;
+        match name {
+            "Send" => self.uses_send_outcome = true,
+            "Receive" => self.uses_receive_outcome = true,
+            "Complete" => self.uses_complete_outcome = true,
+            "Reply" => self.uses_reply_outcome = true,
+            _ => unreachable!(),
         }
         Ok(TypeName::Named(format!("{name}<I64>")))
     }
@@ -696,10 +719,10 @@ impl Parser {
                     self.expect(&TokenKind::RParen, ")")?;
                     self.expect(&TokenKind::Equal, "=")?;
                     let (constructor, start) = self.name()?;
-                    if constructor != "channel" {
+                    if !matches!(constructor.as_str(), "channel" | "reply") {
                         return Err(Diagnostic::new(
                             start,
-                            "pair binding currently requires channel",
+                            "pair binding requires channel or reply",
                         ));
                     }
                     self.expect(&TokenKind::Less, "<")?;
@@ -712,6 +735,19 @@ impl Parser {
                     }
                     self.expect(&TokenKind::Greater, ">")?;
                     self.expect(&TokenKind::LParen, "(")?;
+                    if constructor == "reply" {
+                        self.uses_reply_outcome = true;
+                        self.expect(&TokenKind::RParen, ") after reply")?;
+                        let question =
+                            self.expect(&TokenKind::Question, "? after fallible reply creation")?;
+                        self.expect(&TokenKind::Semicolon, "; after binding")?;
+                        statements.push(Statement::ReplyVal {
+                            right: sender,
+                            receiver,
+                            span: start.join(question.span),
+                        });
+                        continue;
+                    }
                     if self.current().kind == TokenKind::Ident("capacity".into())
                         && self
                             .tokens
@@ -942,7 +978,10 @@ impl Parser {
                     let mut type_name =
                         if type_name == "Result" && self.current().kind == TokenKind::Less {
                             self.result_type_after_name(start)?.key()
-                        } else if matches!(type_name.as_str(), "Send" | "Receive") {
+                        } else if matches!(
+                            type_name.as_str(),
+                            "Send" | "Receive" | "Complete" | "Reply"
+                        ) {
                             self.channel_outcome_type_after_name(&type_name, start)?
                                 .key()
                         } else {
@@ -994,7 +1033,7 @@ impl Parser {
                 self.pos += 1;
                 let name = if name == "Result" && self.current().kind == TokenKind::Less {
                     self.result_type_after_name(span)?.key()
-                } else if matches!(name.as_str(), "Send" | "Receive") {
+                } else if matches!(name.as_str(), "Send" | "Receive" | "Complete" | "Reply") {
                     self.channel_outcome_type_after_name(&name, span)?.key()
                 } else {
                     name
@@ -1013,6 +1052,8 @@ impl Parser {
                             self.uses_send_outcome = true;
                         } else if variant == "receive" {
                             self.uses_receive_outcome = true;
+                        } else if variant == "complete" {
+                            self.uses_complete_outcome = true;
                         }
                         Expr {
                             kind: ExprKind::QualifiedCall(name, variant, args),
@@ -1134,6 +1175,8 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
         applied_results: Vec::new(),
         uses_send_outcome: false,
         uses_receive_outcome: false,
+        uses_complete_outcome: false,
+        uses_reply_outcome: false,
     };
     let mut functions = Vec::new();
     let mut data = Vec::new();
@@ -1163,5 +1206,7 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
         applied_results: parser.applied_results,
         uses_send_outcome: parser.uses_send_outcome,
         uses_receive_outcome: parser.uses_receive_outcome,
+        uses_complete_outcome: parser.uses_complete_outcome,
+        uses_reply_outcome: parser.uses_reply_outcome,
     })
 }

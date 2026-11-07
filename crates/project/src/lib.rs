@@ -260,6 +260,8 @@ fn load_with_cache(
         applied_results: Vec::new(),
         uses_send_outcome: false,
         uses_receive_outcome: false,
+        uses_complete_outcome: false,
+        uses_reply_outcome: false,
     };
     let mut sources = Vec::new();
     let mut interfaces = Vec::new();
@@ -376,6 +378,8 @@ fn load_with_cache(
         combined.applied_results.extend(module.ast.applied_results);
         combined.uses_send_outcome |= module.ast.uses_send_outcome;
         combined.uses_receive_outcome |= module.ast.uses_receive_outcome;
+        combined.uses_complete_outcome |= module.ast.uses_complete_outcome;
+        combined.uses_reply_outcome |= module.ast.uses_reply_outcome;
         sources.push(SourceFile {
             path: module.path,
             start: offset,
@@ -471,7 +475,12 @@ fn qualify_type(
     available: &HashMap<String, String>,
 ) -> Result<(), String> {
     match ty {
-        TypeName::I64 | TypeName::Bool | TypeName::SenderI64 | TypeName::ReceiverI64 => {}
+        TypeName::I64
+        | TypeName::Bool
+        | TypeName::SenderI64
+        | TypeName::ReceiverI64
+        | TypeName::ReplyToI64
+        | TypeName::ReplyReceiverI64 => {}
         TypeName::Named(name) if local_data.contains(name) => {
             *name = format!("{module}.{name}");
         }
@@ -528,6 +537,7 @@ fn rewrite_body(
     for statement in &mut body.statements {
         match statement {
             Statement::Yield(_) => {}
+            Statement::ReplyVal { .. } => {}
             Statement::ChannelVal { capacity, .. } => rewrite(capacity)?,
             Statement::Spawn { child, args, .. } => {
                 if local_functions.contains(child) {
@@ -755,6 +765,15 @@ fn shift_body(body: &mut Body, offset: usize) {
     for statement in &mut body.statements {
         match statement {
             Statement::Yield(span) => shift_span(span, offset),
+            Statement::ReplyVal {
+                right,
+                receiver,
+                span,
+            } => {
+                shift_span(&mut right.1, offset);
+                shift_span(&mut receiver.1, offset);
+                shift_span(span, offset);
+            }
             Statement::ChannelVal {
                 sender,
                 receiver,

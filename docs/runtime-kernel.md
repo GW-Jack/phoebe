@@ -132,10 +132,11 @@ accepts typed descriptors for channel handles, reply rights, and reply
 receivers, and commits all transfers together. Synthetic native poll tests
 cover pair creation, one-shot completion, cancellation, resource failure,
 a parked reply receiver waking after a cross-task transfer, and native spawn
-success and task-limit rejection. Hand-built checked Core uses the Rust
-kernel operations through its interpreter and generated Cranelift code. Source
-lowering remains open, so these tests do not establish source-level `ReplyTo`
-support.
+success and task-limit rejection. Checked Core and source lowering use the
+Rust kernel operations through the interpreter and generated Cranelift code.
+Source tests cover reply delivery across a spawned task, cancellation,
+lexical close, and resource failure in the interpreter, JIT, and standalone
+executable. Arbitrary source messages carrying `ReplyTo` remain open.
 The C ABI creation call publishes both output tokens only on
 success; native generated code loads them only on that edge. Standalone builds
 link `libphoebe_runtime.a`. Buck2 supplies it through the CLI's resource map;
