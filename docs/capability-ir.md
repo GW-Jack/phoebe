@@ -7,6 +7,13 @@ The executable Core IR does not yet produce these graphs or contain these
 types and operations. The runtime has a bounded `I64` request/reply
 implementation, but it is not connected to source code.
 
+Core instructions now store zero, one, or two ordered result IDs inline.
+The structural verifier checks every ID's unique definition and compares
+result arity and types with the operation signature. Existing operations
+still produce at most one result; `channel.new` and `reply.new` will be the
+first two-result operations. This representation adds no per-instruction
+result-list allocation to the common one-result case.
+
 ## Why the current affine rule is insufficient
 
 The present ownership verifier tracks live nominal values and intersects
