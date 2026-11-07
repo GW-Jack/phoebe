@@ -19,7 +19,7 @@ compiler must ship the archive beside its executable.
 ## Current milestone
 
 `docs/version-0.0.1.md` states the release gates and the exact subset that
-currently runs. The Rust crate parses functions over I64, Bool, nominal sums
+currently runs. The Rust workspace parses functions over I64, Bool, nominal sums
 and products with primitive or earlier nominal fields.
 It supports arithmetic, conditions, exhaustive `when`, mutable locals, loops,
 call-site scalar borrows, and `?` on concrete `Result<T, E>` applications
@@ -65,6 +65,21 @@ cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow
 criteria for the future compiler.
 `docs/compiler-architecture.md` records the research-informed proof and
 hackability plan.
+`docs/build-system.md` describes the crate graph, Buck2 targets, dependency
+pinning, and development commands. Build and run with Buck2:
+
+```sh
+buck2 build //:phoebe
+buck2 run //:phoebe -- run examples/hello.phoebe
+```
+
+Cargo remains available for tests and standalone runtime archives:
+
+```sh
+cargo test --workspace
+cargo build --lib
+```
+
 `docs/decisions/0001-compiler-principles.md` records the accepted compiler
 principles. `docs/decisions/0002-concurrency-core.md` adopts scoped tasks and
 channels with move-only communication capabilities in messages, and actors as

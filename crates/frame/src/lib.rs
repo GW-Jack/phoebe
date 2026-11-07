@@ -3,8 +3,9 @@
 //! This is a compiler analysis, not a second ownership checker. Core's
 //! verifier establishes legal uses and capability disposition first.
 
-use crate::core::{
-    self, BlockId, CallArg, Function, FunctionId, Operation, PlaceId, Program, Terminator, ValueId,
+use phoebe_core::{
+    self as core, BlockId, CallArg, Function, FunctionId, Operation, PlaceId, Program, Terminator,
+    ValueId,
 };
 use std::fmt::Write;
 use std::ops::Range;

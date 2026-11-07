@@ -1,0 +1,8 @@
+rust_library(
+    name = "phoebe_frame",
+    crate_root = "src/lib.rs",
+    srcs = ["src/lib.rs"],
+    edition = "2024",
+    deps = ["//crates/core:phoebe_core"],
+    visibility = ["PUBLIC"],
+)

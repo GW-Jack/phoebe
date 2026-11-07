@@ -1,8 +1,10 @@
 # A hackable, efficient compiler — research plan
 
-Status: principles accepted by Decision 0001, 2026-11-06. Phoebe has no
-compiler yet. The cited research informs the design; it is not evidence that
-Phoebe has implemented or proved any compiler property.
+Status: principles accepted by Decision 0001, 2026-11-06. Phoebe now has an
+executable compiler slice and a crate-level build graph. The cited research
+informs the design; it is not evidence that Phoebe has proved any compiler
+property. The current Rust verifier checks finite IR invariants during
+compilation, while the Maude models remain separate bounded models.
 
 ## 1. Proof boundary
 

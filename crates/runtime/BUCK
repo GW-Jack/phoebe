@@ -1,0 +1,7 @@
+rust_library(
+    name = "phoebe_runtime",
+    crate_root = "src/lib.rs",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2024",
+    visibility = ["PUBLIC"],
+)

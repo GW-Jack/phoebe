@@ -1,3 +1,7 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
 [package]
 name = "phoebe"
 version = "0.0.1"
@@ -10,10 +14,10 @@ license = "Apache-2.0"
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
-cranelift-codegen = "=0.135.2"
-cranelift-frontend = "=0.135.2"
-cranelift-jit = "=0.135.2"
-cranelift-module = "=0.135.2"
-cranelift-native = "=0.135.2"
-cranelift-object = "=0.135.2"
-toml = "=1.2.1"
+phoebe-capability = { path = "crates/capability" }
+phoebe-core = { path = "crates/core" }
+phoebe-frame = { path = "crates/frame" }
+phoebe-native = { path = "crates/native" }
+phoebe-project = { path = "crates/project" }
+phoebe-runtime = { path = "crates/runtime" }
+phoebe-syntax = { path = "crates/syntax" }

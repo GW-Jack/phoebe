@@ -1,0 +1,3 @@
+manifest_path = "third-party/rust/Cargo.toml"
+third_party_dir = "third-party/rust"
+cargo_env = true

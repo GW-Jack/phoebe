@@ -1,0 +1,16 @@
+[package]
+name = "phoebe-third-party"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+cranelift-codegen = "=0.135.2"
+cranelift-frontend = "=0.135.2"
+cranelift-jit = "=0.135.2"
+cranelift-module = "=0.135.2"
+cranelift-native = "=0.135.2"
+cranelift-object = "=0.135.2"
+toml = "=1.2.1"

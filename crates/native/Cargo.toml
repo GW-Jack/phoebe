@@ -1,0 +1,18 @@
+[package]
+name = "phoebe-native"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+
+[dependencies]
+phoebe-core = { path = "../core" }
+phoebe-frame = { path = "../frame" }
+phoebe-runtime = { path = "../runtime" }
+phoebe-syntax = { path = "../syntax" }
+cranelift-codegen = "=0.135.2"
+cranelift-frontend = "=0.135.2"
+cranelift-jit = "=0.135.2"
+cranelift-module = "=0.135.2"
+cranelift-native = "=0.135.2"
+cranelift-object = "=0.135.2"

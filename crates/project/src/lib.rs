@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::syntax::{self, Body, CallArgument, Expr, ExprKind, Statement, TypeName};
-use crate::{Diagnostic, Span};
+use phoebe_syntax::syntax::{self, Body, CallArgument, Expr, ExprKind, Statement, TypeName};
+use phoebe_syntax::{Diagnostic, Span};
 
 struct SourceFile {
     path: PathBuf,

@@ -354,14 +354,66 @@ dependencies = [
 name = "phoebe"
 version = "0.0.1"
 dependencies = [
+ "phoebe-capability",
+ "phoebe-core",
+ "phoebe-frame",
+ "phoebe-native",
+ "phoebe-project",
+ "phoebe-runtime",
+ "phoebe-syntax",
+]
+
+[[package]]
+name = "phoebe-capability"
+version = "0.0.1"
+
+[[package]]
+name = "phoebe-core"
+version = "0.0.1"
+dependencies = [
+ "phoebe-capability",
+ "phoebe-runtime",
+ "phoebe-syntax",
+]
+
+[[package]]
+name = "phoebe-frame"
+version = "0.0.1"
+dependencies = [
+ "phoebe-core",
+]
+
+[[package]]
+name = "phoebe-native"
+version = "0.0.1"
+dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",
  "cranelift-module",
  "cranelift-native",
  "cranelift-object",
+ "phoebe-core",
+ "phoebe-frame",
+ "phoebe-runtime",
+ "phoebe-syntax",
+]
+
+[[package]]
+name = "phoebe-project"
+version = "0.0.1"
+dependencies = [
+ "phoebe-syntax",
  "toml",
 ]
+
+[[package]]
+name = "phoebe-runtime"
+version = "0.0.1"
+
+[[package]]
+name = "phoebe-syntax"
+version = "0.0.1"
 
 [[package]]
 name = "proc-macro2"

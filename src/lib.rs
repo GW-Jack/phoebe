@@ -1,60 +1,11 @@
-pub mod capability_flow;
-pub mod core;
-pub mod frame_layout;
-pub mod native;
-pub mod project;
-pub mod runtime;
-pub mod syntax;
+//! Compatibility facade and static runtime archive for the Phoebe toolchain.
+//! Phase implementations live in independently cacheable workspace crates.
 
-use std::fmt;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Span {
-    pub start: usize,
-    pub end: usize,
-}
-
-impl Span {
-    pub fn join(self, other: Self) -> Self {
-        Self {
-            start: self.start,
-            end: other.end,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct Diagnostic {
-    pub span: Span,
-    pub message: String,
-}
-
-impl Diagnostic {
-    pub fn new(span: Span, message: impl Into<String>) -> Self {
-        Self {
-            span,
-            message: message.into(),
-        }
-    }
-
-    pub fn render(&self, source: &str) -> String {
-        let start = self.span.start.min(source.len());
-        let line = source[..start].bytes().filter(|b| *b == b'\n').count() + 1;
-        let column = source[..start]
-            .rfind('\n')
-            .map_or(start + 1, |last| start - last);
-        format!("{line}:{column}: {}", self.message)
-    }
-}
-
-impl fmt::Display for Diagnostic {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}..{}: {}",
-            self.span.start, self.span.end, self.message
-        )
-    }
-}
-
-impl std::error::Error for Diagnostic {}
+pub use phoebe_capability as capability_flow;
+pub use phoebe_core as core;
+pub use phoebe_frame as frame_layout;
+pub use phoebe_native as native;
+pub use phoebe_project as project;
+pub use phoebe_runtime as runtime;
+pub use phoebe_syntax as syntax;
+pub use phoebe_syntax::{Diagnostic, Span};

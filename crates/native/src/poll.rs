@@ -574,7 +574,7 @@ fn load_slot(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::{NativeFrameInit, NativePollTask, ReceiveResult, Receiver, Sender};
+    use phoebe_runtime::{NativeFrameInit, NativePollTask, ReceiveResult, Receiver, Sender};
     use std::ffi::c_void;
     use std::sync::{
         Arc,
@@ -659,7 +659,7 @@ fn main() -> I64 = 0
 
     #[test]
     fn generated_receive_leaf_parks_resumes_and_handles_end() {
-        let program = core::lower(&crate::syntax::parse(SOURCE).unwrap()).unwrap();
+        let program = core::lower(&phoebe_syntax::syntax::parse(SOURCE).unwrap()).unwrap();
         let executable = compile_poll_leaf_jit(&program, "wait").unwrap();
         let layout = executable.layout();
         assert_eq!(layout.entry_params.len(), 2);
@@ -751,7 +751,10 @@ fn main() -> I64 = 0
     #[test]
     fn generated_two_send_leaf_retries_after_one_slot_backpressure() {
         let program = core::lower(
-            &crate::syntax::parse(include_str!("../../examples/channel_exchange.phoebe")).unwrap(),
+            &phoebe_syntax::syntax::parse(include_str!(
+                "../../../examples/channel_exchange.phoebe"
+            ))
+            .unwrap(),
         )
         .unwrap();
         let executable = compile_poll_leaf_jit(&program, "producer").unwrap();
@@ -813,7 +816,10 @@ fn main() -> I64 = 0
     #[test]
     fn native_spawn_limit_keeps_parent_rights() {
         let program = core::lower(
-            &crate::syntax::parse(include_str!("../../examples/channel_exchange.phoebe")).unwrap(),
+            &phoebe_syntax::syntax::parse(include_str!(
+                "../../../examples/channel_exchange.phoebe"
+            ))
+            .unwrap(),
         )
         .unwrap();
         let executable = compile_poll_leaf_jit(&program, "producer").unwrap();
@@ -866,7 +872,10 @@ fn main() -> I64 = 0
     #[test]
     fn generated_send_leaf_returns_the_original_message_when_closed() {
         let program = core::lower(
-            &crate::syntax::parse(include_str!("../../examples/channel_exchange.phoebe")).unwrap(),
+            &phoebe_syntax::syntax::parse(include_str!(
+                "../../../examples/channel_exchange.phoebe"
+            ))
+            .unwrap(),
         )
         .unwrap();
         let executable = compile_poll_leaf_jit(&program, "producer").unwrap();
