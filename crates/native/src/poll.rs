@@ -170,6 +170,15 @@ fn compile_poll_module<M: Module>(
             _ => None,
         })
         .collect::<Vec<_>>();
+    pending_direct.extend(
+        reachable
+            .iter()
+            .flat_map(|id| &program.functions[id.0].blocks)
+            .filter_map(|block| match block.terminator {
+                Terminator::Spawn { child, .. } if !suspendable[child.0] => Some(child),
+                _ => None,
+            }),
+    );
     while let Some(id) = pending_direct.pop() {
         if direct[id.0] {
             continue;
@@ -193,6 +202,12 @@ fn compile_poll_module<M: Module>(
     let shapes = AbiShapes::new(program, pointer);
     let context_functions = program.runtime_context_functions();
     let mut clif = String::new();
+    // The direct pass defines direct callees and spawned direct children.
+    // It scans only reachable poll parents for their spawn wrappers.
+    let mut selected = direct.clone();
+    for id in &reachable {
+        selected[id.0] = true;
+    }
     let direct_ids = if direct.iter().any(|selected| *selected) {
         Some(compile_functions(
             module,
@@ -200,11 +215,42 @@ fn compile_poll_module<M: Module>(
             &context_functions,
             false,
             Some(&mut clif),
-            Some(&direct),
+            Some(&selected),
         )?)
     } else {
         None
     };
+    let mut direct_spawn = vec![None; program.functions.len()];
+    for id in &reachable {
+        for block in &program.functions[id.0].blocks {
+            if let Terminator::Spawn { child, .. } = block.terminator
+                && !suspendable[child.0]
+                && direct_spawn[child.0].is_none()
+            {
+                let empty_frame = FunctionFrame {
+                    function: child,
+                    points: Vec::new(),
+                    value_slots: Vec::new(),
+                    place_slots: Vec::new(),
+                };
+                let layout =
+                    frame_layout::word_layout(program, &empty_frame, |ty| shapes.types(ty).len())?;
+                let mut signature = module.make_signature();
+                signature
+                    .params
+                    .extend([AbiParam::new(pointer), AbiParam::new(pointer)]);
+                signature.returns.push(AbiParam::new(types::I64));
+                let wrapper = module
+                    .declare_function(
+                        &format!("phoebe_spawn_poll_{}", child.0),
+                        Linkage::Local,
+                        &signature,
+                    )
+                    .map_err(|error| error.to_string())?;
+                direct_spawn[child.0] = Some((wrapper, layout));
+            }
+        }
+    }
 
     let mut receive_signature = module.make_signature();
     receive_signature.params.extend([
@@ -779,8 +825,13 @@ fn compile_poll_module<M: Module>(
                         success,
                         failure,
                     } => {
-                        let child_layout = layouts[child.0].as_ref().expect("poll child frame");
-                        let child_id = ids[child.0].expect("declared poll child");
+                        let child_layout = layouts[child.0]
+                            .as_ref()
+                            .or_else(|| direct_spawn[child.0].as_ref().map(|(_, layout)| layout))
+                            .expect("compiled spawn child frame");
+                        let child_id = ids[child.0]
+                            .or_else(|| direct_spawn[child.0].as_ref().map(|(id, _)| *id))
+                            .expect("declared spawn child");
                         let child_ref = module.declare_func_in_func(child_id, builder.func);
                         let child_entry = builder.ins().func_addr(pointer, child_ref);
                         let (initial_ptr, initial_count) = emit_frame_initial(
@@ -1138,11 +1189,6 @@ fn validate_poll_function(
             .any(|point| point.block.0 == block_id && point.instruction.is_none())
         {
             return Err("terminator is not yet supported by retained poll".into());
-        }
-        if let Terminator::Spawn { child, .. } = block.terminator
-            && layouts[child.0].is_none()
-        {
-            return Err("retained poll spawn requires a poll child".into());
         }
     }
     Ok(())

@@ -130,6 +130,8 @@ so the parent keeps its direct calling convention.
 A suspendable function can call a direct-only helper with owned values and
 receive a flattened nominal result without allocating a child frame; the
 helper exchange runs in the interpreter, JIT, and standalone object path.
+A suspendable parent can spawn a direct-only child through a poll-compatible
+wrapper. An executable test parks the parent until that child closes a sender.
 Core now checks scalar send/receive terminators and derives live-right maps
 for retry suspension. Its interpreter retains frames and places across a
 pending operation, and executes buffered scalar traffic. Core `spawn` now

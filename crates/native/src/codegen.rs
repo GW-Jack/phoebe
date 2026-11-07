@@ -176,7 +176,9 @@ pub(super) fn compile_functions<M: Module>(
     }
     let mut spawn_wrappers: Vec<Option<SpawnEntry>> = vec![None; program.functions.len()];
     for (index, function) in program.functions.iter().enumerate() {
-        if suspendable[index] || selected.is_some_and(|set| !set[index]) {
+        // Selected poll parents are emitted elsewhere, but still need a
+        // wrapper when they spawn a direct child compiled by this pass.
+        if (suspendable[index] && selected.is_none()) || selected.is_some_and(|set| !set[index]) {
             continue;
         }
         for block in &function.blocks {
@@ -184,6 +186,9 @@ pub(super) fn compile_functions<M: Module>(
                 && spawn_wrappers[child.0].is_none()
             {
                 if suspendable[child.0] {
+                    if suspendable[index] {
+                        continue;
+                    }
                     let mut signature = module.make_signature();
                     signature
                         .params

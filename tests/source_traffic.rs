@@ -104,6 +104,51 @@ fn suspendable_functions_call_direct_helpers_without_poll_continuations() {
 }
 
 #[test]
+fn retained_parent_spawns_direct_child_and_resumes_on_close() {
+    let source = format!(
+        "{}\n{}",
+        include_str!("../examples/spawn_direct_from_poll.phoebe"),
+        r#"
+fn unused_worker(sender: Sender<I64>) -> I64 {
+  sender.close();
+  0
+}
+
+fn unused_exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  spawn unused_worker(sender)?;
+  val item = receiver.receive();
+  receiver.close();
+  Result<I64, ResourceError>.Ok(0)
+}
+"#
+    );
+    let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+    let plan = phoebe::frame_layout::format(&program).unwrap();
+    assert!(!plan.contains("worker"));
+    let clif = native::clif(&program).unwrap();
+    assert!(clif.contains("Phoebe spawn poll wrapper for worker"));
+    assert!(!clif.contains("unused_worker"));
+    assert!(!clif.contains("unused_exchange"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 7);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 7);
+    let limits = ScopeLimits {
+        tasks: 1,
+        channels: 1,
+        replies: 0,
+    };
+    assert_eq!(
+        program.interpret_with_limits("main", &[], limits).unwrap(),
+        0
+    );
+    assert_eq!(
+        native::run_with_limits(&program, "main", &[], limits).unwrap(),
+        0
+    );
+    assert_standalone(&program, "poll-spawns-direct", 7);
+}
+
+#[test]
 fn source_closed_send_returns_original_value_and_receive_reports_end() {
     let source = r#"
 fn inspect() -> Result<I64, ResourceError> {

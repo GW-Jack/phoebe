@@ -459,15 +459,7 @@ fn find_runtime_archive() -> Result<PathBuf, String> {
     for directory in [Some(directory), test_profile].into_iter().flatten() {
         let archive = directory.join("libphoebe_runtime.a");
         let cargo_debug = directory.file_name().is_some_and(|name| name == "debug");
-        let current = !cfg!(debug_assertions)
-            || !cargo_debug
-            || matches!(
-                (
-                    archive.metadata().and_then(|metadata| metadata.modified()),
-                    executable.metadata().and_then(|metadata| metadata.modified())
-                ),
-                (Ok(archive), Ok(compiler)) if archive >= compiler
-            );
+        let current = !cfg!(debug_assertions) || !cargo_debug || runtime_archive_current(&archive);
         if archive.is_file() && current {
             return Ok(archive);
         }
@@ -525,6 +517,32 @@ fn find_runtime_archive() -> Result<PathBuf, String> {
         }
     }
     Err("runtime archive libphoebe_runtime.a was not found beside the compiler".into())
+}
+
+fn runtime_archive_current(archive: &Path) -> bool {
+    let Ok(archive_time) = archive.metadata().and_then(|metadata| metadata.modified()) else {
+        return false;
+    };
+    let Some(runtime) =
+        option_env!("CARGO_MANIFEST_DIR").map(|directory| Path::new(directory).join("../runtime"))
+    else {
+        return true;
+    };
+    sources_older_than(&runtime.join("Cargo.toml"), archive_time)
+        && sources_older_than(&runtime.join("src"), archive_time)
+}
+
+fn sources_older_than(path: &Path, archive_time: std::time::SystemTime) -> bool {
+    if path.is_dir() {
+        return fs::read_dir(path).is_ok_and(|mut entries| {
+            entries.all(|entry| {
+                entry.is_ok_and(|entry| sources_older_than(&entry.path(), archive_time))
+            })
+        });
+    }
+    path.metadata()
+        .and_then(|metadata| metadata.modified())
+        .is_ok_and(|modified| modified <= archive_time)
 }
 
 mod codegen;

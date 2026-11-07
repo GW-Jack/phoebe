@@ -9,6 +9,8 @@ this backend when `main` can suspend. A direct parent can spawn a suspendable
 child through a separately compiled poll entry; its own calls retain the
 direct ABI. A suspendable function can call an owned-value, direct-only
 helper synchronously using the direct ABI; the helper gets no retained frame.
+A suspendable parent can also spawn a direct-only child through a small
+poll-compatible wrapper; the child body stays on the direct ABI.
 The object path uses the same poll lowering as the JIT;
 standalone exchange, closed-send, and mixed-spawn tests execute linked binaries.
 The analysis is tested, not formally proved.
@@ -34,6 +36,8 @@ The generated call site chooses the direct ABI when its callee is outside
 `examples/channel_exchange_helper.phoebe` exercises both paths, including a
 flattened `Result` returned by a direct helper after a receive and a direct
 helper that creates and closes a channel through the hidden runtime context.
+`examples/spawn_direct_from_poll.phoebe` parks the parent receiver until its
+direct child closes the sender, then resumes on the end-of-stream edge.
 
 ## Spill equation
 
