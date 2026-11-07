@@ -1,5 +1,7 @@
 //! Exact source-level interface used to decide whether importers must rebuild.
 
+use std::collections::HashSet;
+
 use phoebe_syntax::syntax::{self, ParamMode, TypeName};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,11 +26,59 @@ pub struct FunctionInterface {
 }
 
 pub(super) fn from_program(name: &str, program: &syntax::Program) -> ModuleInterface {
+    fn collect_type(ty: &TypeName, needed: &mut HashSet<String>) {
+        match ty {
+            TypeName::Named(name) => {
+                needed.insert(name.clone());
+            }
+            TypeName::Result(ok, err) => {
+                collect_type(ok, needed);
+                collect_type(err, needed);
+            }
+            _ => {}
+        }
+    }
+
+    // A private nominal type may still determine the representation of an
+    // exported signature. Include its shape transitively without exporting
+    // its name to source importers.
+    let mut needed = program
+        .data
+        .iter()
+        .filter(|data| data.public)
+        .map(|data| data.name.clone())
+        .collect::<HashSet<_>>();
+    for function in program.functions.iter().filter(|function| function.public) {
+        for param in &function.params {
+            collect_type(&param.ty, &mut needed);
+        }
+        collect_type(&function.return_type, &mut needed);
+    }
+    loop {
+        let before = needed.len();
+        for data in &program.data {
+            if !needed.contains(&data.name) {
+                continue;
+            }
+            for variant in &data.variants {
+                if let Some(payload) = &variant.payload {
+                    collect_type(&payload.ty, &mut needed);
+                }
+            }
+            for field in &data.fields {
+                collect_type(&field.ty, &mut needed);
+            }
+        }
+        if needed.len() == before {
+            break;
+        }
+    }
     ModuleInterface {
         name: name.to_owned(),
         data: program
             .data
             .iter()
+            .filter(|data| needed.contains(&data.name))
             .map(|data| DataInterface {
                 name: data.name.clone(),
                 variants: data
@@ -54,6 +104,7 @@ pub(super) fn from_program(name: &str, program: &syntax::Program) -> ModuleInter
         functions: program
             .functions
             .iter()
+            .filter(|function| function.public)
             .map(|function| FunctionInterface {
                 name: function.name.clone(),
                 params: function

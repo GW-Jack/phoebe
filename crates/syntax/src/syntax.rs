@@ -3,6 +3,7 @@ use crate::{Diagnostic, Span};
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TokenKind {
     Fn,
+    Pub,
     Import,
     Data,
     When,
@@ -72,6 +73,7 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
                 match &source[start..i] {
                     "fn" => TokenKind::Fn,
+                    "pub" => TokenKind::Pub,
                     "import" => TokenKind::Import,
                     "data" => TokenKind::Data,
                     "when" => TokenKind::When,
@@ -213,6 +215,7 @@ pub struct Import {
 #[derive(Clone, Debug)]
 pub struct Data {
     pub name: String,
+    pub public: bool,
     pub span: Span,
     pub variants: Vec<Variant>,
     pub fields: Vec<Field>,
@@ -235,6 +238,7 @@ pub struct Field {
 #[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
+    pub public: bool,
     pub name_span: Span,
     pub params: Vec<Param>,
     pub return_type: TypeName,
@@ -475,7 +479,7 @@ impl Parser {
         Ok(TypeName::Named(format!("{name}<I64>")))
     }
 
-    fn data(&mut self) -> Result<Data, Diagnostic> {
+    fn data(&mut self, public: bool) -> Result<Data, Diagnostic> {
         self.expect(&TokenKind::Data, "data")?;
         let (name, span) = self.name()?;
         self.expect(&TokenKind::LBrace, "{")?;
@@ -525,6 +529,7 @@ impl Parser {
         }
         Ok(Data {
             name,
+            public,
             span,
             variants,
             fields,
@@ -585,7 +590,7 @@ impl Parser {
         Ok((args, end))
     }
 
-    fn function(&mut self) -> Result<Function, Diagnostic> {
+    fn function(&mut self, public: bool) -> Result<Function, Diagnostic> {
         self.expect(&TokenKind::Fn, "fn")?;
         let (name, name_span) = self.name()?;
         self.expect(&TokenKind::LParen, "(")?;
@@ -628,6 +633,7 @@ impl Parser {
         };
         Ok(Function {
             name,
+            public,
             name_span,
             params,
             return_type,
@@ -1058,14 +1064,15 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
     let mut data = Vec::new();
     let mut imports = Vec::new();
     while parser.current().kind != TokenKind::Eof {
-        if parser.current().kind == TokenKind::Import {
+        let public = parser.eat(&TokenKind::Pub).is_some();
+        if !public && parser.current().kind == TokenKind::Import {
             parser.pos += 1;
             let (name, span) = parser.name()?;
             imports.push(Import { name, span });
         } else if parser.current().kind == TokenKind::Data {
-            data.push(parser.data()?);
+            data.push(parser.data(public)?);
         } else {
-            functions.push(parser.function()?);
+            functions.push(parser.function(public)?);
         }
     }
     if functions.is_empty() && data.is_empty() {

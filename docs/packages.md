@@ -42,7 +42,7 @@ interpreter, Cranelift JIT, and standalone executable.
 duplicate lock entries, missing source files, and module paths that escape a
 package through `..`, absolute paths, or symlinks. The current graph resolves
 local path dependencies only. Registry packages, reproducible remote fetches,
-item-level visibility, direct imports of a dependency's non-root modules, and
+item-level imports, direct imports of a dependency's non-root modules, and
 a compiler cache keyed by these pins remain open. A valid lock states which
 local bytes were resolved; it does not prove that the dependency source
 type-checks or that a build is reproducible on a machine without those paths.

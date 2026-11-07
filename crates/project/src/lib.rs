@@ -56,6 +56,17 @@ struct Module {
     ast: syntax::Program,
 }
 
+#[derive(Clone)]
+struct ExportSet {
+    data: HashSet<String>,
+    functions: HashSet<String>,
+}
+
+struct ResolvedImport {
+    target: String,
+    exports: ExportSet,
+}
+
 fn identifier(name: &str) -> bool {
     !name.is_empty()
         && name.as_bytes()[0].is_ascii_alphabetic()
@@ -217,6 +228,30 @@ fn load_with_cache(
         .cloned()
         .map(|module| (module.name.clone(), module))
         .collect::<BTreeMap<_, _>>();
+    let exports = modules
+        .iter()
+        .map(|module| {
+            (
+                module.name.clone(),
+                ExportSet {
+                    data: module
+                        .ast
+                        .data
+                        .iter()
+                        .filter(|data| data.public)
+                        .map(|data| data.name.clone())
+                        .collect(),
+                    functions: module
+                        .ast
+                        .functions
+                        .iter()
+                        .filter(|function| function.public)
+                        .map(|function| function.name.clone())
+                        .collect(),
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
 
     let mut combined = syntax::Program {
         imports: Vec::new(),
@@ -249,7 +284,16 @@ fn load_with_cache(
             .ast
             .imports
             .iter()
-            .map(|item| (item.name.clone(), module.available[&item.name].clone()))
+            .map(|item| {
+                let target = module.available[&item.name].clone();
+                (
+                    item.name.clone(),
+                    ResolvedImport {
+                        exports: exports[&target].clone(),
+                        target,
+                    },
+                )
+            })
             .collect::<HashMap<_, _>>();
         if let Some(collision) = imports.keys().find(|name| local_data.contains(*name)) {
             return Err(format!(
@@ -423,7 +467,7 @@ fn qualify_type(
     ty: &mut TypeName,
     module: &str,
     local_data: &HashSet<String>,
-    imports: &HashMap<String, String>,
+    imports: &HashMap<String, ResolvedImport>,
     available: &HashMap<String, String>,
 ) -> Result<(), String> {
     match ty {
@@ -433,8 +477,11 @@ fn qualify_type(
         }
         TypeName::Named(name) => {
             if let Some((prefix, member)) = name.split_once('.') {
-                if let Some(target) = imports.get(prefix) {
-                    *name = format!("{target}.{member}");
+                if let Some(import) = imports.get(prefix) {
+                    if !import.exports.data.contains(member) {
+                        return Err(format!("type `{prefix}.{member}` is not public"));
+                    }
+                    *name = format!("{}.{member}", import.target);
                 } else if available.contains_key(prefix) {
                     return Err(format!("module `{prefix}` is not imported"));
                 }
@@ -455,7 +502,7 @@ fn rewrite_body(
     root: &str,
     local_data: &HashSet<String>,
     local_functions: &HashSet<String>,
-    imports: &HashMap<String, String>,
+    imports: &HashMap<String, ResolvedImport>,
     available: &HashMap<String, String>,
     results: &HashMap<String, String>,
 ) -> Result<(), (Span, String)> {
@@ -530,7 +577,7 @@ fn rewrite_expr(
     root: &str,
     local_data: &HashSet<String>,
     local_functions: &HashSet<String>,
-    imports: &HashMap<String, String>,
+    imports: &HashMap<String, ResolvedImport>,
     available: &HashMap<String, String>,
     results: &HashMap<String, String>,
 ) -> Result<(), (Span, String)> {
@@ -596,13 +643,16 @@ fn rewrite_expr(
                 nested(payload)?;
             }
         }
-        ExprKind::QualifiedCall(name, _member, args) => {
+        ExprKind::QualifiedCall(name, member, args) => {
             if local_data.contains(name) {
                 *name = format!("{module}.{name}");
             } else if let Some(qualified) = results.get(name) {
                 *name = qualified.clone();
-            } else if let Some(target) = imports.get(name.as_str()) {
-                *name = target.clone();
+            } else if let Some(import) = imports.get(name.as_str()) {
+                if !import.exports.functions.contains(member) {
+                    return Err((span, format!("function `{name}.{member}` is not public")));
+                }
+                *name = import.target.clone();
             } else if available.contains_key(name.as_str()) {
                 return Err((span, format!("module `{name}` is not imported")));
             }

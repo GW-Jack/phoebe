@@ -99,7 +99,7 @@ fn locked_transitive_package_modules_compile_and_rebuild() {
     assert!(first.to_string().contains("call math__util.add"));
 
     let util = path.join("util/api.phoebe");
-    std::fs::write(&util, "fn add(a: I64, b: I64) -> I64 = a + b + 1\n").unwrap();
+    std::fs::write(&util, "pub fn add(a: I64, b: I64) -> I64 = a + b + 1\n").unwrap();
     assert!(
         session
             .compile(&app)
@@ -114,7 +114,7 @@ fn locked_transitive_package_modules_compile_and_rebuild() {
     assert_eq!(changed.interpret("main", &[]).unwrap(), 43);
     assert_eq!(native::run(&changed, "main", &[]).unwrap(), 43);
 
-    let renamed = "fn add(x: I64, b: I64) -> I64 = x + b + 1\n";
+    let renamed = "pub fn add(x: I64, b: I64) -> I64 = x + b + 1\n";
     std::fs::write(&util, renamed).unwrap();
     package::write_lock(&app).unwrap();
     let (renamed_core, report) = session.compile(&app).unwrap();
@@ -126,7 +126,7 @@ fn locked_transitive_package_modules_compile_and_rebuild() {
     assert_eq!(report.reused_core_functions, 6);
     assert_eq!(renamed_core.interpret("main", &[]).unwrap(), 43);
 
-    std::fs::write(&util, "fn add(a: Bool, b: I64) -> I64 = b\n").unwrap();
+    std::fs::write(&util, "pub fn add(a: Bool, b: I64) -> I64 = b\n").unwrap();
     package::write_lock(&app).unwrap();
     assert!(session.compile(&app).is_err());
     std::fs::write(&util, renamed).unwrap();
@@ -158,6 +158,97 @@ fn project_imports_and_local_data_run_in_both_engines() {
     let program = core::lower(&loaded.ast).unwrap();
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn private_declarations_cannot_cross_module_boundary() {
+    let path = temp_project();
+    let app = path.join("app.phoebe");
+    let source = std::fs::read_to_string(&app).unwrap();
+    std::fs::write(
+        &app,
+        format!("{source}\nfn reveal() -> I64 = math.value()\n"),
+    )
+    .unwrap();
+    let error = project::load(&path).err().unwrap();
+    assert!(
+        error.contains("function `math.value` is not public"),
+        "{error}"
+    );
+
+    let math = path.join("math.phoebe");
+    let original = std::fs::read_to_string(&math).unwrap();
+    std::fs::write(&math, format!("{original}\ndata Secret {{ Value }}\n")).unwrap();
+    std::fs::write(
+        &app,
+        format!("{source}\nfn reveal(value: math.Secret) -> I64 = 0\n"),
+    )
+    .unwrap();
+    let error = project::load(&path).err().unwrap();
+    assert!(
+        error.contains("type `math.Secret` is not public"),
+        "{error}"
+    );
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn private_signature_edit_does_not_change_public_interface() {
+    let path = temp_project();
+    let mut session = project::ProjectSession::new();
+    let (loaded, _) = session.load(&path).unwrap();
+    let math = loaded
+        .interfaces
+        .iter()
+        .find(|interface| interface.name == "math")
+        .unwrap();
+    assert!(
+        !math
+            .functions
+            .iter()
+            .any(|function| function.name == "math.value")
+    );
+    let source_path = path.join("math.phoebe");
+    let source = std::fs::read_to_string(&source_path).unwrap();
+    std::fs::write(
+        &source_path,
+        source.replace("fn value() -> I64", "fn value(unused: I64) -> I64"),
+    )
+    .unwrap();
+    let (_, report) = session.load(&path).unwrap();
+    assert_eq!(report.parsed, ["math"]);
+    assert!(report.changed_interfaces.is_empty());
+    assert_eq!(report.affected, ["math"]);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn exported_signature_tracks_private_nominal_layout() {
+    let path = temp_project();
+    let math_path = path.join("math.phoebe");
+    let original = std::fs::read_to_string(&math_path).unwrap();
+    let exposed = format!(
+        "{original}\ndata Hidden {{ Value(value: I64) }}\npub fn make_hidden() -> Hidden = Hidden.Value(1)\n"
+    );
+    std::fs::write(&math_path, &exposed).unwrap();
+    let mut session = project::ProjectSession::new();
+    let (loaded, _) = session.load(&path).unwrap();
+    let interface = loaded
+        .interfaces
+        .iter()
+        .find(|interface| interface.name == "math")
+        .unwrap();
+    assert!(interface.data.iter().any(|data| data.name == "math.Hidden"));
+
+    std::fs::write(
+        &math_path,
+        exposed.replace("Value(value: I64)", "Value(value: Bool)"),
+    )
+    .unwrap();
+    let (_, report) = session.load(&path).unwrap();
+    assert_eq!(report.changed_interfaces, ["math"]);
+    assert_eq!(report.affected, ["app", "math"]);
     std::fs::remove_dir_all(path).unwrap();
 }
 
@@ -253,10 +344,10 @@ fn project_interface_invalidation_reaches_transitive_importers() {
     let source = std::fs::read_to_string(&math).unwrap();
     std::fs::write(&math, format!("import util\n{source}")).unwrap();
     let util = path.join("util.phoebe");
-    std::fs::write(&util, "fn id(value: I64) -> I64 = value\n").unwrap();
+    std::fs::write(&util, "pub fn id(value: I64) -> I64 = value\n").unwrap();
     let mut session = project::ProjectSession::new();
     session.load(&path).unwrap();
-    std::fs::write(&util, "fn id(value: Bool) -> Bool = value\n").unwrap();
+    std::fs::write(&util, "pub fn id(value: Bool) -> Bool = value\n").unwrap();
     let (_, report) = session.load(&path).unwrap();
     assert_eq!(report.parsed, ["util"]);
     assert_eq!(report.changed_interfaces, ["util"]);
@@ -333,7 +424,7 @@ fn compiler_session_reuses_checked_core_bodies_and_rebases_spans() {
         core::lower(&fresh.ast).unwrap().to_string()
     );
 
-    std::fs::write(&math, format!("{source}\ndata Extra {{ A }}\n")).unwrap();
+    std::fs::write(&math, format!("{source}\npub data Extra {{ A }}\n")).unwrap();
     let (layout, report) = session.compile(&path).unwrap();
     assert_eq!(report.load.affected, ["app", "math"]);
     assert_eq!(report.reused_core_functions, 0);

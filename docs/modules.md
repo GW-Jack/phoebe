@@ -2,8 +2,8 @@
 
 Status: executable local modules with in-process parsed-module and checked-Core
 function reuse sessions. Content-pinned local path dependencies compile into
-the same program; visibility and incremental native object rebuilds remain
-open.
+the same program. Declarations are private by default and `pub` exports a
+function or data type. Incremental native object rebuilds remain open.
 
 `phoebe.toml` uses this form:
 
@@ -37,7 +37,8 @@ Unqualified calls, data constructors, and `when` patterns resolve within
 their defining module. A qualified type name such as `math.Maybe` requires an
 import. Modules are loaded in dependency order, so a data declaration may
 contain a nominal type from an imported module. Import cycles and unknown
-imports are rejected. The compiler maps
+imports are rejected. A qualified reference to a private function or type
+gets a source-located diagnostic. The compiler maps
 Core lowering diagnostics back to the defining file and local line/column.
 The local module example is `examples/multi_module/`. A package may import a
 direct dependency's root module by its alias; see `docs/packages.md` and
@@ -45,9 +46,11 @@ direct dependency's root module by its alias; see `docs/packages.md` and
 
 `phoebe-project::ProjectSession` can load the same manifest repeatedly. It
 compares each module's exact source bytes and path to reuse unchanged parsed
-ASTs. Each successful load extracts an interface containing all data shapes
-and function signatures after name qualification. Body edits leave that
-interface unchanged; signature or data-layout edits change it. `LoadReport`
+ASTs. Each successful load extracts an interface containing exported function
+signatures, exported data shapes, and any private data shapes reachable through
+those public signatures. A private type may remain opaque to importers while
+its layout still invalidates their build when it changes. Body edits leave
+that interface unchanged; relevant signature or data-layout edits change it. `LoadReport`
 lists parsed and reused modules, changed interfaces, and a conservative set
 of modules affected through imports. A failed load leaves the previous session
 state intact. Exact structural equality, rather than a truncated hash, decides
@@ -70,9 +73,8 @@ small warm-session baseline in `docs/performance-baseline.md` shows only a
 marginal difference on a six-function project.
 
 Current limitations are explicit: imported modules cannot construct another
-module's variants directly, the root module cannot be imported, imports are
-module-wide rather than item-level, and all declarations in an imported
-module are currently visible. There is no cached typed interface or registry
+module's variants directly, the root module cannot be imported, and imports
+are module-wide rather than item-level. There is no cached typed interface or registry
 dependency graph. `docs/packages.md` describes pinned local path dependencies.
 A standalone `.phoebe` file still works without a manifest,
 but `import` in that mode produces a diagnostic.

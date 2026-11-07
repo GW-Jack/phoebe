@@ -172,6 +172,7 @@ pub fn same_function_with_shift(
     delta: isize,
 ) -> bool {
     previous.name == current.name
+        && previous.public == current.public
         && span(previous.name_span, current.name_span, delta)
         && previous.return_type == current.return_type
         && previous.params.len() == current.params.len()
