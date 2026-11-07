@@ -8,7 +8,7 @@ pub struct NativeCallContext {
     pub call_request: *mut c_void,
 }
 
-fn resource_code(error: ResourceError) -> i64 {
+pub(super) fn resource_code(error: ResourceError) -> i64 {
     match error {
         ResourceError::InvalidChannelCapacity => 1,
         ResourceError::ChannelLimit => 2,
@@ -507,59 +507,29 @@ pub unsafe extern "C" fn phoebe_spawn_poll(
         if bridge.is_null() {
             return Err(());
         }
-        let words = usize::try_from(frame_words).map_err(|_| ())?;
-        let initial_count = usize::try_from(initial_count).map_err(|_| ())?;
         let transfer_count = usize::try_from(transfer_count).map_err(|_| ())?;
-        if words < 2
-            || words
-                .checked_mul(std::mem::size_of::<i64>())
-                .is_none_or(|bytes| bytes > i32::MAX as usize)
-            || initial_count > words
-            || transfer_count > 4
-            || (initial_count != 0 && initial.is_null())
-            || (transfer_count != 0 && transfers.is_null())
-        {
+        if transfer_count > 4 || (transfer_count != 0 && transfers.is_null()) {
             return Err(());
         }
-        let initial = if initial_count == 0 {
-            &[][..]
-        } else {
-            unsafe { std::slice::from_raw_parts(initial, initial_count) }
-        };
         let transfer_words = if transfer_count == 0 {
             &[][..]
         } else {
             unsafe { std::slice::from_raw_parts(transfers, transfer_count) }
         };
-        let mut tokens = [Token(0); 4];
+        let mut tokens = [CapabilityTransfer::Channel(Token(0)); 4];
         for (index, raw) in transfer_words.iter().enumerate() {
-            tokens[index] = Token(usize::try_from(*raw).map_err(|_| ())?);
+            tokens[index] =
+                CapabilityTransfer::Channel(Token(usize::try_from(*raw).map_err(|_| ())?));
         }
-        let mut child = match unsafe { NativePollTask::new(entry, words) } {
-            Ok(child) => child,
-            Err(NativeFrameError::Allocation) => {
-                return Ok(resource_code(ResourceError::Allocation));
-            }
-            Err(NativeFrameError::InvalidLayout) => return Err(()),
-        };
-        for (index, arg) in initial.iter().enumerate() {
-            let word = usize::try_from(arg.word).map_err(|_| ())?;
-            if word == 0
-                || word >= words
-                || initial[..index].iter().any(|prior| prior.word == arg.word)
-            {
-                return Err(());
-            }
-            child.frame_mut()[word] = arg.value;
-        }
-        let bridge = unsafe { &mut *bridge };
-        let context = unsafe { &mut *(bridge.context as *mut Context<'_>) };
-        match context.spawn_owned(child, &tokens[..transfer_count]) {
-            Ok(_) => Ok(0),
-            Err(error) => match error.resource_error {
-                Some(resource_error) => Ok(resource_code(resource_error)),
-                None => Err(()),
-            },
+        unsafe {
+            spawn_poll_with_transfers(
+                bridge,
+                entry,
+                frame_words,
+                initial,
+                initial_count,
+                &tokens[..transfer_count],
+            )
         }
     }));
     match outcome {
@@ -570,6 +540,63 @@ pub unsafe extern "C" fn phoebe_spawn_poll(
             }
             255
         }
+    }
+}
+
+/// Shared admission path for scalar and typed native spawn descriptors.
+///
+/// # Safety
+///
+/// `bridge`, `entry`, and `initial` follow `phoebe_spawn_poll`'s contract.
+pub(super) unsafe fn spawn_poll_with_transfers(
+    bridge: *mut NativeCallContext,
+    entry: NativePollEntry,
+    frame_words: i64,
+    initial: *const NativeFrameInit,
+    initial_count: i64,
+    transfers: &[CapabilityTransfer],
+) -> Result<i64, ()> {
+    if bridge.is_null() {
+        return Err(());
+    }
+    let words = usize::try_from(frame_words).map_err(|_| ())?;
+    let initial_count = usize::try_from(initial_count).map_err(|_| ())?;
+    if words < 2
+        || words
+            .checked_mul(std::mem::size_of::<i64>())
+            .is_none_or(|bytes| bytes > i32::MAX as usize)
+        || initial_count > words
+        || transfers.len() > 4
+        || (initial_count != 0 && initial.is_null())
+    {
+        return Err(());
+    }
+    let initial = if initial_count == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(initial, initial_count) }
+    };
+    let mut child = match unsafe { NativePollTask::new(entry, words) } {
+        Ok(child) => child,
+        Err(NativeFrameError::Allocation) => return Ok(resource_code(ResourceError::Allocation)),
+        Err(NativeFrameError::InvalidLayout) => return Err(()),
+    };
+    for (index, arg) in initial.iter().enumerate() {
+        let word = usize::try_from(arg.word).map_err(|_| ())?;
+        if word == 0 || word >= words || initial[..index].iter().any(|prior| prior.word == arg.word)
+        {
+            return Err(());
+        }
+        child.frame_mut()[word] = arg.value;
+    }
+    let bridge = unsafe { &mut *bridge };
+    let context = unsafe { &mut *(bridge.context as *mut Context<'_>) };
+    match context.spawn_capabilities_owned(child, transfers) {
+        Ok(_) => Ok(0),
+        Err(error) => match error.resource_error {
+            Some(resource_error) => Ok(resource_code(resource_error)),
+            None => Err(()),
+        },
     }
 }
 

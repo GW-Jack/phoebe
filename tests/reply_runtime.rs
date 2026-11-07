@@ -1,7 +1,7 @@
 use std::task::Poll;
 
 use phoebe::runtime::{
-    CompleteResult, Context, Receiver, ReplyReceiveResult, ReplyReceiver, Request,
+    CompleteResult, Context, Receiver, ReplyReceiveResult, ReplyReceiver, ReplyTo, Request,
     RequestReceiveResult, RequestSendResult, Scheduler, Sender, Task,
 };
 
@@ -368,5 +368,119 @@ fn reply_budget_failure_is_atomic() {
     let mut scheduler = Scheduler::new(ReplyBudgetRoot, 1, 0, 1).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.open_handles(), 0);
+    scheduler.verify().unwrap();
+}
+
+struct ReplyingChild(Option<ReplyTo>);
+
+impl Task for ReplyingChild {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        assert_eq!(
+            context.complete(self.0.take().expect("reply right"), 42)?,
+            CompleteResult::Delivered
+        );
+        Ok(Poll::Ready(0))
+    }
+}
+
+#[derive(Default)]
+struct TransferredRightRoot(Option<ReplyReceiver>);
+
+impl Task for TransferredRightRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        if self.0.is_none() {
+            let (right, receiver) = context.reply()?;
+            let transfer = right.transfer();
+            context
+                .spawn_capabilities_owned(ReplyingChild(Some(right)), &[transfer])
+                .map_err(|error| error.message)?;
+            self.0 = Some(receiver);
+        }
+        let value = match context.receive_reply(self.0.as_ref().expect("receiver"))? {
+            ReplyReceiveResult::Pending => return Ok(Poll::Pending),
+            ReplyReceiveResult::Value(value) => value,
+            ReplyReceiveResult::End => return Err("child dropped reply".into()),
+        };
+        self.0 = None;
+        match context.join()? {
+            Poll::Ready(()) => Ok(Poll::Ready(value)),
+            Poll::Pending => Err("child still running after reply".into()),
+        }
+    }
+}
+
+#[test]
+fn spawn_transfers_reply_right_and_wakes_receiver() {
+    let mut scheduler = Scheduler::new(TransferredRightRoot::default(), 2, 0, 1).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
+    assert_eq!(scheduler.stats().parks, 1);
+    scheduler.verify().unwrap();
+}
+
+struct ReceivingChild(Option<ReplyReceiver>);
+
+impl Task for ReceivingChild {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        match context.receive_reply(self.0.as_ref().expect("receiver"))? {
+            ReplyReceiveResult::Pending => Ok(Poll::Pending),
+            ReplyReceiveResult::Value(value) => {
+                self.0 = None;
+                Ok(Poll::Ready(value))
+            }
+            ReplyReceiveResult::End => Err("reply closed".into()),
+        }
+    }
+}
+
+struct TransferredReceiverRoot(bool);
+
+impl Task for TransferredReceiverRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        if !self.0 {
+            let (right, receiver) = context.reply()?;
+            let transfer = receiver.transfer();
+            context
+                .spawn_capabilities_owned(ReceivingChild(Some(receiver)), &[transfer])
+                .map_err(|error| error.message)?;
+            assert_eq!(context.complete(right, 42)?, CompleteResult::Delivered);
+            self.0 = true;
+        }
+        match context.join()? {
+            Poll::Pending => Ok(Poll::Pending),
+            Poll::Ready(()) => Ok(Poll::Ready(42)),
+        }
+    }
+}
+
+#[test]
+fn spawn_transfers_reply_receiver() {
+    let mut scheduler = Scheduler::new(TransferredReceiverRoot(false), 2, 0, 1).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
+    scheduler.verify().unwrap();
+}
+
+struct RejectedTransferRoot;
+
+impl Task for RejectedTransferRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        let (right, receiver) = context.reply()?;
+        let transfer = right.transfer();
+        let error = context
+            .spawn_capabilities_owned(ReplyingChild(Some(right)), &[transfer, transfer])
+            .unwrap_err();
+        assert_eq!(error.message, "duplicate capability transfer");
+        let right = error.value.0.expect("right retained on rejected spawn");
+        assert_eq!(context.complete(right, 42)?, CompleteResult::Delivered);
+        match context.receive_reply(&receiver)? {
+            ReplyReceiveResult::Value(value) => Ok(Poll::Ready(value)),
+            _ => Err("reply damaged by rejected spawn".into()),
+        }
+    }
+}
+
+#[test]
+fn duplicate_reply_transfer_preserves_parent_ownership() {
+    let mut scheduler = Scheduler::new(RejectedTransferRoot, 2, 0, 1).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
     scheduler.verify().unwrap();
 }

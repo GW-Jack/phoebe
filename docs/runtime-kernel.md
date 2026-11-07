@@ -40,7 +40,9 @@ publishing a handle; invalid tokens remain internal faults. Handle tokens are
 never reused in a scope, so the handle budget counts total minted handles,
 including closed ones. Source binds the new right
 with `val another = sender.fork()?` or `receiver.fork()?`. `spawn`
-validates all transfers before changing their owners. A successful send
+validates all transfers before changing their owners. The Rust
+`spawn_capabilities_owned` entry also transfers reply rights and reply
+receivers, returning the child frame intact on failure. A successful send
 copies a closed `I64` into a pre-reserved FIFO slot. If no receiver remains,
 `send` returns `Closed(message)` without queueing or consuming it. Closing
 the last receiver discards queued `I64` values and wakes blocked senders;
@@ -124,6 +126,14 @@ on `Value`. Both calls retain the endpoint. Runtime tests exercise pending
 sends and receives across scheduler wakeups. Cranelift-generated poll code
 uses these shims, returning to the scheduler on `Pending` and retrying after
 a wake.
+The native ABI also exports `reply_new_i64`, `reply_complete_i64`,
+`reply_receive_i64`, `reply_close_i64`, and `spawn_poll_caps` calls. The last
+accepts typed descriptors for channel handles, reply rights, and reply
+receivers, and commits all transfers together. Synthetic native poll tests
+cover pair creation, one-shot completion, cancellation, resource failure,
+a parked reply receiver waking after a cross-task transfer, and native spawn
+success and task-limit rejection. Source/Core lowering does not yet use these
+operations, so these tests do not establish source-level `ReplyTo` support.
 The C ABI creation call publishes both output tokens only on
 success; native generated code loads them only on that edge. Standalone builds
 link `libphoebe_runtime.a`. Buck2 supplies it through the CLI's resource map;

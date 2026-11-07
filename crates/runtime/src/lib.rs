@@ -32,11 +32,31 @@ impl ReplyTo {
     pub fn token(&self) -> ReplyToken {
         self.token
     }
+
+    pub fn transfer(&self) -> CapabilityTransfer {
+        CapabilityTransfer::ReplyRight(self.token)
+    }
 }
 
 #[derive(Debug)]
 pub struct ReplyReceiver {
     slot: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReplyReceiverToken(usize);
+
+impl ReplyReceiver {
+    pub fn transfer(&self) -> CapabilityTransfer {
+        CapabilityTransfer::ReplyReceiver(ReplyReceiverToken(self.slot))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapabilityTransfer {
+    Channel(Token),
+    ReplyRight(ReplyToken),
+    ReplyReceiver(ReplyReceiverToken),
 }
 
 #[derive(Debug)]
@@ -89,6 +109,8 @@ impl std::error::Error for ResourceError {}
 /// A synchronous native call borrows the current task context for its duration.
 mod native;
 pub use native::*;
+mod native_reply;
+pub use native_reply::*;
 
 #[derive(Debug)]
 pub enum RequestReceiveResult {
@@ -1202,6 +1224,27 @@ impl Context<'_> {
         child: T,
         transfers: &[Token],
     ) -> Result<TaskId, OwnedError<T>> {
+        self.spawn_with_transfers(
+            child,
+            transfers.iter().copied().map(CapabilityTransfer::Channel),
+        )
+    }
+
+    /// Atomically transfer checked channel and reply capabilities to a child.
+    /// The original frame and all rights stay with the caller on an error.
+    pub fn spawn_capabilities_owned<T: Task + 'static>(
+        &mut self,
+        child: T,
+        transfers: &[CapabilityTransfer],
+    ) -> Result<TaskId, OwnedError<T>> {
+        self.spawn_with_transfers(child, transfers.iter().copied())
+    }
+
+    fn spawn_with_transfers<T: Task + 'static>(
+        &mut self,
+        child: T,
+        transfers: impl Iterator<Item = CapabilityTransfer> + Clone,
+    ) -> Result<TaskId, OwnedError<T>> {
         if self.scheduler.tasks.len() >= self.scheduler.max_tasks {
             return Err(OwnedError {
                 message: "scope task limit exceeded".into(),
@@ -1209,22 +1252,32 @@ impl Context<'_> {
                 value: child,
             });
         }
-        for (index, token) in transfers.iter().enumerate() {
-            if transfers[..index].contains(token) {
+        for (index, transfer) in transfers.clone().enumerate() {
+            if transfers.clone().take(index).any(|prior| prior == transfer) {
                 return Err(OwnedError {
                     message: "duplicate capability transfer".into(),
                     resource_error: None,
                     value: child,
                 });
             }
-            let Some(handle) = self.scheduler.handles.get(token.0) else {
-                return Err(OwnedError {
-                    message: "invalid capability token".into(),
-                    resource_error: None,
-                    value: child,
-                });
+            let valid = match transfer {
+                CapabilityTransfer::Channel(token) => self
+                    .scheduler
+                    .handles
+                    .get(token.0)
+                    .is_some_and(|handle| handle.owner == Some(self.task)),
+                CapabilityTransfer::ReplyRight(token) => self
+                    .scheduler
+                    .reply_rights
+                    .get(token.0)
+                    .is_some_and(|right| right.owner == ReplyOwner::Task(self.task)),
+                CapabilityTransfer::ReplyReceiver(token) => self
+                    .scheduler
+                    .reply_slots
+                    .get(token.0)
+                    .is_some_and(|reply| reply.receiver == Some(self.task)),
             };
-            if handle.owner != Some(self.task) {
+            if !valid {
                 return Err(OwnedError {
                     message: "capability is closed or owned by another task".into(),
                     resource_error: None,
@@ -1251,8 +1304,18 @@ impl Context<'_> {
             body: Some(Box::new(child)),
             state: TaskState::Runnable,
         });
-        for token in transfers {
-            self.scheduler.handles[token.0].owner = Some(id);
+        for transfer in transfers {
+            match transfer {
+                CapabilityTransfer::Channel(token) => {
+                    self.scheduler.handles[token.0].owner = Some(id);
+                }
+                CapabilityTransfer::ReplyRight(token) => {
+                    self.scheduler.reply_rights[token.0].owner = ReplyOwner::Task(id);
+                }
+                CapabilityTransfer::ReplyReceiver(token) => {
+                    self.scheduler.reply_slots[token.0].receiver = Some(id);
+                }
+            }
         }
         self.scheduler.ready.push_back(id);
         self.scheduler.stats.tasks_created += 1;
