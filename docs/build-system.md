@@ -32,7 +32,10 @@ root:
 
 ```sh
 buck2 build //:phoebe
+buck2 build //:phoebe_dist
 buck2 run //:phoebe -- run examples/hello.phoebe
+buck2 build //crates/runtime:runtime_archive
+buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 buck2 build //crates/core:phoebe_core
 buck2 test //crates/core:unit_tests //crates/runtime:unit_tests //crates/native:unit_tests
 buck2 test //:source_traffic_tests
@@ -67,10 +70,16 @@ Cargo remains the source of truth for dependency resolution and test running:
 ```sh
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cargo build --lib
+cargo build -p phoebe-runtime --lib
 ```
 
-The CLI's standalone executable path links a Cargo-produced `libphoebe.a`
-runtime archive. A local Buck-built compiler can build that archive from a
-repository checkout. Packaging the runtime archive as a Buck2 target is
-future work.
+The CLI's standalone executable path links `libphoebe_runtime.a`. Buck2's
+`//crates/runtime:runtime_archive` target builds it from the dependency-free
+runtime crate and attaches it as a relocatable resource to `//:phoebe`.
+The compiler resolves Buck2's resource map at runtime, so a Buck2 build does
+not invoke Cargo to build standalone programs. Cargo builds the same archive
+for its development CLI and tests.
+`//:phoebe_dist` copies the compiler and archive into one directory for
+relocation or packaging. A relocated copy built a standalone channel exchange
+in a local smoke test; the archive remains a host-specific artifact built by
+the current system Rust toolchain.

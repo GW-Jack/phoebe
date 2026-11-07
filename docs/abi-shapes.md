@@ -22,7 +22,7 @@ functions keep their existing signatures. Calls forward the pointer only when
 the callee requires it. `channel.new.i64` calls a C ABI shim with the context, capacity,
 and two output slots. It branches on the returned status and loads the slots
 only on success. `close.handle` calls a separate shim. Standalone builds link
-the same shim and scheduler from `libphoebe.a`, so this Core slice has one
+the same shim and scheduler from `libphoebe_runtime.a`, so this Core slice has one
 runtime implementation across interpreter, JIT, and object code.
 
 The runtime archive now exports versioned scalar send and receive shims.

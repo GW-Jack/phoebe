@@ -4,3 +4,6 @@ version = "0.0.1"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib", "staticlib"]

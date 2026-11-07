@@ -112,8 +112,9 @@ uses these shims, returning to the scheduler on `Pending` and retrying after
 a wake.
 The C ABI creation call publishes both output tokens only on
 success; native generated code loads them only on that edge. Standalone builds
-link `libphoebe.a` beside the compiler binary. A development build can produce
-the archive once with `cargo build --lib` when it is missing; a distributed
+link `libphoebe_runtime.a`. Buck2 supplies it through the CLI's resource map;
+a Cargo development build can produce it with
+`cargo build -p phoebe-runtime --lib` when it is missing. A distributed
 compiler must include the matching archive.
 The exported symbols carry a `phoebe_rt_v1_` prefix, so an archive with a
 different ABI version fails at link time.

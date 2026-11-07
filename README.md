@@ -13,9 +13,9 @@ interpreter, Cranelift JIT, and standalone executables. All three paths run
 the source `spawn`, `send`, and `receive` exchange with retained frames and
 bounded channels. Retained native code still supports a constrained Core
 subset; `docs/native-frames.md` describes its limits.
-Standalone channel builds link
-the `libphoebe.a` runtime archive produced by `cargo build --lib`; a packaged
-compiler must ship the archive beside its executable.
+Standalone channel builds link the `libphoebe_runtime.a` archive. Buck2
+builds and attaches it to the CLI; Cargo can produce it from the runtime
+crate for local development. A packaged compiler must include the archive.
 
 ## Current milestone
 
@@ -76,13 +76,14 @@ pinning, and development commands. Build and run with Buck2:
 ```sh
 buck2 build //:phoebe
 buck2 run //:phoebe -- run examples/hello.phoebe
+buck2 build //:phoebe_dist
 ```
 
 Cargo remains available for tests and standalone runtime archives:
 
 ```sh
 cargo test --workspace
-cargo build --lib
+cargo build -p phoebe-runtime --lib
 ```
 
 `docs/decisions/0001-compiler-principles.md` records the accepted compiler

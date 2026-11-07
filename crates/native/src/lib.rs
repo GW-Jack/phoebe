@@ -450,25 +450,49 @@ fn find_runtime_archive() -> Result<PathBuf, String> {
     let Some(directory) = executable.parent() else {
         return Err("cannot locate compiler directory".into());
     };
-    let compiler_time = executable
-        .metadata()
-        .and_then(|metadata| metadata.modified())
-        .ok();
     let test_profile = if directory.file_name().is_some_and(|name| name == "deps") {
         directory.parent()
     } else {
         None
     };
     for directory in [Some(directory), test_profile].into_iter().flatten() {
-        let archive = directory.join("libphoebe.a");
-        let archive_time = archive
-            .metadata()
-            .and_then(|metadata| metadata.modified())
-            .ok();
+        let archive = directory.join("libphoebe_runtime.a");
+        let cargo_debug = directory.file_name().is_some_and(|name| name == "debug");
         let current = !cfg!(debug_assertions)
-            || matches!((archive_time, compiler_time), (Some(archive), Some(compiler)) if archive >= compiler);
+            || !cargo_debug
+            || matches!(
+                (
+                    archive.metadata().and_then(|metadata| metadata.modified()),
+                    executable.metadata().and_then(|metadata| metadata.modified())
+                ),
+                (Ok(archive), Ok(compiler)) if archive >= compiler
+            );
         if archive.is_file() && current {
             return Ok(archive);
+        }
+    }
+    let resource_map = executable.with_file_name(format!(
+        "{}.resources.json",
+        executable
+            .file_name()
+            .ok_or("compiler executable has no file name")?
+            .to_string_lossy()
+    ));
+    if let Ok(contents) = fs::read_to_string(&resource_map) {
+        // The Buck target declares one resource under this fixed key. Buck
+        // writes its location relative to the executable's resource map.
+        let prefix = "{\"libphoebe_runtime.a\":\"";
+        if let Some(path) = contents
+            .strip_prefix(prefix)
+            .and_then(|remaining| remaining.strip_suffix("\"}"))
+            && !path.contains('"')
+            && !path.contains('\\')
+            && !Path::new(path).is_absolute()
+        {
+            let archive = directory.join(path);
+            if archive.is_file() {
+                return Ok(archive);
+            }
         }
     }
     if cfg!(debug_assertions) {
@@ -478,7 +502,7 @@ fn find_runtime_archive() -> Result<PathBuf, String> {
             && let Some(target_dir) = profile_dir.parent()
         {
             let built = Command::new("cargo")
-                .args(["build", "--lib", "--target-dir"])
+                .args(["build", "-p", "phoebe-runtime", "--lib", "--target-dir"])
                 .arg(target_dir)
                 .current_dir(
                     option_env!("CARGO_MANIFEST_DIR")
@@ -493,38 +517,13 @@ fn find_runtime_archive() -> Result<PathBuf, String> {
                     String::from_utf8_lossy(&built.stderr)
                 ));
             }
-            let archive = profile_dir.join("libphoebe.a");
+            let archive = profile_dir.join("libphoebe_runtime.a");
             if archive.is_file() {
                 return Ok(archive);
             }
         }
     }
-    // A Buck2-built compiler lives under buck-out rather than target/debug.
-    // During local development, build the Cargo runtime archive from the
-    // repository checkout when the compiler is invoked there.
-    if cfg!(debug_assertions) {
-        let root = option_env!("CARGO_MANIFEST_DIR")
-            .map(|dir| Path::new(dir).join("../.."))
-            .unwrap_or(std::env::current_dir().map_err(|error| error.to_string())?);
-        if root.join("crates/runtime/Cargo.toml").is_file() {
-            let built = Command::new("cargo")
-                .args(["build", "--lib"])
-                .current_dir(&root)
-                .output()
-                .map_err(|error| format!("failed to build runtime archive: {error}"))?;
-            if !built.status.success() {
-                return Err(format!(
-                    "failed to build runtime archive: {}",
-                    String::from_utf8_lossy(&built.stderr)
-                ));
-            }
-            let archive = root.join("target/debug/libphoebe.a");
-            if archive.is_file() {
-                return Ok(archive);
-            }
-        }
-    }
-    Err("runtime archive libphoebe.a was not found beside the compiler".into())
+    Err("runtime archive libphoebe_runtime.a was not found beside the compiler".into())
 }
 
 mod codegen;

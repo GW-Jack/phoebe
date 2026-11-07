@@ -13,3 +13,13 @@ rust_test(
     srcs = glob(["src/**/*.rs"]),
     edition = "2024",
 )
+
+# The C ABI has no external Rust dependencies. Build its archive without
+# linking the compiler or using Cargo from a Buck-built compiler.
+genrule(
+    name = "runtime_archive",
+    srcs = glob(["src/**/*.rs"]),
+    out = "libphoebe_runtime.a",
+    cmd = "rustc --crate-name phoebe_runtime --edition=2024 --crate-type=staticlib src/lib.rs -o \"$OUT\"",
+    visibility = ["PUBLIC"],
+)

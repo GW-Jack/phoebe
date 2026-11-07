@@ -22,6 +22,13 @@ rust_binary(
     srcs = ["src/main.rs"],
     edition = "2024",
     deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+genrule(
+    name = "phoebe_dist",
+    out = "phoebe_dist",
+    cmd = "mkdir -p \"$OUT\" && cp \"$(location :phoebe)\" \"$OUT/phoebe\" && cp \"$(location //crates/runtime:runtime_archive)\" \"$OUT/libphoebe_runtime.a\"",
 )
 
 rust_test(
@@ -33,6 +40,7 @@ rust_test(
     ],
     edition = "2024",
     deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
 )
 
 rust_test(
@@ -44,4 +52,5 @@ rust_test(
     ],
     edition = "2024",
     deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
 )
