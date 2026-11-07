@@ -3,7 +3,7 @@ use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::io::Write;
 use std::mem;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::task::Poll;
 
@@ -95,11 +95,11 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
     let context_functions = runtime_context_functions(program);
     if context_functions.iter().any(|needed| *needed) {
         jit.symbol(
-            "phoebe_channel_new_i64",
+            "phoebe_rt_v1_channel_new_i64",
             runtime::phoebe_channel_new_i64 as *const u8,
         );
         jit.symbol(
-            "phoebe_close_handle_i64",
+            "phoebe_rt_v1_close_handle_i64",
             runtime::phoebe_close_handle_i64 as *const u8,
         );
     }
@@ -222,9 +222,6 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
 pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
     core::verify(program)?;
     let context_functions = runtime_context_functions(program);
-    if context_functions.iter().any(|needed| *needed) {
-        return Err("standalone channel runtime linking is not implemented".into());
-    }
     let (_, entry) = program
         .function("main")
         .ok_or("standalone executable requires `fn main() -> I64`")?;
@@ -277,19 +274,36 @@ pub fn clif(program: &Program) -> Result<String, String> {
 
 pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> {
     let object = emit_object(program)?;
+    let runtime_archive = if runtime_context_functions(program)
+        .iter()
+        .any(|needed| *needed)
+    {
+        Some(find_runtime_archive()?)
+    } else {
+        None
+    };
     let object_path = output.with_extension(format!("phoebe-{}.o", std::process::id()));
     fs::write(&object_path, object).map_err(|e| format!("{}: {e}", object_path.display()))?;
     let linked = (|| -> Result<(), String> {
-        let mut child = Command::new("cc")
+        let mut command = Command::new("cc");
+        command
             .args(["-x", "c", "-", "-x", "none"])
-            .arg(&object_path)
+            .arg(&object_path);
+        if let Some(archive) = &runtime_archive {
+            command.arg(archive);
+        }
+        let mut child = command
             .arg("-o")
             .arg(output)
             .stdin(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("failed to launch C linker: {e}"))?;
-        let wrapper = b"#include <stdio.h>\nextern long long phoebe_main(void);\nint main(void) { printf(\"%lld\\n\", phoebe_main()); return 0; }\n";
+        let wrapper: &[u8] = if runtime_archive.is_some() {
+            b"#include <stdio.h>\nextern long long phoebe_main(void *);\nextern int phoebe_rt_v1_main(long long (*)(void *), long long *);\nint main(void) { long long value = 0; if (phoebe_rt_v1_main(phoebe_main, &value)) { fputs(\"phoebe runtime failed\\n\", stderr); return 1; } printf(\"%lld\\n\", value); return 0; }\n"
+        } else {
+            b"#include <stdio.h>\nextern long long phoebe_main(void);\nint main(void) { printf(\"%lld\\n\", phoebe_main()); return 0; }\n"
+        };
         child
             .stdin
             .take()
@@ -307,6 +321,66 @@ pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> 
     })();
     let _ = fs::remove_file(&object_path);
     linked
+}
+
+fn find_runtime_archive() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("PHOEBE_RUNTIME_LIB") {
+        let path = PathBuf::from(path);
+        return path
+            .is_file()
+            .then_some(path)
+            .ok_or_else(|| "PHOEBE_RUNTIME_LIB does not name a file".into());
+    }
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let Some(directory) = executable.parent() else {
+        return Err("cannot locate compiler directory".into());
+    };
+    let compiler_time = executable
+        .metadata()
+        .and_then(|metadata| metadata.modified())
+        .ok();
+    let test_profile = if directory.file_name().is_some_and(|name| name == "deps") {
+        directory.parent()
+    } else {
+        None
+    };
+    for directory in [Some(directory), test_profile].into_iter().flatten() {
+        let archive = directory.join("libphoebe.a");
+        let archive_time = archive
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok();
+        let current = !cfg!(debug_assertions)
+            || matches!((archive_time, compiler_time), (Some(archive), Some(compiler)) if archive >= compiler);
+        if archive.is_file() && current {
+            return Ok(archive);
+        }
+    }
+    if cfg!(debug_assertions) {
+        let profile_dir = test_profile.or(Some(directory));
+        if let Some(profile_dir) = profile_dir
+            && profile_dir.file_name().is_some_and(|name| name == "debug")
+            && let Some(target_dir) = profile_dir.parent()
+        {
+            let built = Command::new("cargo")
+                .args(["build", "--lib", "--target-dir"])
+                .arg(target_dir)
+                .current_dir(env!("CARGO_MANIFEST_DIR"))
+                .output()
+                .map_err(|error| format!("failed to build runtime archive: {error}"))?;
+            if !built.status.success() {
+                return Err(format!(
+                    "failed to build runtime archive: {}",
+                    String::from_utf8_lossy(&built.stderr)
+                ));
+            }
+            let archive = profile_dir.join("libphoebe.a");
+            if archive.is_file() {
+                return Ok(archive);
+            }
+        }
+    }
+    Err("runtime archive libphoebe.a was not found beside the compiler".into())
 }
 
 struct AbiShapes {
@@ -373,7 +447,11 @@ fn compile_functions<M: Module>(
         ]);
         create_signature.returns.push(AbiParam::new(types::I64));
         let create = module
-            .declare_function("phoebe_channel_new_i64", Linkage::Import, &create_signature)
+            .declare_function(
+                "phoebe_rt_v1_channel_new_i64",
+                Linkage::Import,
+                &create_signature,
+            )
             .map_err(|error| error.to_string())?;
         let mut close_signature = module.make_signature();
         close_signature.params.extend([
@@ -383,7 +461,11 @@ fn compile_functions<M: Module>(
         ]);
         close_signature.returns.push(AbiParam::new(types::I64));
         let close = module
-            .declare_function("phoebe_close_handle_i64", Linkage::Import, &close_signature)
+            .declare_function(
+                "phoebe_rt_v1_close_handle_i64",
+                Linkage::Import,
+                &close_signature,
+            )
             .map_err(|error| error.to_string())?;
         Some((create, close))
     } else {

@@ -21,8 +21,9 @@ receive a hidden pointer to the current scoped runtime context. Unrelated
 functions keep their existing signatures. Calls forward the pointer only when
 the callee requires it. `channel.new.i64` calls a C ABI shim with the context, capacity,
 and two output slots. It branches on the returned status and loads the slots
-only on success. `close.handle` calls a separate shim. This is a JIT-only
-bridge for now; standalone object linking rejects programs using it.
+only on success. `close.handle` calls a separate shim. Standalone builds link
+the same shim and scheduler from `libphoebe.a`, so this Core slice has one
+runtime implementation across interpreter, JIT, and object code.
 
 For a product, `product` gathers existing SSA components and `field` selects
 the complete component range of one field. Neither operation creates a native

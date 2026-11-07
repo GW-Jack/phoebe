@@ -9,6 +9,11 @@ for 0.0.1.
 An isolated cooperative runtime kernel now exercises scope-owned task frames,
 bounded `I64` and request channels, and one-shot `ReplyTo<I64>` rights;
 `docs/runtime-kernel.md` states its boundary.
+Hand-built checked Core programs can create and close scalar channels in the
+interpreter, Cranelift JIT, and standalone executables. Source syntax for
+those operations is still under development. Standalone channel builds link
+the `libphoebe.a` runtime archive produced by `cargo build --lib`; a packaged
+compiler must ship the archive beside its executable.
 
 ## Current milestone
 

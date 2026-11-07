@@ -6,6 +6,7 @@ use phoebe::core::{
 use phoebe::native;
 use phoebe::runtime::ScopeLimits;
 use phoebe::syntax::ParamMode;
+use std::process::Command;
 
 fn span() -> Span {
     Span { start: 0, end: 0 }
@@ -105,11 +106,29 @@ fn checked_channel_creation_has_two_success_rights_and_a_typed_failure() {
         0
     );
     assert_eq!(native::run(&zero_capacity, "main", &[]).unwrap(), 0);
+    assert!(!native::emit_object(&program).unwrap().is_empty());
+    let path = std::env::temp_dir().join(format!("phoebe-channel-aot-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let result = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
     assert!(
-        native::emit_object(&program)
-            .unwrap_err()
-            .contains("linking")
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
     );
+    assert_eq!(result.stdout, b"7\n");
+
+    let failure_path =
+        std::env::temp_dir().join(format!("phoebe-channel-failure-aot-{}", std::process::id()));
+    native::build_executable(&zero_capacity, &failure_path).unwrap();
+    let failure = Command::new(&failure_path).output().unwrap();
+    std::fs::remove_file(&failure_path).unwrap();
+    assert!(
+        failure.status.success(),
+        "{}",
+        String::from_utf8_lossy(&failure.stderr)
+    );
+    assert_eq!(failure.stdout, b"0\n");
 }
 
 #[test]
@@ -244,4 +263,14 @@ fn runtime_context_propagates_to_callers_only() {
     let jit = native::compile_jit(&program, "main").unwrap();
     assert!(jit.uses_runtime_context());
     assert_eq!(jit.run(&[]).unwrap(), 7);
+    let path = std::env::temp_dir().join(format!("phoebe-channel-call-aot-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let result = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(result.stdout, b"7\n");
 }

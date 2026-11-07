@@ -6,6 +6,9 @@ rust-version = "1.95"
 description = "Experimental Phoebe language compiler"
 license = "Apache-2.0"
 
+[lib]
+crate-type = ["rlib", "staticlib"]
+
 [dependencies]
 cranelift-codegen = "=0.135.2"
 cranelift-frontend = "=0.135.2"

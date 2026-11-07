@@ -98,7 +98,7 @@ fn resource_code(error: ResourceError) -> i64 {
 /// `bridge` must point to a live `NativeCallContext` with a uniquely borrowed
 /// task `Context` and a live fault flag. Both output pointers must be distinct,
 /// aligned, and writable for the duration of the call.
-#[unsafe(no_mangle)]
+#[unsafe(export_name = "phoebe_rt_v1_channel_new_i64")]
 pub unsafe extern "C" fn phoebe_channel_new_i64(
     bridge: *mut NativeCallContext,
     capacity: i64,
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn phoebe_channel_new_i64(
 ///
 /// `bridge` must satisfy the same lifetime and exclusive-borrow contract as
 /// `phoebe_channel_new_i64`; `token` and `kind` must come from checked Core IR.
-#[unsafe(no_mangle)]
+#[unsafe(export_name = "phoebe_rt_v1_close_handle_i64")]
 pub unsafe extern "C" fn phoebe_close_handle_i64(
     bridge: *mut NativeCallContext,
     token: i64,
@@ -169,6 +169,56 @@ pub unsafe extern "C" fn phoebe_close_handle_i64(
             }
             255
         }
+    }
+}
+
+struct StandaloneRootTask {
+    entry: extern "C" fn(*mut NativeCallContext) -> i64,
+}
+
+impl Task for StandaloneRootTask {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        let mut fault = false;
+        let mut bridge = NativeCallContext {
+            context: context as *mut _ as *mut c_void,
+            fault: &mut fault,
+        };
+        let value = (self.entry)(&mut bridge);
+        if fault {
+            Err("native runtime ABI fault".into())
+        } else {
+            Ok(Poll::Ready(value))
+        }
+    }
+}
+
+/// Run a zero-argument compiled `main` under the default bounded scope.
+///
+/// # Safety
+///
+/// `entry` must be a verified Phoebe function with one hidden runtime-context
+/// pointer and an `I64` return. `result_out` must be aligned and writable.
+#[unsafe(export_name = "phoebe_rt_v1_main")]
+pub unsafe extern "C" fn phoebe_runtime_main(
+    entry: extern "C" fn(*mut NativeCallContext) -> i64,
+    result_out: *mut i64,
+) -> i32 {
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let limits = ScopeLimits::default();
+        let mut scheduler = Scheduler::new(
+            StandaloneRootTask { entry },
+            limits.tasks,
+            limits.channels,
+            limits.replies,
+        )?;
+        scheduler.run()
+    }));
+    match outcome {
+        Ok(Ok(value)) => {
+            unsafe { *result_out = value };
+            0
+        }
+        _ => 1,
     }
 }
 

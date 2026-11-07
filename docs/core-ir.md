@@ -87,6 +87,6 @@ to be closed. This is exercised with hand-built Core programs. The interpreter
 runs creation and close through a one-task scheduler with explicit scope limits,
 including resource-failure edges. `interpret_with_limits` can vary those
 limits; plain `interpret` permits one task and 64 channel creations. Cranelift
-JIT execution uses the same scheduler through a hidden context parameter and
-agrees on the tested success and failure paths. Source lowering and standalone
-runtime linking remain open.
+JIT and standalone object execution use the same scheduler through a hidden
+context parameter and agree on the tested success and failure paths. Source
+lowering, send/receive, and task suspension remain open.
