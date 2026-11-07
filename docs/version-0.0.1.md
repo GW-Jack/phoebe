@@ -123,16 +123,15 @@ the integration boundary.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
 retry across both operations. Generated send and receive leaves use retained
-task frames. The normal native JIT path now uses generated call continuations
-and spawned poll children for the source exchange; standalone object emission
-for retained functions remains open.
+task frames. The native JIT and object paths use the same generated call
+continuations and spawned poll children for the source exchange.
 Core now checks scalar send/receive terminators and derives live-right maps
 for retry suspension. Its interpreter retains frames and places across a
 pending operation, and executes buffered scalar traffic. Core `spawn` now
 transfers endpoint and closed nominal arguments only on success. A two-task
 Core program parks a parent receiver, wakes it from a child send, and handles
 a task-limit failure without losing the parent's rights. Native retained
-frames now execute the source exchange in the JIT. A Rust host test also spawns a
+frames now execute the source exchange in the JIT and standalone object path. A Rust host test also spawns a
 checked Core receiver that parks, wakes on a send, and returns its value.
 Internal Core calls can transfer an endpoint to a callee that closes it;
 interpreter and JIT executions agree on that synchronous path.
@@ -150,8 +149,9 @@ scheduler. Tests cover value, end, backpressure, and closed-send branches.
 The versioned spawn ABI initializes a generated child frame before committing
 capability transfer; a task-limit test confirms the parent retains its rights.
 Native source channel traffic now runs through the public `run` command,
-including the two-message exchange and its task-limit failure edge. Retained
-functions are not yet available through standalone `build`.
+including the two-message exchange and its task-limit failure edge. The
+standalone `build` path links generated poll objects with the runtime archive;
+executable tests cover the exchange and closed-send/end outcomes.
 The compiler now assigns physical word ranges from the existing flattened
 ABI shapes. A suspendable function reserves its result, entry parameters,
 and values and places live across a pending operation. Entry parameters
@@ -159,7 +159,7 @@ already in the spill set share their slots. Stable per-function resume IDs
 identify the retry site. The poll generator consumes these ranges for channel
 retries and call continuations. A single reusable call-result area holds the
 widest child result in a frame. General retained code generation still needs
-places, borrowed parameters, and standalone object output.
+places and borrowed parameters.
 The runtime has a tested same-task native call mailbox and child frame stack;
 generated Cranelift calls use that continuation ABI.
 

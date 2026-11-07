@@ -4,8 +4,9 @@ Status: the spill analysis and `phoebe frames` inspection command run on
 verified Core. The runtime can allocate and poll stable native frames through
 the versioned v1 ABI. Generated Cranelift poll functions handle scalar channel
 retries, same-task calls into suspendable functions, channel creation, and
-spawned poll children. The public `run` path selects this backend when its
-entry can suspend; standalone `build` still needs object emission for it.
+spawned poll children. The public `run` and standalone `build` paths select
+this backend when `main` can suspend. The object path uses the same lowering
+as the JIT; standalone exchange and closed-send tests execute linked binaries.
 The analysis is tested, not formally proved.
 
 ## Suspension boundary
@@ -76,7 +77,8 @@ the parent. Generated Cranelift calls now use this mailbox, including a
 flattened two-word `Result` across a suspended call.
 The standalone entry point
 `phoebe_rt_v1_main_poll` runs a zero-argument poll function under a bounded
-scope. A synthetic poll test yields and resumes at the same frame address;
+scope. The object builder exports `phoebe_main_poll` and links the runtime
+archive through this entry point. A synthetic poll test yields and resumes at the same frame address;
 another parks in the versioned receive ABI, wakes from a transferred sender,
 retries receive, and closes its endpoint.
 

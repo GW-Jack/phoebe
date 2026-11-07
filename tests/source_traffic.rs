@@ -1,5 +1,19 @@
 use phoebe::runtime::{NativePollTask, Scheduler, ScopeLimits};
 use phoebe::{core, native, syntax};
+use std::process::Command;
+
+fn assert_standalone(program: &core::Program, name: &str, expected: i64) {
+    let path = std::env::temp_dir().join(format!("phoebe-{name}-{}", std::process::id()));
+    native::build_executable(program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, format!("{expected}\n").as_bytes());
+}
 
 #[test]
 fn source_two_message_exchange_parks_and_wakes() {
@@ -23,6 +37,7 @@ fn source_two_message_exchange_parks_and_wakes() {
         42
     );
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "channel-exchange", 42);
     assert_eq!(
         native::run_with_limits(
             &program,
@@ -108,6 +123,7 @@ fn main() -> I64 {
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
     assert_eq!(program.interpret("main", &[]).unwrap(), 10);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 10);
+    assert_standalone(&program, "closed-send", 10);
 }
 
 #[test]

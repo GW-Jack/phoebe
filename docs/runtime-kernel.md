@@ -2,11 +2,11 @@
 
 Status: executable Rust kernel for one scope, bounded `I64` and request
 channels, and one-shot `ReplyTo<I64>`. Checked Core programs interpret
-channel creation, traffic, endpoint close, and task spawn through it. Cranelift JIT and standalone
-object code call the same kernel for channel creation and close through a C ABI shim.
+channel creation, traffic, endpoint close, and task spawn through it. Cranelift
+JIT and standalone object code call the same kernel through a C ABI shim.
 Source syntax covers fallible `I64` channel creation, explicit endpoint
-close, interpreter task spawn, and `I64` send/receive outcomes. Compiler-generated native continuations and general typed messages are not
-implemented yet.
+close, task spawn, and `I64` send/receive outcomes. Native call continuations
+run in the supported poll subset; general typed messages remain open.
 
 `Scheduler` owns bounded tables of task records, channels, and reply slots.
 The caller supplies all three limits. Each task has
@@ -107,9 +107,9 @@ an `I64` reply. The native ABI also exports `phoebe_rt_v1_send_i64` and
 `phoebe_rt_v1_receive_i64`. Send reports `Sent`, `Pending`, or `Closed`;
 receive reports `Value`, `Pending`, or `End` and writes its output word only
 on `Value`. Both calls retain the endpoint. Runtime tests exercise pending
-sends and receives across scheduler wakeups. Cranelift-generated code does
-not call these shims yet: it needs a retained frame and a return to the
-scheduler on `Pending`, followed by a retry on wake.
+sends and receives across scheduler wakeups. Cranelift-generated poll code
+uses these shims, returning to the scheduler on `Pending` and retrying after
+a wake.
 The C ABI creation call publishes both output tokens only on
 success; native generated code loads them only on that edge. Standalone builds
 link `libphoebe.a` beside the compiler binary. A development build can produce

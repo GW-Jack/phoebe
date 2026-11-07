@@ -240,16 +240,24 @@ pub fn run_with_limits(
 }
 
 pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
+    emit_object_with_poll_layout(program).map(|(object, _)| object)
+}
+
+fn emit_object_with_poll_layout(program: &Program) -> Result<(Vec<u8>, Option<usize>), String> {
     core::verify(program)?;
     let context_functions = program.runtime_context_functions();
-    let (_, entry) = program
+    let (main, entry) = program
         .function("main")
         .ok_or("standalone executable requires `fn main() -> I64`")?;
-    if !entry.param_modes.is_empty() {
+    if !entry.blocks[0].params.is_empty() {
         return Err("standalone `main` must take no parameters".into());
     }
     if entry.return_type != Type::I64 {
         return Err("standalone `main` must return I64".into());
+    }
+    if frame_layout::suspendable_functions(program)?[main.0] {
+        let (object, words) = poll::emit_poll_object(program)?;
+        return Ok((object, Some(words)));
     }
     let mut flags = settings::builder();
     flags
@@ -264,7 +272,7 @@ pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
         ObjectBuilder::new(isa, "phoebe", default_libcall_names()).map_err(|e| e.to_string())?;
     let mut module = ObjectModule::new(builder);
     compile_functions(&mut module, program, &context_functions, true, None)?;
-    module.finish().emit().map_err(|e| e.to_string())
+    Ok((module.finish().emit().map_err(|e| e.to_string())?, None))
 }
 
 /// Print the pre-legalization Cranelift IR that Phoebe submits for each function.
@@ -298,11 +306,12 @@ pub fn clif(program: &Program) -> Result<String, String> {
 }
 
 pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> {
-    let object = emit_object(program)?;
-    let runtime_archive = if program
-        .runtime_context_functions()
-        .iter()
-        .any(|needed| *needed)
+    let (object, poll_words) = emit_object_with_poll_layout(program)?;
+    let runtime_archive = if poll_words.is_some()
+        || program
+            .runtime_context_functions()
+            .iter()
+            .any(|needed| *needed)
     {
         Some(find_runtime_archive()?)
     } else {
@@ -325,16 +334,20 @@ pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> 
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("failed to launch C linker: {e}"))?;
-        let wrapper: &[u8] = if runtime_archive.is_some() {
-            b"#include <stdio.h>\nextern long long phoebe_main(void *);\nextern int phoebe_rt_v1_main(long long (*)(void *), long long *);\nint main(void) { long long value = 0; if (phoebe_rt_v1_main(phoebe_main, &value)) { fputs(\"phoebe runtime failed\\n\", stderr); return 1; } printf(\"%lld\\n\", value); return 0; }\n"
+        let wrapper = if let Some(words) = poll_words {
+            format!(
+                "#include <stdio.h>\nextern long long phoebe_main_poll(void *, long long *);\nextern int phoebe_rt_v1_main_poll(long long (*)(void *, long long *), long long, long long *);\nint main(void) {{ long long value = 0; if (phoebe_rt_v1_main_poll(phoebe_main_poll, {words}, &value)) {{ fputs(\"phoebe runtime failed\\n\", stderr); return 1; }} printf(\"%lld\\n\", value); return 0; }}\n"
+            )
+        } else if runtime_archive.is_some() {
+            "#include <stdio.h>\nextern long long phoebe_main(void *);\nextern int phoebe_rt_v1_main(long long (*)(void *), long long *);\nint main(void) { long long value = 0; if (phoebe_rt_v1_main(phoebe_main, &value)) { fputs(\"phoebe runtime failed\\n\", stderr); return 1; } printf(\"%lld\\n\", value); return 0; }\n".to_owned()
         } else {
-            b"#include <stdio.h>\nextern long long phoebe_main(void);\nint main(void) { printf(\"%lld\\n\", phoebe_main()); return 0; }\n"
+            "#include <stdio.h>\nextern long long phoebe_main(void);\nint main(void) { printf(\"%lld\\n\", phoebe_main()); return 0; }\n".to_owned()
         };
         child
             .stdin
             .take()
             .expect("piped stdin")
-            .write_all(wrapper)
+            .write_all(wrapper.as_bytes())
             .map_err(|e| format!("failed to pass entry wrapper to linker: {e}"))?;
         let result = child.wait_with_output().map_err(|e| e.to_string())?;
         if !result.status.success() {

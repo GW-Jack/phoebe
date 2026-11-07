@@ -39,6 +39,75 @@ pub fn compile_poll_leaf_jit(program: &Program, name: &str) -> Result<PollLeafEx
 /// Compile the reachable retained-call graph from an I64 task entry.
 /// Unsupported operations are rejected before any JIT definition is published.
 pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable, String> {
+    let mut flags = settings::builder();
+    flags
+        .set("use_colocated_libcalls", "false")
+        .map_err(|e| e.to_string())?;
+    flags.set("is_pic", "false").map_err(|e| e.to_string())?;
+    let isa = native_builder()
+        .map_err(|e| format!("unsupported native host: {e}"))?
+        .finish(settings::Flags::new(flags))
+        .map_err(|e| e.to_string())?;
+    let mut jit = JITBuilder::with_isa(isa, default_libcall_names());
+    jit.symbol(
+        "phoebe_rt_v1_receive_i64",
+        runtime::phoebe_receive_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_send_i64",
+        runtime::phoebe_send_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_close_handle_i64",
+        runtime::phoebe_close_handle_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_call_poll",
+        runtime::phoebe_call_poll as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_channel_new_i64",
+        runtime::phoebe_channel_new_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_spawn_poll",
+        runtime::phoebe_spawn_poll as *const u8,
+    );
+    let mut module = JITModule::new(jit);
+    let (entry, layout, clif) = compile_poll_module(&mut module, program, name, false)?;
+    module.finalize_definitions().map_err(|e| e.to_string())?;
+    Ok(PollExecutable {
+        module,
+        entry,
+        layout,
+        clif,
+    })
+}
+
+pub(crate) fn emit_poll_object(program: &Program) -> Result<(Vec<u8>, usize), String> {
+    let mut flags = settings::builder();
+    flags
+        .set("use_colocated_libcalls", "false")
+        .map_err(|e| e.to_string())?;
+    flags.set("is_pic", "true").map_err(|e| e.to_string())?;
+    let isa = native_builder()
+        .map_err(|e| format!("unsupported native host: {e}"))?
+        .finish(settings::Flags::new(flags))
+        .map_err(|e| e.to_string())?;
+    let builder =
+        ObjectBuilder::new(isa, "phoebe", default_libcall_names()).map_err(|e| e.to_string())?;
+    let mut module = ObjectModule::new(builder);
+    let (_, layout, _) = compile_poll_module(&mut module, program, "main", true)?;
+    let object = module.finish().emit().map_err(|e| e.to_string())?;
+    Ok((object, layout.total_words))
+}
+
+fn compile_poll_module<M: Module>(
+    module: &mut M,
+    program: &Program,
+    name: &str,
+    exported: bool,
+) -> Result<(FuncId, FrameWords, String), String> {
     core::verify(program)?;
     let (root, entry_function) = program
         .function(name)
@@ -83,41 +152,6 @@ pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable,
         validate_poll_function(&program.functions[id.0], layout, &layouts)?;
     }
     let root_layout = layouts[root.0].clone().expect("validated root frame");
-    let mut flags = settings::builder();
-    flags
-        .set("use_colocated_libcalls", "false")
-        .map_err(|e| e.to_string())?;
-    flags.set("is_pic", "false").map_err(|e| e.to_string())?;
-    let isa = native_builder()
-        .map_err(|e| format!("unsupported native host: {e}"))?
-        .finish(settings::Flags::new(flags))
-        .map_err(|e| e.to_string())?;
-    let mut jit = JITBuilder::with_isa(isa, default_libcall_names());
-    jit.symbol(
-        "phoebe_rt_v1_receive_i64",
-        runtime::phoebe_receive_i64 as *const u8,
-    );
-    jit.symbol(
-        "phoebe_rt_v1_send_i64",
-        runtime::phoebe_send_i64 as *const u8,
-    );
-    jit.symbol(
-        "phoebe_rt_v1_close_handle_i64",
-        runtime::phoebe_close_handle_i64 as *const u8,
-    );
-    jit.symbol(
-        "phoebe_rt_v1_call_poll",
-        runtime::phoebe_call_poll as *const u8,
-    );
-    jit.symbol(
-        "phoebe_rt_v1_channel_new_i64",
-        runtime::phoebe_channel_new_i64 as *const u8,
-    );
-    jit.symbol(
-        "phoebe_rt_v1_spawn_poll",
-        runtime::phoebe_spawn_poll as *const u8,
-    );
-    let mut module = JITModule::new(jit);
     let pointer = module.target_config().pointer_type();
     let shapes = AbiShapes::new(program, pointer);
 
@@ -209,9 +243,14 @@ pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable,
     signature.returns.push(AbiParam::new(types::I64));
     let mut ids = vec![None; program.functions.len()];
     for id in &reachable {
+        let (symbol, linkage) = if exported && *id == root {
+            ("phoebe_main_poll".to_owned(), Linkage::Export)
+        } else {
+            (format!("phoebe_poll_{}", id.0), Linkage::Local)
+        };
         ids[id.0] = Some(
             module
-                .declare_function(&format!("phoebe_poll_{}", id.0), Linkage::Local, &signature)
+                .declare_function(&symbol, linkage, &signature)
                 .map_err(|e| e.to_string())?,
         );
     }
@@ -873,13 +912,7 @@ pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable,
             .map_err(|e| e.to_string())?;
         module.clear_context(&mut ctx);
     }
-    module.finalize_definitions().map_err(|e| e.to_string())?;
-    Ok(PollExecutable {
-        module,
-        entry,
-        layout: root_layout,
-        clif,
-    })
+    Ok((entry, root_layout, clif))
 }
 
 fn word_offset(word: usize) -> i32 {
