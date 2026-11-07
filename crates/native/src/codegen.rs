@@ -233,7 +233,7 @@ pub(super) fn compile_functions<M: Module>(
         };
         let linkage = if suspendable[index] || selected.is_some_and(|set| !set[index]) {
             Linkage::Import
-        } else if export_main && function.name == "main" {
+        } else if export_main && (selected.is_some() || function.name == "main") {
             Linkage::Export
         } else {
             Linkage::Local

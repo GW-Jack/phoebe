@@ -257,7 +257,7 @@ pub fn run_with_limits(
 }
 
 pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
-    let emitted = emit_object_with_poll_layout(program)?;
+    let (emitted, _) = emit_object_with_poll_layout(program, false, None)?;
     if !emitted.children.is_empty() {
         return Err(
             "mixed direct/poll program emits multiple objects; use build_executable".into(),
@@ -291,7 +291,33 @@ fn spawned_poll_children(program: &Program) -> Result<Vec<core::FunctionId>, Str
         .collect())
 }
 
-fn emit_object_with_poll_layout(program: &Program) -> Result<ObjectEmission, String> {
+#[derive(Clone, Default)]
+pub struct NativeBuildSession {
+    global_key: Option<String>,
+    objects: Vec<Option<(String, Vec<u8>)>>,
+}
+
+impl NativeBuildSession {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Build with one object per direct function. Returns the number of
+    /// objects reused from the preceding successful build in this session.
+    pub fn build_executable(&mut self, program: &Program, output: &Path) -> Result<usize, String> {
+        let mut next = self.clone();
+        let (emitted, reused) = emit_object_with_poll_layout(program, true, Some(&mut next))?;
+        link_executable(program, emitted, output)?;
+        *self = next;
+        Ok(reused)
+    }
+}
+
+fn emit_object_with_poll_layout(
+    program: &Program,
+    split_direct: bool,
+    mut cache: Option<&mut NativeBuildSession>,
+) -> Result<(ObjectEmission, usize), String> {
     core::verify(program)?;
     let context_functions = program.runtime_context_functions();
     let (main, entry) = program
@@ -305,11 +331,14 @@ fn emit_object_with_poll_layout(program: &Program) -> Result<ObjectEmission, Str
     }
     if frame_layout::suspendable_functions(program)?[main.0] {
         let (object, words) = poll::emit_poll_object(program, "main", "phoebe_main_poll")?;
-        return Ok(ObjectEmission {
-            root: object,
-            poll_words: Some(words),
-            children: Vec::new(),
-        });
+        return Ok((
+            ObjectEmission {
+                root: object,
+                poll_words: Some(words),
+                children: Vec::new(),
+            },
+            0,
+        ));
     }
     let mut poll_objects = Vec::new();
     for child in spawned_poll_children(program)? {
@@ -320,24 +349,132 @@ fn emit_object_with_poll_layout(program: &Program) -> Result<ObjectEmission, Str
         )?;
         poll_objects.push(object);
     }
-    let mut flags = settings::builder();
-    flags
-        .set("use_colocated_libcalls", "false")
-        .map_err(|e| e.to_string())?;
-    flags.set("is_pic", "true").map_err(|e| e.to_string())?;
-    let isa = native_builder()
-        .map_err(|e| format!("unsupported native host: {e}"))?
-        .finish(settings::Flags::new(flags))
-        .map_err(|e| e.to_string())?;
-    let builder =
-        ObjectBuilder::new(isa, "phoebe", default_libcall_names()).map_err(|e| e.to_string())?;
-    let mut module = ObjectModule::new(builder);
-    compile_functions(&mut module, program, &context_functions, true, None, None)?;
-    Ok(ObjectEmission {
-        root: module.finish().emit().map_err(|e| e.to_string())?,
-        poll_words: None,
-        children: poll_objects,
-    })
+    if !split_direct {
+        let mut flags = settings::builder();
+        flags
+            .set("use_colocated_libcalls", "false")
+            .map_err(|e| e.to_string())?;
+        flags.set("is_pic", "true").map_err(|e| e.to_string())?;
+        let isa = native_builder()
+            .map_err(|e| format!("unsupported native host: {e}"))?
+            .finish(settings::Flags::new(flags))
+            .map_err(|e| e.to_string())?;
+        let builder = ObjectBuilder::new(isa, "phoebe", default_libcall_names())
+            .map_err(|e| e.to_string())?;
+        let mut module = ObjectModule::new(builder);
+        compile_functions(&mut module, program, &context_functions, true, None, None)?;
+        return Ok((
+            ObjectEmission {
+                root: module.finish().emit().map_err(|e| e.to_string())?,
+                poll_words: None,
+                children: poll_objects,
+            },
+            0,
+        ));
+    }
+    let suspendable = frame_layout::suspendable_functions(program)?;
+    let global_key = format!(
+        "{:?}{:?}{:?}{:?}{:?}",
+        program.data,
+        program
+            .functions
+            .iter()
+            .map(|function| (
+                &function.name,
+                &function.param_modes,
+                function.return_type,
+                function.blocks[0]
+                    .params
+                    .iter()
+                    .map(|id| function.value_types[id.0])
+                    .collect::<Vec<_>>(),
+            ))
+            .collect::<Vec<_>>(),
+        context_functions,
+        suspendable,
+        frame_layout::analyze(program)?
+            .into_iter()
+            .filter(|frame| suspendable[frame.function.0])
+            .collect::<Vec<_>>(),
+    );
+    let mut direct_objects = Vec::new();
+    let mut reused = 0;
+    if let Some(session) = cache.as_deref_mut() {
+        if session.global_key.as_ref() != Some(&global_key) {
+            session.objects.clear();
+            session.global_key = Some(global_key);
+        }
+        session
+            .objects
+            .resize_with(program.functions.len(), || None);
+        session.objects.truncate(program.functions.len());
+    }
+    for index in 0..program.functions.len() {
+        if suspendable[index] {
+            continue;
+        }
+        let mut function_key = program.functions[index].clone();
+        for block in &mut function_key.blocks {
+            for instruction in &mut block.instructions {
+                instruction.span.start = 0;
+                instruction.span.end = 0;
+            }
+            if let Terminator::Yield { span, .. } = &mut block.terminator {
+                span.start = 0;
+                span.end = 0;
+            }
+        }
+        let key = format!("{function_key:?}");
+        if let Some((_, object)) = cache
+            .as_deref()
+            .and_then(|session| session.objects[index].as_ref())
+            .filter(|(previous, _)| *previous == key)
+        {
+            direct_objects.push(object.clone());
+            reused += 1;
+            continue;
+        }
+        let mut flags = settings::builder();
+        flags
+            .set("use_colocated_libcalls", "false")
+            .map_err(|e| e.to_string())?;
+        flags.set("is_pic", "true").map_err(|e| e.to_string())?;
+        let isa = native_builder()
+            .map_err(|e| format!("unsupported native host: {e}"))?
+            .finish(settings::Flags::new(flags))
+            .map_err(|e| e.to_string())?;
+        let builder = ObjectBuilder::new(isa, "phoebe", default_libcall_names())
+            .map_err(|e| e.to_string())?;
+        let mut module = ObjectModule::new(builder);
+        let mut selected = vec![false; program.functions.len()];
+        selected[index] = true;
+        compile_functions(
+            &mut module,
+            program,
+            &context_functions,
+            true,
+            None,
+            Some(&selected),
+        )?;
+        let object = module.finish().emit().map_err(|e| e.to_string())?;
+        if let Some(session) = cache.as_deref_mut() {
+            session.objects[index] = Some((key, object.clone()));
+        }
+        direct_objects.push(object);
+    }
+    let root = direct_objects
+        .drain(..1)
+        .next()
+        .ok_or("standalone program has no direct entry")?;
+    direct_objects.extend(poll_objects);
+    Ok((
+        ObjectEmission {
+            root,
+            poll_words: None,
+            children: direct_objects,
+        },
+        reused,
+    ))
 }
 
 /// Print the pre-legalization Cranelift IR that Phoebe submits for each function.
@@ -375,7 +512,15 @@ pub fn clif(program: &Program) -> Result<String, String> {
 }
 
 pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> {
-    let emitted = emit_object_with_poll_layout(program)?;
+    let (emitted, _) = emit_object_with_poll_layout(program, false, None)?;
+    link_executable(program, emitted, output)
+}
+
+fn link_executable(
+    program: &Program,
+    emitted: ObjectEmission,
+    output: &Path,
+) -> Result<(), String> {
     let runtime_archive = if emitted.poll_words.is_some()
         || !emitted.children.is_empty()
         || program

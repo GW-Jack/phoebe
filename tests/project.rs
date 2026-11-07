@@ -96,6 +96,19 @@ fn locked_transitive_package_modules_compile_and_rebuild() {
     let output = std::process::Command::new(&executable).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
+    let mut native_session = native::NativeBuildSession::new();
+    assert_eq!(
+        native_session
+            .build_executable(&first, &executable)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        native_session
+            .build_executable(&first, &executable)
+            .unwrap(),
+        first.functions.len()
+    );
     assert!(first.to_string().contains("call math__util.add"));
 
     let util = path.join("util/api.phoebe");
@@ -113,6 +126,15 @@ fn locked_transitive_package_modules_compile_and_rebuild() {
     assert_eq!(report.reused_core_functions, 6);
     assert_eq!(changed.interpret("main", &[]).unwrap(), 43);
     assert_eq!(native::run(&changed, "main", &[]).unwrap(), 43);
+    assert_eq!(
+        native_session
+            .build_executable(&changed, &executable)
+            .unwrap(),
+        changed.functions.len() - 1
+    );
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"43\n");
 
     let renamed = "pub fn add(x: I64, b: I64) -> I64 = x + b + 1\n";
     std::fs::write(&util, renamed).unwrap();

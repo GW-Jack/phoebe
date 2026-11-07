@@ -93,9 +93,12 @@ Cranelift JIT, and standalone executable; see `examples/package_graph/app/`.
 Project declarations are private by default; `pub` exports functions and data
 types, and the interface tracks private nominal layouts exposed by public
 signatures. Public imported nominal variants can be constructed and matched
-with qualified names.
-Registry dependencies, cached typed
-interfaces, and incremental native object rebuilds remain open. The
+with qualified names. An in-process `NativeBuildSession` now emits separate
+objects for direct functions and reuses them after checked Core edits when
+their body and ABI inputs are unchanged; standalone one-shot builds retain
+single-object emission. This is an object-level rebuild witness, not yet a
+persistent command-line build cache. Registry dependencies and cached typed
+interfaces remain open. The
 `examples/cost/` files other than scalar `identity` remain
 design fixtures, not executable acceptance tests.
 

@@ -73,6 +73,9 @@ fn direct_parent_spawns_suspending_child_in_jit_and_object() {
     );
     let path = std::env::temp_dir().join(format!("phoebe-mixed-spawn-{}", std::process::id()));
     native::build_executable(&program, &path).unwrap();
+    let mut session = native::NativeBuildSession::new();
+    assert_eq!(session.build_executable(&program, &path).unwrap(), 0);
+    assert_eq!(session.build_executable(&program, &path).unwrap(), 2);
     let output = Command::new(&path).output().unwrap();
     std::fs::remove_file(path).unwrap();
     assert!(
