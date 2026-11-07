@@ -53,6 +53,14 @@ Recursion is rejected until task stacks have safe growth limits. Arithmetic
 wraps at 64 bits in both interpreter and native execution. `phoebe check`,
 `phoebe ir`, `phoebe cost`, `phoebe run`, and
 `phoebe build <file> -o <output>` work on that subset.
+The parser currently limits nested source constructs and chained expressions
+to 48 levels, and combined expression/body tree depth to 64, reporting a
+source location at the limit. These bound parser and lowering stack use; they
+are implementation limits, not the intended language semantics.
+The diagnostic regression suite mutates three valid programs 1,000 times
+each and checks that parse/lower errors stay in source bounds. It also covers
+deeply nested expressions, types, and branches. This is bounded test evidence,
+not a proof for every input.
 `phoebe clif <file>` prints the pre-legalization Cranelift IR. The scalar
 `identity` cost fixture is an executable acceptance test; the other cost
 fixtures remain design sketches. `docs/performance-baseline.md` records a

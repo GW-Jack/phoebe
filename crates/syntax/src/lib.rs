@@ -1,6 +1,7 @@
 pub mod syntax;
 pub use syntax::*;
 
+mod depth;
 mod equality;
 pub use equality::same_function_with_shift;
 

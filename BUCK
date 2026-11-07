@@ -178,6 +178,19 @@ rust_test(
 )
 
 rust_test(
+    name = "diagnostics_tests",
+    crate_root = "tests/diagnostics.rs",
+    srcs = [
+        "tests/diagnostics.rs",
+        "examples/spawn_pair.phoebe",
+        "examples/nested_variant.phoebe",
+        "examples/try.phoebe",
+    ],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+)
+
+rust_test(
     name = "frame_layout_tests",
     crate_root = "tests/frame_layout.rs",
     srcs = ["tests/frame_layout.rs", "examples/channel_exchange.phoebe", "examples/spawn_close.phoebe"],

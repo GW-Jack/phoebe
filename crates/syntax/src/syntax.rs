@@ -1,3 +1,4 @@
+use crate::depth::{body_height, expr_height};
 use crate::{Diagnostic, Span};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -370,13 +371,37 @@ pub struct WhenArm {
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    depth: usize,
     applied_results: Vec<(TypeName, Span)>,
     uses_send_outcome: bool,
     uses_receive_outcome: bool,
 }
 
+const MAX_PARSE_DEPTH: usize = 48;
+const MAX_AST_DEPTH: usize = 64;
+
 impl Parser {
+    fn nested<T>(
+        &mut self,
+        parse: impl FnOnce(&mut Self) -> Result<T, Diagnostic>,
+    ) -> Result<T, Diagnostic> {
+        if self.depth == MAX_PARSE_DEPTH {
+            return Err(Diagnostic::new(
+                self.current().span,
+                "source nesting exceeds compiler limit",
+            ));
+        }
+        self.depth += 1;
+        let result = parse(self);
+        self.depth -= 1;
+        result
+    }
+
     fn type_name(&mut self, borrowed: bool) -> Result<TypeName, Diagnostic> {
+        self.nested(|parser| parser.type_name_inner(borrowed))
+    }
+
+    fn type_name_inner(&mut self, borrowed: bool) -> Result<TypeName, Diagnostic> {
         let (name, span) = self.name()?;
         if matches!(name.as_str(), "Sender" | "Receiver") {
             self.expect(&TokenKind::Less, "< after channel endpoint type")?;
@@ -642,6 +667,17 @@ impl Parser {
     }
 
     fn block(&mut self, require_tail: bool) -> Result<Body, Diagnostic> {
+        let body = self.nested(|parser| parser.block_inner(require_tail))?;
+        if body_height(&body) > MAX_AST_DEPTH {
+            return Err(Diagnostic::new(
+                self.tokens[self.pos - 1].span,
+                "source tree exceeds compiler limit",
+            ));
+        }
+        Ok(body)
+    }
+
+    fn block_inner(&mut self, require_tail: bool) -> Result<Body, Diagnostic> {
         self.expect(&TokenKind::LBrace, "{")?;
         let mut statements = Vec::new();
         loop {
@@ -809,6 +845,17 @@ impl Parser {
     }
 
     fn expr(&mut self, min_bp: u8) -> Result<Expr, Diagnostic> {
+        let expr = self.nested(|parser| parser.expr_inner(min_bp))?;
+        if expr_height(&expr) > MAX_AST_DEPTH {
+            return Err(Diagnostic::new(
+                self.tokens[self.pos - 1].span,
+                "source tree exceeds compiler limit",
+            ));
+        }
+        Ok(expr)
+    }
+
+    fn expr_inner(&mut self, min_bp: u8) -> Result<Expr, Diagnostic> {
         let mut lhs = match self.current().clone() {
             Token {
                 kind: TokenKind::With,
@@ -1027,8 +1074,16 @@ impl Parser {
             _ => return Err(Diagnostic::new(self.current().span, "expected expression")),
         };
 
+        let mut chain = 0;
         loop {
             if self.current().kind == TokenKind::Question && min_bp <= 9 {
+                if chain == MAX_PARSE_DEPTH {
+                    return Err(Diagnostic::new(
+                        self.current().span,
+                        "expression chain exceeds compiler limit",
+                    ));
+                }
+                chain += 1;
                 let end = self.current().span;
                 self.pos += 1;
                 lhs = Expr {
@@ -1046,6 +1101,13 @@ impl Parser {
             if left_bp < min_bp {
                 break;
             }
+            if chain == MAX_PARSE_DEPTH {
+                return Err(Diagnostic::new(
+                    self.current().span,
+                    "expression chain exceeds compiler limit",
+                ));
+            }
+            chain += 1;
             let op = self.current().kind.clone();
             self.pos += 1;
             let rhs = self.expr(right_bp)?;
@@ -1068,6 +1130,7 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
     let mut parser = Parser {
         tokens: lex(source)?,
         pos: 0,
+        depth: 0,
         applied_results: Vec::new(),
         uses_send_outcome: false,
         uses_receive_outcome: false,
