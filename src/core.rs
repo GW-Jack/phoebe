@@ -1,7 +1,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::task::Poll;
 
 use crate::capability_flow::{self, Action as CapAction, Target as CapTarget};
+use crate::runtime::{self, Context, ResourceError, Scheduler, ScopeLimits, Task, Token};
 use crate::syntax::{self, Body, CallArgument, Expr, ExprKind, ParamMode, Statement, TypeName};
 use crate::{Diagnostic, Span};
 
@@ -39,6 +41,9 @@ pub enum Value {
     Data(DataId, usize, Option<Box<Value>>),
     Product(DataId, Vec<Value>),
     Ref(usize),
+    Sender(Token),
+    Receiver(Token),
+    ResourceError(ResourceError),
 }
 
 type TypedValue = (ValueId, Type);
@@ -2096,17 +2101,16 @@ impl Program {
     }
 
     pub fn interpret(&self, name: &str, args: &[i64]) -> Result<i64, String> {
+        self.interpret_with_limits(name, args, ScopeLimits::default())
+    }
+
+    pub fn interpret_with_limits(
+        &self,
+        name: &str,
+        args: &[i64],
+        limits: ScopeLimits,
+    ) -> Result<i64, String> {
         verify(self)?;
-        if self.functions.iter().any(|function| {
-            function.value_types.iter().any(|ty| {
-                matches!(
-                    ty,
-                    Type::SenderI64 | Type::ReceiverI64 | Type::ResourceError
-                )
-            })
-        }) {
-            return Err("interpreted channel creation requires the runtime bridge".into());
-        }
         let (id, function) = self
             .function(name)
             .ok_or_else(|| format!("unknown function {name}"))?;
@@ -2129,7 +2133,29 @@ impl Program {
             .iter()
             .map(|value| Value::I64(*value))
             .collect::<Vec<_>>();
-        Ok(as_i64(self.interpret_id(id, &args, &mut Vec::new(), 0)?))
+        if self.functions.iter().any(|function| {
+            function
+                .value_types
+                .iter()
+                .any(|ty| matches!(ty, Type::SenderI64 | Type::ReceiverI64))
+        }) {
+            let root = CoreTask {
+                program: self.clone(),
+                entry: id,
+                args,
+            };
+            let mut scheduler =
+                Scheduler::new(root, limits.tasks, limits.channels, limits.replies)?;
+            scheduler.run()
+        } else {
+            Ok(as_i64(self.interpret_id(
+                id,
+                &args,
+                &mut Vec::new(),
+                0,
+                None,
+            )?))
+        }
     }
 
     fn interpret_id(
@@ -2138,6 +2164,7 @@ impl Program {
         args: &[Value],
         stores: &mut Vec<Option<Value>>,
         depth: usize,
+        mut context: Option<&mut Context<'_>>,
     ) -> Result<Value, String> {
         if depth >= 1024 {
             return Err("interpreter call depth exceeded 1024".into());
@@ -2208,7 +2235,13 @@ impl Program {
                                 CallArg::Borrow(place, _) => Value::Ref(base + place.0),
                             })
                             .collect::<Vec<_>>();
-                        Some(self.interpret_id(*target, &args, stores, depth + 1)?)
+                        Some(self.interpret_id(
+                            *target,
+                            &args,
+                            stores,
+                            depth + 1,
+                            context.as_deref_mut(),
+                        )?)
                     }
                     Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                         stores[base + place.0] = Some(get(*value));
@@ -2240,7 +2273,19 @@ impl Program {
                         stores[slot] = Some(get(*value));
                         None
                     }
-                    Operation::CloseHandle(_) => unreachable!("runtime bridge guard"),
+                    Operation::CloseHandle(value) => {
+                        let context = context.as_deref_mut().expect("channel task has context");
+                        match get(*value) {
+                            Value::Sender(token) => {
+                                context.close_sender(runtime::Sender::from_token(token))?
+                            }
+                            Value::Receiver(token) => {
+                                context.close_receiver(runtime::Receiver::from_token(token))?
+                            }
+                            _ => unreachable!("verified channel endpoint"),
+                        }
+                        None
+                    }
                 };
                 if let Some(result) = instruction.result {
                     values[result.0] = value;
@@ -2286,16 +2331,64 @@ impl Program {
                     }
                     current = arm.target.0;
                 }
-                Terminator::ChannelNew { .. } => unreachable!("runtime bridge guard"),
+                Terminator::ChannelNew {
+                    capacity,
+                    success,
+                    failure,
+                } => {
+                    let size = as_i64(get(*capacity));
+                    let outcome = usize::try_from(size)
+                        .map_err(|_| ResourceError::InvalidChannelCapacity)
+                        .and_then(|size| {
+                            context
+                                .as_deref_mut()
+                                .expect("channel task has context")
+                                .channel_typed(size)
+                        });
+                    match outcome {
+                        Ok((sender, receiver)) => {
+                            let params = &function.blocks[success.0].params;
+                            values[params[0].0] = Some(Value::Sender(sender.token()));
+                            values[params[1].0] = Some(Value::Receiver(receiver.token()));
+                            current = success.0;
+                        }
+                        Err(error) => {
+                            let param = function.blocks[failure.0].params[0];
+                            values[param.0] = Some(Value::ResourceError(error));
+                            current = failure.0;
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+struct CoreTask {
+    program: Program,
+    entry: FunctionId,
+    args: Vec<Value>,
+}
+
+impl Task for CoreTask {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        let value =
+            self.program
+                .interpret_id(self.entry, &self.args, &mut Vec::new(), 0, Some(context))?;
+        Ok(Poll::Ready(as_i64(value)))
     }
 }
 
 fn as_i64(value: Value) -> i64 {
     match value {
         Value::I64(x) => x,
-        Value::Bool(_) | Value::Data(_, _, _) | Value::Product(_, _) | Value::Ref(_) => {
+        Value::Bool(_)
+        | Value::Data(_, _, _)
+        | Value::Product(_, _)
+        | Value::Ref(_)
+        | Value::Sender(_)
+        | Value::Receiver(_)
+        | Value::ResourceError(_) => {
             unreachable!("verified I64 operand")
         }
     }
@@ -2304,7 +2397,13 @@ fn as_i64(value: Value) -> i64 {
 fn as_bool(value: Value) -> bool {
     match value {
         Value::Bool(x) => x,
-        Value::I64(_) | Value::Data(_, _, _) | Value::Product(_, _) | Value::Ref(_) => {
+        Value::I64(_)
+        | Value::Data(_, _, _)
+        | Value::Product(_, _)
+        | Value::Ref(_)
+        | Value::Sender(_)
+        | Value::Receiver(_)
+        | Value::ResourceError(_) => {
             unreachable!("verified Bool operand")
         }
     }

@@ -100,9 +100,10 @@ general typed-message, and native-runtime integration still required.
 `src/capability_flow.rs` separately checks exact slot ownership in abstract
 control-flow graphs and derives failure/suspension live-slot maps. Core IR
 now produces those graphs for hand-built `channel.new.i64`, endpoint closes,
-and capability jumps. The interpreter and native backend explicitly reject
-these programs until the runtime bridge is implemented; this is not yet a
-source-level capability safety guarantee. `docs/capability-ir.md` specifies
+and capability jumps. The interpreter executes creation and close through the
+bounded scheduler and follows a typed resource-failure edge. Native lowering
+still explicitly rejects these programs; this is not yet a source-level
+capability safety guarantee. `docs/capability-ir.md` specifies
 the integration boundary.
 
 ## Commands

@@ -1,7 +1,8 @@
 # Cooperative runtime kernel
 
 Status: executable Rust kernel for one scope, bounded `I64` and request
-channels, and one-shot `ReplyTo<I64>`. Source syntax, Core IR operations,
+channels, and one-shot `ReplyTo<I64>`. Hand-built Core programs can interpret
+channel creation and endpoint close through it. Source syntax,
 compiler-generated continuations, native linking, and general typed messages
 are not implemented here yet.
 
@@ -41,9 +42,12 @@ Channel and reply creation now also have typed kernel entry points:
 `ResourceError` variants for invalid capacity, table limits, and allocation
 failure. The existing string-returning calls are wrappers for handwritten
 Rust tasks. All capacity reservations precede publication of either new
-right, so an error creates no partial endpoint pair. The compiler still needs
-to lower these calls as two-successor Core terminators and connect them to
-the capability-flow verifier.
+right, so an error creates no partial endpoint pair. Core lowers hand-built
+`channel.new.i64` edges through `channel_typed` in its interpreter, and its
+verifier checks the success/failure ownership graph. Source syntax and native
+code generation still need this bridge. The current Core interpreter uses one
+root task; send, receive, child tasks, and suspension are not yet executable
+through Core.
 
 `reply()` creates a one-shot right and receiver. A `Request` holds an `I64`
 value and that right. `send_request` on a full or closed queue returns the

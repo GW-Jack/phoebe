@@ -4,8 +4,9 @@ Status: design contract with an initial checked Core creation edge. The checker
 in `src/capability_flow.rs` verifies exact capability-slot states at joins and
 normal returns, and derives live-slot maps for failure and suspension edges.
 Core now derives a graph for `channel.new.i64`, endpoint closes, and jumps
-between capability-bearing block parameters. Source lowering and execution
-still do not connect to the bounded runtime kernel.
+between capability-bearing block parameters. Its interpreter runs those edges
+through the bounded runtime kernel. Source lowering and native execution do
+not yet connect to this path.
 
 ## Why the current affine rule is insufficient
 

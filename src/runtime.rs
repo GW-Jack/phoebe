@@ -102,6 +102,10 @@ impl Sender {
     pub fn token(&self) -> Token {
         self.token
     }
+
+    pub(crate) fn from_token(token: Token) -> Self {
+        Self { token }
+    }
 }
 
 #[derive(Debug)]
@@ -112,6 +116,10 @@ pub struct Receiver {
 impl Receiver {
     pub fn token(&self) -> Token {
         self.token
+    }
+
+    pub(crate) fn from_token(token: Token) -> Self {
+        Self { token }
     }
 }
 
@@ -137,6 +145,23 @@ pub struct RuntimeStats {
     pub wakes: usize,
     pub discarded_messages: usize,
     pub max_queued: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScopeLimits {
+    pub tasks: usize,
+    pub channels: usize,
+    pub replies: usize,
+}
+
+impl Default for ScopeLimits {
+    fn default() -> Self {
+        Self {
+            tasks: 1,
+            channels: 64,
+            replies: 0,
+        }
+    }
 }
 
 pub trait Task {

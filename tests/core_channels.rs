@@ -3,6 +3,7 @@ use phoebe::core::{
     self, Block, BlockId, Function, Instruction, Operation, Program, Terminator, Type, ValueId,
 };
 use phoebe::native;
+use phoebe::runtime::ScopeLimits;
 
 fn span() -> Span {
     Span { start: 0, end: 0 }
@@ -68,12 +69,24 @@ fn checked_channel_creation_has_two_success_rights_and_a_typed_failure() {
     let printed = program.to_string();
     assert!(printed.contains("channel.new.i64 v0 success block1 failure block2"));
     assert!(printed.contains("close.handle v1"));
-    assert!(
+    assert_eq!(program.interpret("main", &[]).unwrap(), 7);
+    assert_eq!(
         program
-            .interpret("main", &[])
-            .unwrap_err()
-            .contains("runtime bridge")
+            .interpret_with_limits(
+                "main",
+                &[],
+                ScopeLimits {
+                    tasks: 1,
+                    channels: 0,
+                    replies: 0,
+                },
+            )
+            .unwrap(),
+        0
     );
+    let mut zero_capacity = program.clone();
+    zero_capacity.functions[0].blocks[0].instructions[0].operation = Operation::Const(0);
+    assert_eq!(zero_capacity.interpret("main", &[]).unwrap(), 0);
     assert!(
         native::compile_jit(&program, "main")
             .err()
@@ -118,6 +131,7 @@ fn channel_rights_move_through_typed_block_arguments() {
         terminator: Terminator::Return(ValueId(8)),
     });
     core::verify(&program).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 9);
     program.functions[0].blocks[3].instructions.remove(1);
     assert!(
         core::verify(&program)

@@ -83,6 +83,9 @@ parameters, plus a failure successor with a `ResourceError` parameter.
 `close.handle` consumes either endpoint. Core derives a capability-flow graph
 from these operations: only the success edge creates the two rights, jumps
 move rights to destination parameters, and normal return requires both rights
-to be closed. This is exercised with hand-built Core programs. Source lowering,
-runtime interpretation, and Cranelift lowering reject this slice until their
-runtime bridge is implemented.
+to be closed. This is exercised with hand-built Core programs. The interpreter
+runs creation and close through a one-task scheduler with explicit scope limits,
+including resource-failure edges. `interpret_with_limits` can vary those
+limits; plain `interpret` permits one task and 64 channel creations. Source
+lowering and Cranelift lowering still
+need their runtime bridge.
