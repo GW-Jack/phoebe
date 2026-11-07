@@ -7,6 +7,12 @@ use std::path::{Path, PathBuf};
 use phoebe_syntax::syntax::{self, Body, CallArgument, Expr, ExprKind, Statement, TypeName};
 use phoebe_syntax::{Diagnostic, Span};
 
+mod interface;
+mod session;
+
+pub use interface::{DataInterface, FunctionInterface, ModuleInterface};
+pub use session::{LoadReport, ProjectSession};
+
 struct SourceFile {
     path: PathBuf,
     start: usize,
@@ -15,6 +21,7 @@ struct SourceFile {
 
 pub struct Loaded {
     pub ast: syntax::Program,
+    pub interfaces: Vec<ModuleInterface>,
     sources: Vec<SourceFile>,
 }
 
@@ -37,6 +44,7 @@ impl Loaded {
     }
 }
 
+#[derive(Clone)]
 struct Module {
     name: String,
     path: PathBuf,
@@ -60,6 +68,19 @@ fn manifest_string<'a>(table: &'a toml::Table, key: &str) -> Result<&'a str, Str
 }
 
 pub fn load(path: &Path) -> Result<Loaded, String> {
+    load_with_cache(path, None).map(|parts| parts.loaded)
+}
+
+struct LoadParts {
+    loaded: Loaded,
+    modules: BTreeMap<String, Module>,
+    parsed: Vec<String>,
+}
+
+fn load_with_cache(
+    path: &Path,
+    cache: Option<&BTreeMap<String, Module>>,
+) -> Result<LoadParts, String> {
     let manifest_path = if path.is_dir() {
         path.join("phoebe.toml")
     } else {
@@ -90,6 +111,7 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
         return Err(format!("root module `{root}` is not listed in [modules]"));
     }
     let directory = manifest_path.parent().unwrap_or(Path::new("."));
+    let mut parsed = Vec::new();
     let mut modules = modules
         .iter()
         .map(|(name, path)| {
@@ -102,8 +124,16 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
             let path = directory.join(relative);
             let source = fs::read_to_string(&path)
                 .map_err(|error| format!("{}: {error}", path.display()))?;
-            let ast = syntax::parse(&source)
-                .map_err(|error| format!("{}:{}", path.display(), error.render(&source)))?;
+            let ast = if let Some(previous) = cache
+                .and_then(|cache| cache.get(name))
+                .filter(|previous| previous.path == path && previous.source == source)
+            {
+                previous.ast.clone()
+            } else {
+                parsed.push(name.clone());
+                syntax::parse(&source)
+                    .map_err(|error| format!("{}:{}", path.display(), error.render(&source)))?
+            };
             Ok(Module {
                 name: name.clone(),
                 path,
@@ -144,6 +174,11 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
         .map(|(index, name)| (name, index))
         .collect::<HashMap<_, _>>();
     modules.sort_by_key(|module| positions[&module.name]);
+    let raw_modules = modules
+        .iter()
+        .cloned()
+        .map(|module| (module.name.clone(), module))
+        .collect::<BTreeMap<_, _>>();
 
     let mut combined = syntax::Program {
         imports: Vec::new(),
@@ -154,6 +189,7 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
         uses_receive_outcome: false,
     };
     let mut sources = Vec::new();
+    let mut interfaces = Vec::new();
     let mut offset = 0;
     for mut module in modules {
         let path = &module.path;
@@ -228,6 +264,7 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
             .map_err(|(span, message)| source_error(path, source, span, message))?;
             function.name = symbol(&module.name, &function.name, root);
         }
+        interfaces.push(interface::from_program(&module.name, &module.ast));
         shift_program(&mut module.ast, offset);
         combined.data.extend(module.ast.data);
         combined.functions.extend(module.ast.functions);
@@ -248,9 +285,14 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
     {
         return Err(format!("root module `{root}` requires fn main"));
     }
-    Ok(Loaded {
-        ast: combined,
-        sources,
+    Ok(LoadParts {
+        loaded: Loaded {
+            ast: combined,
+            interfaces,
+            sources,
+        },
+        modules: raw_modules,
+        parsed,
     })
 }
 
