@@ -6,7 +6,8 @@ IR is not yet Phoebe's complete checked IR or a proven semantics.
 A function contains typed SSA values, numbered basic blocks, and numbered
 mutable places. Each block has zero or more typed parameters, an instruction
 sequence, and exactly one `return`, `jump`, `branch`, `match`,
-`channel.new.i64`, `channel.send.i64`, `channel.receive.i64`, or `spawn`
+`channel.new.i64`, `channel.send.i64`, `channel.receive.i64`,
+`reply.new.i64`, `reply.complete.i64`, `reply.receive.i64`, or `spawn`
 terminator. A `jump`
 supplies one typed value per destination parameter. An `if` expression lowers
 to a conditional branch and a join block whose parameter carries the chosen
@@ -69,7 +70,7 @@ do not model this executable IR.
 
 The current nominal-value check is affine: unused closed values may be dropped.
 Replacing an owned `var` currently discards the old closed value, and `match`
-may discard a payload. The new endpoint-only capability check has exact
+may discard a payload. The communication capability check has exact
 disposition at return, but nested capabilities still need structural cleanup
 or explicit transfer on those exits.
 General loan lifetimes, region begin/end, cleanup edges,
@@ -102,8 +103,8 @@ the live capability slots and retries at the same terminator. One interpreter
 loop handles both pure functions and channel tasks. Pure entries run it
 directly; channel entries retain call frames and places across scheduler polls. A
 buffered send/receive and an empty receive that parks are exercised in tests.
-Native lowering returns an explicit unsupported error for these terminators
-until it has generated retained task frames. Internal Core functions can take
+Native lowering runs these channel terminators through retained task frames.
+Internal Core functions can take
 owned channel endpoint parameters; a synchronous call transfers that right
 to the callee, which must close it before returning. The interpreter and JIT
 agree on an endpoint-owning call. The interpreter has also resumed a Core
@@ -123,3 +124,12 @@ spawn and structural cleanup remain open. Source `sender.send(value)` returns
 `Receive<I64>.End`. Both lower to the checked Core terminators; the
 interpreter runs a source two-message exchange over a one-slot channel.
 The outcome sums enter Core only in programs that use them.
+Hand-built checked Core now has `ReplyToI64` and `ReplyReceiverI64` capability
+types. `reply.new.i64` creates both only on its success edge. Completion
+consumes the right on both delivered and closed edges. Receiving a value or
+end consumes the receiver; pending retains it for retry. `close.reply`
+consumes either right. The exact capability-flow verifier checks these edges,
+including child spawn transfer and failure retention. The interpreter runs a
+parent that moves a reply right to a child and parks on the receiver. Source
+lowering and Cranelift lowering for these Core operations remain open; native
+compilation reports an unsupported reply operation instead of emitting code.

@@ -1126,6 +1126,11 @@ fn compile_poll_module<M: Module>(
                             .expect("verified retry point");
                         builder.ins().jump(retry_blocks[index], &[]);
                     }
+                    Terminator::ReplyNew { .. }
+                    | Terminator::ReplyComplete { .. }
+                    | Terminator::ReplyReceive { .. } => {
+                        return Err("native reply lowering is not implemented".into());
+                    }
                 }
             }
 
@@ -1337,6 +1342,11 @@ fn validate_poll_function(
             if layouts[target.0].is_none() {
                 return Err("retained call requires a poll callee".into());
             }
+        } else if matches!(
+            function.blocks[point.block.0].terminator,
+            Terminator::ReplyReceive { .. }
+        ) {
+            return Err("native reply receive lowering is not implemented".into());
         } else if !matches!(
             function.blocks[point.block.0].terminator,
             Terminator::ChannelReceive { .. }

@@ -87,7 +87,11 @@ impl AbiShapes {
             Type::Bool => vec![types::I8],
             Type::Data(id) => self.data[id.0].clone(),
             Type::RefI64 | Type::RefMutI64 => vec![self.pointer_type],
-            Type::SenderI64 | Type::ReceiverI64 | Type::ResourceError => vec![types::I64],
+            Type::SenderI64
+            | Type::ReceiverI64
+            | Type::ReplyToI64
+            | Type::ReplyReceiverI64
+            | Type::ResourceError => vec![types::I64],
         }
     }
 }
@@ -396,11 +400,18 @@ pub(super) fn compile_functions<M: Module>(
                     Terminator::ChannelNew {
                         success, failure, ..
                     } => vec![success.0, failure.0],
+                    Terminator::ReplyNew { success, failure } => vec![success.0, failure.0],
                     Terminator::Fork {
                         success, failure, ..
                     } => vec![success.0, failure.0],
                     Terminator::ChannelSend { sent, closed, .. } => vec![sent.0, closed.0],
                     Terminator::ChannelReceive { value, end, .. } => vec![value.0, end.0],
+                    Terminator::ReplyComplete {
+                        delivered, closed, ..
+                    } => {
+                        vec![delivered.0, closed.0]
+                    }
+                    Terminator::ReplyReceive { value, end, .. } => vec![value.0, end.0],
                     Terminator::Spawn {
                         success, failure, ..
                     } => vec![success.0, failure.0],
@@ -549,6 +560,9 @@ pub(super) fn compile_functions<M: Module>(
                                 &[runtime_context.expect("runtime context"), one(*value), kind],
                             );
                             None
+                        }
+                        Operation::CloseReply(_) => {
+                            return Err("native reply lowering is not implemented".into());
                         }
                         Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                             for (component, slot) in get(*value).into_iter().zip(&places[place.0]) {
@@ -902,6 +916,11 @@ pub(super) fn compile_functions<M: Module>(
                     }
                     Terminator::ChannelSend { .. } | Terminator::ChannelReceive { .. } => {
                         return Err("native channel traffic requires retained task frames".into());
+                    }
+                    Terminator::ReplyNew { .. }
+                    | Terminator::ReplyComplete { .. }
+                    | Terminator::ReplyReceive { .. } => {
+                        return Err("native reply lowering is not implemented".into());
                     }
                 }
             }

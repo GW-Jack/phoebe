@@ -61,13 +61,19 @@ impl Program {
                     && (matches!(
                         block.terminator,
                         Terminator::ChannelNew { .. }
+                            | Terminator::ReplyNew { .. }
                             | Terminator::Fork { .. }
                             | Terminator::Yield { .. }
                             | Terminator::ChannelSend { .. }
                             | Terminator::ChannelReceive { .. }
+                            | Terminator::ReplyComplete { .. }
+                            | Terminator::ReplyReceive { .. }
                             | Terminator::Spawn { .. }
                     ) || block.instructions.iter().any(|instruction| {
-                        matches!(instruction.operation, Operation::CloseHandle(_))
+                        matches!(
+                            instruction.operation,
+                            Operation::CloseHandle(_) | Operation::CloseReply(_)
+                        )
                     }))
                 {
                     needed[caller] = true;
@@ -281,6 +287,19 @@ impl CoreTask {
                 }
                 None
             }
+            Operation::CloseReply(value) => {
+                let context = context.expect("runtime operation has a context");
+                match get(*value) {
+                    Value::ReplyTo(token) => {
+                        context.close_reply_to(runtime::ReplyTo::from_token(token))?
+                    }
+                    Value::ReplyReceiver(token) => {
+                        context.cancel_reply(runtime::ReplyReceiver::from_token(token))?
+                    }
+                    _ => unreachable!("verified reply capability"),
+                }
+                None
+            }
         })
     }
 }
@@ -391,6 +410,22 @@ impl CoreTask {
                         Err(error) => self.enter(failure, vec![Value::ResourceError(error)]),
                     }
                 }
+                Terminator::ReplyNew { success, failure } => {
+                    match context
+                        .as_deref_mut()
+                        .expect("runtime context")
+                        .reply_typed()
+                    {
+                        Ok((right, receiver)) => self.enter(
+                            success,
+                            vec![
+                                Value::ReplyTo(right.token()),
+                                Value::ReplyReceiver(receiver.token()),
+                            ],
+                        ),
+                        Err(error) => self.enter(failure, vec![Value::ResourceError(error)]),
+                    }
+                }
                 Terminator::Fork {
                     source,
                     success,
@@ -454,6 +489,45 @@ impl CoreTask {
                         runtime::ReceiveResult::Pending => return Ok(Poll::Pending),
                     }
                 }
+                Terminator::ReplyComplete {
+                    right,
+                    value,
+                    delivered,
+                    closed,
+                } => {
+                    let Value::ReplyTo(token) = self.value(right) else {
+                        unreachable!("verified reply right")
+                    };
+                    let value = as_i64(self.value(value));
+                    match context
+                        .as_deref_mut()
+                        .expect("runtime context")
+                        .complete(runtime::ReplyTo::from_token(token), value)?
+                    {
+                        runtime::CompleteResult::Delivered => self.enter(delivered, Vec::new()),
+                        runtime::CompleteResult::Closed(_) => self.enter(closed, Vec::new()),
+                    }
+                }
+                Terminator::ReplyReceive {
+                    receiver,
+                    value,
+                    end,
+                } => {
+                    let Value::ReplyReceiver(token) = self.value(receiver) else {
+                        unreachable!("verified reply receiver")
+                    };
+                    match context
+                        .as_deref_mut()
+                        .expect("runtime context")
+                        .receive_reply(&runtime::ReplyReceiver::from_token(token))?
+                    {
+                        runtime::ReplyReceiveResult::Value(message) => {
+                            self.enter(value, vec![Value::I64(message)])
+                        }
+                        runtime::ReplyReceiveResult::End => self.enter(end, Vec::new()),
+                        runtime::ReplyReceiveResult::Pending => return Ok(Poll::Pending),
+                    }
+                }
                 Terminator::Spawn {
                     child,
                     args,
@@ -467,7 +541,15 @@ impl CoreTask {
                     let transfers = child_values
                         .iter()
                         .filter_map(|value| match value {
-                            Value::Sender(token) | Value::Receiver(token) => Some(*token),
+                            Value::Sender(token) | Value::Receiver(token) => {
+                                Some(runtime::CapabilityTransfer::Channel(*token))
+                            }
+                            Value::ReplyTo(token) => {
+                                Some(runtime::CapabilityTransfer::ReplyRight(*token))
+                            }
+                            Value::ReplyReceiver(token) => {
+                                Some(runtime::CapabilityTransfer::ReplyReceiver(*token))
+                            }
                             _ => None,
                         })
                         .collect::<Vec<_>>();
@@ -475,7 +557,7 @@ impl CoreTask {
                     match context
                         .as_deref_mut()
                         .expect("runtime context")
-                        .spawn_owned(child_task, &transfers)
+                        .spawn_capabilities_owned(child_task, &transfers)
                     {
                         Ok(_) => self.enter(success, Vec::new()),
                         Err(error) => match error.resource_error {
@@ -511,6 +593,8 @@ fn as_i64(value: Value) -> i64 {
         | Value::Ref(_)
         | Value::Sender(_)
         | Value::Receiver(_)
+        | Value::ReplyTo(_)
+        | Value::ReplyReceiver(_)
         | Value::ResourceError(_) => {
             unreachable!("verified I64 operand")
         }
@@ -526,6 +610,8 @@ fn as_bool(value: Value) -> bool {
         | Value::Ref(_)
         | Value::Sender(_)
         | Value::Receiver(_)
+        | Value::ReplyTo(_)
+        | Value::ReplyReceiver(_)
         | Value::ResourceError(_) => {
             unreachable!("verified Bool operand")
         }
@@ -628,6 +714,7 @@ impl fmt::Display for Program {
                             write!(f, "ref.store v{}, v{}", reference.0, value.0)?
                         }
                         Operation::CloseHandle(value) => write!(f, "close.handle v{}", value.0)?,
+                        Operation::CloseReply(value) => write!(f, "close.reply v{}", value.0)?,
                     }
                     writeln!(f, "  @{}..{}", instruction.span.start, instruction.span.end)?;
                 }
@@ -673,6 +760,11 @@ impl fmt::Display for Program {
                         "    channel.new.i64 v{} success block{} failure block{}",
                         capacity.0, success.0, failure.0
                     )?,
+                    Terminator::ReplyNew { success, failure } => writeln!(
+                        f,
+                        "    reply.new.i64 success block{} failure block{}",
+                        success.0, failure.0
+                    )?,
                     Terminator::Fork {
                         source,
                         success,
@@ -699,6 +791,25 @@ impl fmt::Display for Program {
                     } => writeln!(
                         f,
                         "    channel.receive.i64 v{} value block{} end block{} pending retry",
+                        receiver.0, value.0, end.0
+                    )?,
+                    Terminator::ReplyComplete {
+                        right,
+                        value,
+                        delivered,
+                        closed,
+                    } => writeln!(
+                        f,
+                        "    reply.complete.i64 v{}, v{} delivered block{} closed block{}",
+                        right.0, value.0, delivered.0, closed.0
+                    )?,
+                    Terminator::ReplyReceive {
+                        receiver,
+                        value,
+                        end,
+                    } => writeln!(
+                        f,
+                        "    reply.receive.i64 v{} value block{} end block{} pending retry",
                         receiver.0, value.0, end.0
                     )?,
                     Terminator::Spawn {

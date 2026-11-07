@@ -257,6 +257,7 @@ pub fn suspendable_functions(program: &Program) -> Result<Vec<bool>, String> {
                     block.terminator,
                     Terminator::ChannelSend { .. }
                         | Terminator::ChannelReceive { .. }
+                        | Terminator::ReplyReceive { .. }
                         | Terminator::Yield { .. }
                 )
             })
@@ -315,6 +316,7 @@ pub fn analyze(program: &Program) -> Result<Vec<FunctionFrame>, String> {
                 block.terminator,
                 Terminator::ChannelSend { .. }
                     | Terminator::ChannelReceive { .. }
+                    | Terminator::ReplyReceive { .. }
                     | Terminator::Yield { .. }
             ) {
                 all.union(&live);
@@ -484,6 +486,10 @@ fn terminator_live(function: &Function, block_id: usize, incoming: &[Live]) -> L
             edge(*failure, None);
             live.values[capacity.0] = true;
         }
+        Terminator::ReplyNew { success, failure } => {
+            edge(*success, None);
+            edge(*failure, None);
+        }
         Terminator::Fork {
             source,
             success,
@@ -505,6 +511,26 @@ fn terminator_live(function: &Function, block_id: usize, incoming: &[Live]) -> L
             live.values[message.0] = true;
         }
         Terminator::ChannelReceive {
+            receiver,
+            value,
+            end,
+        } => {
+            edge(*value, None);
+            edge(*end, None);
+            live.values[receiver.0] = true;
+        }
+        Terminator::ReplyComplete {
+            right,
+            value,
+            delivered,
+            closed,
+        } => {
+            edge(*delivered, None);
+            edge(*closed, None);
+            live.values[right.0] = true;
+            live.values[value.0] = true;
+        }
+        Terminator::ReplyReceive {
             receiver,
             value,
             end,

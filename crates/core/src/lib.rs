@@ -5,7 +5,8 @@ use std::task::Poll;
 
 use phoebe_capability::{self as capability_flow, Action as CapAction, Target as CapTarget};
 use phoebe_runtime::{
-    self as runtime, Context, ResourceError, Scheduler, ScopeLimits, Task, Token,
+    self as runtime, Context, ReplyReceiverToken, ReplyToken, ResourceError, Scheduler,
+    ScopeLimits, Task, Token,
 };
 use phoebe_syntax::syntax::{
     self, Body, CallArgument, Expr, ExprKind, ParamMode, Statement, TypeName,
@@ -36,6 +37,8 @@ pub enum Type {
     RefMutI64,
     SenderI64,
     ReceiverI64,
+    ReplyToI64,
+    ReplyReceiverI64,
     ResourceError,
 }
 
@@ -48,6 +51,8 @@ pub enum Value {
     Ref(usize),
     Sender(Token),
     Receiver(Token),
+    ReplyTo(ReplyToken),
+    ReplyReceiver(ReplyReceiverToken),
     ResourceError(ResourceError),
 }
 
@@ -108,6 +113,7 @@ pub enum Operation {
     CopyPlace(PlaceId),
     Store(PlaceId, ValueId),
     CloseHandle(ValueId),
+    CloseReply(ValueId),
 }
 
 #[derive(Clone, Debug)]
@@ -152,6 +158,10 @@ pub enum Terminator {
         success: BlockId,
         failure: BlockId,
     },
+    ReplyNew {
+        success: BlockId,
+        failure: BlockId,
+    },
     Fork {
         source: ValueId,
         success: BlockId,
@@ -164,6 +174,17 @@ pub enum Terminator {
         closed: BlockId,
     },
     ChannelReceive {
+        receiver: ValueId,
+        value: BlockId,
+        end: BlockId,
+    },
+    ReplyComplete {
+        right: ValueId,
+        value: ValueId,
+        delivered: BlockId,
+        closed: BlockId,
+    },
+    ReplyReceive {
         receiver: ValueId,
         value: BlockId,
         end: BlockId,

@@ -33,6 +33,11 @@ impl ReplyTo {
         self.token
     }
 
+    /// Reconstruct a checked Core view; operations still verify task ownership.
+    pub fn from_token(token: ReplyToken) -> Self {
+        Self { token }
+    }
+
     pub fn transfer(&self) -> CapabilityTransfer {
         CapabilityTransfer::ReplyRight(self.token)
     }
@@ -47,6 +52,15 @@ pub struct ReplyReceiver {
 pub struct ReplyReceiverToken(usize);
 
 impl ReplyReceiver {
+    pub fn token(&self) -> ReplyReceiverToken {
+        ReplyReceiverToken(self.slot)
+    }
+
+    /// Reconstruct a checked Core view; operations still verify task ownership.
+    pub fn from_token(token: ReplyReceiverToken) -> Self {
+        Self { slot: token.0 }
+    }
+
     pub fn transfer(&self) -> CapabilityTransfer {
         CapabilityTransfer::ReplyReceiver(ReplyReceiverToken(self.slot))
     }

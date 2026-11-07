@@ -124,8 +124,10 @@ channel operations and task creation in the interpreter.
 The Rust spawn path now atomically transfers channel handles and either reply
 capability to a child. Native reply and typed spawn shims are exercised by
 synthetic poll frames, including a receiver that parks and wakes across tasks
-and a task-limit rejection that retains the parent's right. Checked Core and
-source syntax do not yet use these reply operations.
+and a task-limit rejection that retains the parent's right. Hand-built checked
+Core now verifies and interprets reply creation, completion, receive, close,
+and child transfer. Source syntax and Cranelift lowering do not yet use these
+reply operations.
 Runtime task failure now cancels remaining scope tasks immediately after
 closing the failing task's rights. A host regression catches the case where
 the parent retained another sender and would otherwise report a deadlock

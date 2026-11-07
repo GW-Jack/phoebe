@@ -165,6 +165,12 @@ fn op_type(
             }
             Ok(None)
         }
+        Operation::CloseReply(value) => {
+            if !matches!(ty(*value), Type::ReplyToI64 | Type::ReplyReceiverI64) {
+                return Err("close.reply requires a reply capability".into());
+            }
+            Ok(None)
+        }
         Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
             let place_ty = function
                 .place_types
@@ -203,6 +209,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         Operation::Product(_, fields) => fields.clone(),
         Operation::Field(value, _) => vec![*value],
         Operation::CloseHandle(a)
+        | Operation::CloseReply(a)
         | Operation::Neg(a)
         | Operation::PlaceInit(_, a)
         | Operation::Store(_, a)
@@ -400,11 +407,29 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                 Terminator::ChannelNew {
                     success, failure, ..
                 } => vec![success.0, failure.0],
+                Terminator::ReplyNew { success, failure } => vec![success.0, failure.0],
                 Terminator::Fork {
                     success, failure, ..
                 } => vec![success.0, failure.0],
                 Terminator::ChannelSend { sent, closed, .. } => vec![sent.0, closed.0],
                 Terminator::ChannelReceive { value, end, .. } => vec![value.0, end.0],
+                Terminator::ReplyComplete {
+                    right,
+                    delivered,
+                    closed,
+                    ..
+                } => {
+                    value_use(&mut state, *right, true, span)?;
+                    vec![delivered.0, closed.0]
+                }
+                Terminator::ReplyReceive {
+                    receiver,
+                    value,
+                    end,
+                } => {
+                    value_use(&mut state, *receiver, true, span)?;
+                    vec![value.0, end.0]
+                }
                 Terminator::Spawn {
                     args,
                     success,
@@ -466,7 +491,12 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
             Type::I64 | Type::Bool => false,
             Type::Data(id) => id.0 >= index,
             Type::ResourceError => false,
-            Type::RefI64 | Type::RefMutI64 | Type::SenderI64 | Type::ReceiverI64 => true,
+            Type::RefI64
+            | Type::RefMutI64
+            | Type::SenderI64
+            | Type::ReceiverI64
+            | Type::ReplyToI64
+            | Type::ReplyReceiverI64 => true,
         }) {
             return Err("invalid variant payload type".into());
         }
@@ -477,7 +507,12 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                     Type::I64 | Type::Bool => false,
                     Type::Data(id) => id.0 >= index,
                     Type::ResourceError => false,
-                    Type::RefI64 | Type::RefMutI64 | Type::SenderI64 | Type::ReceiverI64 => true,
+                    Type::RefI64
+                    | Type::RefMutI64
+                    | Type::SenderI64
+                    | Type::ReceiverI64
+                    | Type::ReplyToI64
+                    | Type::ReplyReceiverI64 => true,
                 }
             {
                 return Err("invalid product field".into());
@@ -549,6 +584,8 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                                     | Type::Data(_)
                                     | Type::SenderI64
                                     | Type::ReceiverI64
+                                    | Type::ReplyToI64
+                                    | Type::ReplyReceiverI64
                                     | Type::ResourceError
                             ))
                     {
@@ -613,6 +650,15 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                     }
                     vec![*success, *failure]
                 }
+                Terminator::ReplyNew { success, failure } => {
+                    if success == failure {
+                        return Err(format!(
+                            "{}: reply creation edges must be distinct",
+                            function.name
+                        ));
+                    }
+                    vec![*success, *failure]
+                }
                 Terminator::Fork {
                     success, failure, ..
                 } => {
@@ -630,6 +676,26 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                 Terminator::ChannelReceive { value, end, .. } => {
                     if value == end {
                         return Err(format!("{}: receive edges must be distinct", function.name));
+                    }
+                    vec![*value, *end]
+                }
+                Terminator::ReplyComplete {
+                    delivered, closed, ..
+                } => {
+                    if delivered == closed {
+                        return Err(format!(
+                            "{}: reply completion edges must be distinct",
+                            function.name
+                        ));
+                    }
+                    vec![*delivered, *closed]
+                }
+                Terminator::ReplyReceive { value, end, .. } => {
+                    if value == end {
+                        return Err(format!(
+                            "{}: reply receive edges must be distinct",
+                            function.name
+                        ));
                     }
                     vec![*value, *end]
                 }
@@ -855,6 +921,21 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                         ));
                     }
                 }
+                Terminator::ReplyNew { success, failure } => {
+                    let success_params = &function.blocks[success.0].params;
+                    let failure_params = &function.blocks[failure.0].params;
+                    if success_params.len() != 2
+                        || function.value_types[success_params[0].0] != Type::ReplyToI64
+                        || function.value_types[success_params[1].0] != Type::ReplyReceiverI64
+                        || failure_params.len() != 1
+                        || function.value_types[failure_params[0].0] != Type::ResourceError
+                    {
+                        return Err(format!(
+                            "{}: reply creation edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
                 Terminator::Fork {
                     source,
                     success,
@@ -905,6 +986,43 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                     {
                         return Err(format!(
                             "{}: channel receive edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
+                Terminator::ReplyComplete {
+                    right,
+                    value,
+                    delivered,
+                    closed,
+                } => {
+                    check_use(*right, block_id, end)?;
+                    check_use(*value, block_id, end)?;
+                    if function.value_types[right.0] != Type::ReplyToI64
+                        || function.value_types[value.0] != Type::I64
+                        || !function.blocks[delivered.0].params.is_empty()
+                        || !function.blocks[closed.0].params.is_empty()
+                    {
+                        return Err(format!(
+                            "{}: reply completion edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
+                Terminator::ReplyReceive {
+                    receiver,
+                    value,
+                    end: end_block,
+                } => {
+                    check_use(*receiver, block_id, end)?;
+                    let params = &function.blocks[value.0].params;
+                    if function.value_types[receiver.0] != Type::ReplyReceiverI64
+                        || params.len() != 1
+                        || function.value_types[params[0].0] != Type::I64
+                        || !function.blocks[end_block.0].params.is_empty()
+                    {
+                        return Err(format!(
+                            "{}: reply receive edge signature mismatch",
                             function.name
                         ));
                     }
@@ -989,8 +1107,11 @@ pub fn verify(program: &Program) -> Result<(), String> {
     verify_capability_edges(program)
 }
 
-fn is_channel_handle(ty: Type) -> bool {
-    matches!(ty, Type::SenderI64 | Type::ReceiverI64)
+fn is_capability(ty: Type) -> bool {
+    matches!(
+        ty,
+        Type::SenderI64 | Type::ReceiverI64 | Type::ReplyToI64 | Type::ReplyReceiverI64
+    )
 }
 
 pub(super) fn verify_capability_edges(program: &Program) -> Result<(), String> {
@@ -1008,7 +1129,7 @@ pub(super) fn capability_graph(
     implicit_cleanup_returns: &[BlockId],
     scoped_cleanup_exits: &[(BlockId, ValueId, Span)],
 ) -> Option<(capability_flow::Graph, Vec<ValueId>)> {
-    if !function.value_types.iter().copied().any(is_channel_handle) {
+    if !function.value_types.iter().copied().any(is_capability) {
         return None;
     }
     // Capability flow only needs ownership state for rights, not for every
@@ -1018,13 +1139,13 @@ pub(super) fn capability_graph(
     let mut values = Vec::new();
     let mut slot_count = 0;
     for (value, ty) in function.value_types.iter().enumerate() {
-        if is_channel_handle(*ty) {
+        if is_capability(*ty) {
             slots[value] = Some(capability_flow::Slot(slot_count));
             values.push(ValueId(value));
             slot_count += 1;
         }
     }
-    let slot = |value: ValueId| slots[value.0].expect("channel handle has a capability slot");
+    let slot = |value: ValueId| slots[value.0].expect("communication right has a capability slot");
     let mut lexical = vec![None; function.blocks.len()];
     for (block, value, _) in scoped_cleanup_exits {
         lexical[block.0] = Some(slot(*value));
@@ -1036,7 +1157,7 @@ pub(super) fn capability_graph(
     let entry_live = function.blocks[0]
         .params
         .iter()
-        .filter(|value| is_channel_handle(function.value_types[value.0]))
+        .filter(|value| is_capability(function.value_types[value.0]))
         .map(|value| slot(*value))
         .collect();
     let blocks = function
@@ -1047,11 +1168,13 @@ pub(super) fn capability_graph(
             let mut actions = Vec::new();
             for instruction in &block.instructions {
                 match &instruction.operation {
-                    Operation::CloseHandle(value) => actions.push(CapAction::Close(slot(*value))),
+                    Operation::CloseHandle(value) | Operation::CloseReply(value) => {
+                        actions.push(CapAction::Close(slot(*value)))
+                    }
                     Operation::Call(_, args) => {
                         for arg in args {
                             if let CallArg::Value(value) = arg
-                                && is_channel_handle(function.value_types[value.0])
+                                && is_capability(function.value_types[value.0])
                             {
                                 actions.push(CapAction::Transfer(slot(*value)));
                             }
@@ -1080,7 +1203,7 @@ pub(super) fn capability_graph(
                     let moves = args
                         .iter()
                         .zip(&function.blocks[target.0].params)
-                        .filter(|(arg, _)| is_channel_handle(function.value_types[arg.0]))
+                        .filter(|(arg, _)| is_capability(function.value_types[arg.0]))
                         .map(|(arg, param)| CapAction::Move {
                             from: slot(*arg),
                             to: slot(*param),
@@ -1103,6 +1226,19 @@ pub(super) fn capability_graph(
                 Terminator::ChannelNew {
                     success, failure, ..
                 } => {
+                    let params = &function.blocks[success.0].params;
+                    vec![
+                        edge(
+                            CapTarget::Block(success.0),
+                            vec![CapAction::CreatePair {
+                                first: slot(params[0]),
+                                second: slot(params[1]),
+                            }],
+                        ),
+                        edge(CapTarget::Block(failure.0), vec![]),
+                    ]
+                }
+                Terminator::ReplyNew { success, failure } => {
                     let params = &function.blocks[success.0].params;
                     vec![
                         edge(
@@ -1160,6 +1296,30 @@ pub(super) fn capability_graph(
                         edge(CapTarget::Retry, require),
                     ]
                 }
+                Terminator::ReplyComplete {
+                    right,
+                    delivered,
+                    closed,
+                    ..
+                } => {
+                    let close = vec![CapAction::Close(slot(*right))];
+                    vec![
+                        edge(CapTarget::Block(delivered.0), close.clone()),
+                        edge(CapTarget::Block(closed.0), close),
+                    ]
+                }
+                Terminator::ReplyReceive {
+                    receiver,
+                    value,
+                    end,
+                } => {
+                    let close = vec![CapAction::Close(slot(*receiver))];
+                    vec![
+                        edge(CapTarget::Block(value.0), close.clone()),
+                        edge(CapTarget::Block(end.0), close),
+                        edge(CapTarget::Retry, vec![CapAction::Require(slot(*receiver))]),
+                    ]
+                }
                 Terminator::Spawn {
                     args,
                     success,
@@ -1168,7 +1328,7 @@ pub(super) fn capability_graph(
                 } => {
                     let transfers = args
                         .iter()
-                        .filter(|value| is_channel_handle(function.value_types[value.0]))
+                        .filter(|value| is_capability(function.value_types[value.0]))
                         .map(|value| CapAction::Transfer(slot(*value)))
                         .collect();
                     vec![
