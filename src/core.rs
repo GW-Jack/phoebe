@@ -97,38 +97,9 @@ pub enum Operation {
 
 #[derive(Clone, Debug)]
 pub struct Instruction {
-    pub results: ResultIds,
+    pub result: Option<ValueId>,
     pub operation: Operation,
     pub span: Span,
-}
-
-/// Instruction results are inline: ordinary instructions need no per-instruction allocation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ResultIds {
-    None,
-    One(ValueId),
-    Pair(ValueId, ValueId),
-}
-
-impl ResultIds {
-    pub fn iter(&self) -> impl Iterator<Item = &ValueId> {
-        (0..self.len()).map(move |index| match (self, index) {
-            (Self::One(value) | Self::Pair(value, _), 0) | (Self::Pair(_, value), 1) => value,
-            _ => unreachable!("index bounded by result count"),
-        })
-    }
-
-    pub fn len(self) -> usize {
-        match self {
-            Self::None => 0,
-            Self::One(_) => 1,
-            Self::Pair(_, _) => 2,
-        }
-    }
-
-    pub fn is_empty(self) -> bool {
-        matches!(self, Self::None)
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -286,7 +257,7 @@ impl<'a> Lowerer<'a> {
     fn emit(&mut self, operation: Operation, ty: Type, span: Span) -> ValueId {
         let result = self.value(ty);
         self.blocks[self.current.0].instructions.push(Instruction {
-            results: ResultIds::One(result),
+            result: Some(result),
             operation,
             span,
         });
@@ -295,7 +266,7 @@ impl<'a> Lowerer<'a> {
 
     fn emit_effect(&mut self, operation: Operation, span: Span) {
         self.blocks[self.current.0].instructions.push(Instruction {
-            results: ResultIds::None,
+            result: None,
             operation,
             span,
         });
@@ -1512,10 +1483,10 @@ fn verify_ownership(program: &Program) -> Result<(), OwnershipError> {
                         }
                     }
                 }
-                for result in instruction.results.iter() {
-                    if matches!(function.value_types[result.0], Type::Data(_)) {
-                        state.values[result.0] = true;
-                    }
+                if let Some(result) = instruction.result
+                    && matches!(function.value_types[result.0], Type::Data(_))
+                {
+                    state.values[result.0] = true;
                 }
             }
             let span = block
@@ -1677,7 +1648,7 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                 }
             }
             for (index, instruction) in block.instructions.iter().enumerate() {
-                for result in instruction.results.iter() {
+                if let Some(result) = instruction.result {
                     let slot = definitions
                         .get_mut(result.0)
                         .ok_or_else(|| format!("{}: invalid value ID", function.name))?;
@@ -1799,12 +1770,11 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                     check_use(operand, block_id, index)?;
                 }
                 let expected = op_type(program, function, &instruction.operation)?;
-                let actual = instruction
-                    .results
-                    .iter()
+                if instruction
+                    .result
                     .map(|result| function.value_types[result.0])
-                    .collect::<Vec<_>>();
-                if actual != expected.into_iter().collect::<Vec<_>>() {
+                    != expected
+                {
                     return Err(format!(
                         "{}: instruction result type mismatch",
                         function.name
@@ -2113,10 +2083,8 @@ impl Program {
                         None
                     }
                 };
-                match (instruction.results, value) {
-                    (ResultIds::None, None) => {}
-                    (ResultIds::One(result), Some(value)) => values[result.0] = Some(value),
-                    _ => return Err("interpreter instruction result arity mismatch".into()),
+                if let Some(result) = instruction.result {
+                    values[result.0] = value;
                 }
             }
             let get = |id: ValueId| values[id.0].clone().expect("verified value is defined");
@@ -2203,15 +2171,14 @@ impl fmt::Display for Program {
                 }
                 writeln!(f, "):")?;
                 for instruction in &block.instructions {
-                    write!(f, "    ")?;
-                    for (index, result) in instruction.results.iter().enumerate() {
-                        if index > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "v{}: {:?}", result.0, function.value_types[result.0])?;
-                    }
-                    if !instruction.results.is_empty() {
-                        write!(f, " = ")?;
+                    if let Some(result) = instruction.result {
+                        write!(
+                            f,
+                            "    v{}: {:?} = ",
+                            result.0, function.value_types[result.0]
+                        )?;
+                    } else {
+                        write!(f, "    ")?;
                     }
                     match &instruction.operation {
                         Operation::Const(x) => write!(f, "const {x}")?,

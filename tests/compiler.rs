@@ -111,10 +111,9 @@ fn rejects_non_boolean_conditions_and_mismatched_branches() {
 #[test]
 fn verifier_rejects_non_dominating_branch_value() {
     let mut program = compile("fn main() -> I64 = if (true) { 1 } else { 2 }");
-    let core::ResultIds::One(then_result) = program.functions[0].blocks[1].instructions[0].results
-    else {
-        panic!("expected one result")
-    };
+    let then_result = program.functions[0].blocks[1].instructions[0]
+        .result
+        .unwrap();
     if let core::Terminator::Jump(_, args) = &mut program.functions[0].blocks[2].terminator {
         args[0] = then_result;
     } else {
@@ -124,23 +123,6 @@ fn verifier_rejects_non_dominating_branch_value() {
         core::verify(&program)
             .unwrap_err()
             .contains("non-dominating")
-    );
-}
-
-#[test]
-fn verifier_rejects_extra_instruction_result() {
-    let mut program = compile("fn main() -> I64 = 7");
-    let function = &mut program.functions[0];
-    let extra = core::ValueId(function.value_types.len());
-    function.value_types.push(core::Type::I64);
-    let core::ResultIds::One(original) = function.blocks[0].instructions[0].results else {
-        panic!("expected one result")
-    };
-    function.blocks[0].instructions[0].results = core::ResultIds::Pair(original, extra);
-    assert!(
-        core::verify(&program)
-            .unwrap_err()
-            .contains("instruction result type mismatch")
     );
 }
 

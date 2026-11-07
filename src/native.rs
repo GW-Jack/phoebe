@@ -19,7 +19,7 @@ use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use cranelift_native::builder as native_builder;
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-use crate::core::{self, CallArg, MatchBinding, Operation, Program, ResultIds, Terminator, Type};
+use crate::core::{self, CallArg, MatchBinding, Operation, Program, Terminator, Type};
 use crate::syntax::ParamMode;
 
 pub struct JitExecutable {
@@ -476,10 +476,8 @@ fn compile_functions<M: Module>(
                                 .collect(),
                         ),
                     };
-                    match (instruction.results, value) {
-                        (ResultIds::None, None) => {}
-                        (ResultIds::One(result), Some(value)) => values[result.0] = Some(value),
-                        _ => unreachable!("verified instruction result arity"),
+                    if let Some(result) = instruction.result {
+                        values[result.0] = value;
                     }
                 }
                 let get =

@@ -66,9 +66,7 @@ Finite products also cross calls and returns by flattened scalar
 components, without native heap allocation. `docs/abi-shapes.md` records the
 current internal calling convention and its missing cost threshold. Core IR
 has typed values, conditional branches, variant matches, block parameters,
-inline ordered instruction result IDs, and task-local places for `var`.
-Current operations produce at most one result; the two-result form is reserved
-for capability creation. Nested `Result` applications use a finite
+and task-local places for `var`. Nested `Result` applications use a finite
 flattened ABI shape; see `examples/nested_result.phoebe`. Its verifier checks
 definition uniqueness, dominance, place initialization, affine moves,
 block-argument types, call targets and modes, and return
