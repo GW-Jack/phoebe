@@ -1,5 +1,6 @@
 pub mod capability_flow;
 pub mod core;
+pub mod frame_layout;
 pub mod native;
 pub mod project;
 pub mod runtime;

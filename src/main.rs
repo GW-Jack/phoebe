@@ -3,10 +3,10 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use phoebe::{core, native, project, syntax};
+use phoebe::{core, frame_layout, native, project, syntax};
 
 fn usage() -> &'static str {
-    "usage: phoebe check <file|project> | phoebe ir <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable>"
+    "usage: phoebe check <file|project> | phoebe ir <file|project> | phoebe frames <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable>"
 }
 
 fn command() -> Result<(), String> {
@@ -14,7 +14,7 @@ fn command() -> Result<(), String> {
     let action = args.next().ok_or_else(|| usage().to_owned())?;
     if !matches!(
         action.as_str(),
-        "check" | "ir" | "clif" | "cost" | "run" | "build"
+        "check" | "ir" | "frames" | "clif" | "cost" | "run" | "build"
     ) {
         return Err(usage().to_owned());
     }
@@ -39,6 +39,12 @@ fn command() -> Result<(), String> {
                 return Err(usage().into());
             }
             print!("{program}");
+        }
+        "frames" => {
+            if args.next().is_some() {
+                return Err(usage().into());
+            }
+            print!("{}", frame_layout::format(&program)?);
         }
         "clif" => {
             if args.next().is_some() {

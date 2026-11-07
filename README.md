@@ -35,6 +35,9 @@ Local projects can use a `phoebe.toml` manifest and explicit module imports;
 `docs/modules.md` describes the format and current limits.
 `docs/core-ir.md`, `docs/affine-ownership.md`, and `docs/call-borrows.md`
 describe the current IR and its limits.
+`phoebe frames <file|project>` prints planned suspension spill sets;
+`docs/native-frames.md` explains their current evidence and the remaining
+native poll ABI work.
 
 ```sh
 cargo run -- run examples/hello.phoebe

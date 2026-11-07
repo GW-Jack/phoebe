@@ -1684,7 +1684,7 @@ fn op_type(
     }
 }
 
-fn operands(operation: &Operation) -> Vec<ValueId> {
+pub(crate) fn operands(operation: &Operation) -> Vec<ValueId> {
     match operation {
         Operation::Const(_) | Operation::Bool(_) => vec![],
         Operation::Move(value) | Operation::Copy(value) => vec![*value],

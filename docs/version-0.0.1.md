@@ -133,6 +133,12 @@ frames remain open. A Rust host test also spawns a
 checked Core receiver that parks, wakes on a send, and returns its value.
 Internal Core calls can transfer an endpoint to a callee that closes it;
 interpreter and JIT executions agree on that synchronous path.
+`phoebe frames` now prints the verified Core suspension plan. A backward
+liveness pass finds only functions that can park and the values and places
+needed at each channel retry or pending call. It leaves creation-only and
+spawn-only functions on the direct-call path. `docs/native-frames.md` states
+the frame ABI obligations and evidence boundary; this analysis is not yet
+connected to native code generation.
 
 ## Commands
 
@@ -152,6 +158,7 @@ cargo run -- run examples/channel_create.phoebe
 cargo run -- run examples/channel_cleanup.phoebe
 cargo run -- run examples/spawn_close.phoebe --interp
 cargo run -- run examples/channel_exchange.phoebe --interp
+cargo run -- frames examples/channel_exchange.phoebe
 cargo run -- cost examples/copy.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
