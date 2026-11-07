@@ -5,8 +5,8 @@ IR is not yet Phoebe's complete checked IR or a proven semantics.
 
 A function contains typed SSA values, numbered basic blocks, and numbered
 mutable places. Each block has zero or more typed parameters, an instruction
-sequence, and exactly one `return`, `jump`, `branch`, `match`, or
-`channel.new.i64` terminator. A `jump`
+sequence, and exactly one `return`, `jump`, `branch`, `match`,
+`channel.new.i64`, `channel.send.i64`, or `channel.receive.i64` terminator. A `jump`
 supplies one typed value per destination parameter. An `if` expression lowers
 to a conditional branch and a join block whose parameter carries the chosen
 arm's result. A `while` statement lowers to a loop head, body, exit, and
@@ -77,7 +77,7 @@ without turning ordinary compilation into proof search.
 `capability-ir.md` gives the intended edge accounting and suspension rules
 for the next implementation slice.
 
-`channel.new.i64` is currently a checked Core-only edge. It takes an `I64`
+`channel.new.i64` is a checked Core edge. It takes an `I64`
 capacity and has a success successor with `SenderI64` and `ReceiverI64` block
 parameters, plus a failure successor with a `ResourceError` parameter.
 `close.handle` consumes either endpoint. Core derives a capability-flow graph
@@ -90,4 +90,17 @@ limits; plain `interpret` permits one task and 64 channel creations. Cranelift
 JIT and standalone object execution use the same scheduler through a hidden
 context parameter and agree on the tested success and failure paths. Source
 lowering supports a fallible `I64` channel pair binding and explicit endpoint
-close. Send/receive, structural cleanup, and task suspension remain open.
+close. Core also checks scalar send and receive terminators. Their sent,
+closed, value, and end edges retain the endpoint; a pending operation records
+the live capability slots and retries at the same terminator. One interpreter
+loop handles both pure functions and channel tasks. Pure entries run it
+directly; channel entries retain call frames and places across scheduler polls. A
+buffered send/receive and an empty receive that parks are exercised in tests.
+Native lowering returns an explicit unsupported error for these terminators
+until it has generated retained task frames. Internal Core functions can take
+owned channel endpoint parameters; a synchronous call transfers that right
+to the callee, which must close it before returning. The interpreter and JIT
+agree on an endpoint-owning call. The interpreter has also resumed a Core
+child receiver after a scheduler wake; child creation in that test is still
+performed by the Rust host, not generated from Core. Source send/receive,
+structural cleanup, and Core child task creation remain open.

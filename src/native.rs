@@ -32,39 +32,6 @@ pub struct JitExecutable {
     uses_runtime: bool,
 }
 
-fn runtime_context_functions(program: &Program) -> Vec<bool> {
-    let mut callers = vec![Vec::new(); program.functions.len()];
-    let mut needed = vec![false; program.functions.len()];
-    let mut ready = VecDeque::new();
-    for (caller, function) in program.functions.iter().enumerate() {
-        if function.value_types.iter().any(|ty| {
-            matches!(
-                ty,
-                Type::SenderI64 | Type::ReceiverI64 | Type::ResourceError
-            )
-        }) {
-            needed[caller] = true;
-            ready.push_back(caller);
-        }
-        for block in &function.blocks {
-            for instruction in &block.instructions {
-                if let Operation::Call(target, _) = instruction.operation {
-                    callers[target.0].push(caller);
-                }
-            }
-        }
-    }
-    while let Some(callee) = ready.pop_front() {
-        for &caller in &callers[callee] {
-            if !needed[caller] {
-                needed[caller] = true;
-                ready.push_back(caller);
-            }
-        }
-    }
-    needed
-}
-
 pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, String> {
     core::verify(program)?;
     let (_, entry) = program
@@ -92,7 +59,7 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
         .finish(settings::Flags::new(flags))
         .map_err(|e| e.to_string())?;
     let mut jit = JITBuilder::with_isa(isa, default_libcall_names());
-    let context_functions = runtime_context_functions(program);
+    let context_functions = program.runtime_context_functions();
     if context_functions.iter().any(|needed| *needed) {
         jit.symbol(
             "phoebe_rt_v1_channel_new_i64",
@@ -221,7 +188,7 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
 
 pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
     core::verify(program)?;
-    let context_functions = runtime_context_functions(program);
+    let context_functions = program.runtime_context_functions();
     let (_, entry) = program
         .function("main")
         .ok_or("standalone executable requires `fn main() -> I64`")?;
@@ -261,7 +228,7 @@ pub fn clif(program: &Program) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
     let mut output = String::new();
-    let context_functions = runtime_context_functions(program);
+    let context_functions = program.runtime_context_functions();
     compile_functions(
         &mut module,
         program,
@@ -274,7 +241,8 @@ pub fn clif(program: &Program) -> Result<String, String> {
 
 pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> {
     let object = emit_object(program)?;
-    let runtime_archive = if runtime_context_functions(program)
+    let runtime_archive = if program
+        .runtime_context_functions()
         .iter()
         .any(|needed| *needed)
     {
@@ -581,6 +549,8 @@ fn compile_functions<M: Module>(
                     Terminator::ChannelNew {
                         success, failure, ..
                     } => vec![success.0, failure.0],
+                    Terminator::ChannelSend { sent, closed, .. } => vec![sent.0, closed.0],
+                    Terminator::ChannelReceive { value, end, .. } => vec![value.0, end.0],
                 };
                 for target in successors {
                     if !seen[target] {
@@ -865,6 +835,11 @@ fn compile_functions<M: Module>(
                         builder
                             .ins()
                             .jump(blocks[success.0], &[sender.into(), receiver.into()]);
+                    }
+                    Terminator::ChannelSend { .. } | Terminator::ChannelReceive { .. } => {
+                        return Err(
+                            "native channel send/receive requires retained task frames".into()
+                        );
                     }
                 }
             }

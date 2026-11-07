@@ -143,6 +143,17 @@ pub enum Terminator {
         success: BlockId,
         failure: BlockId,
     },
+    ChannelSend {
+        sender: ValueId,
+        message: ValueId,
+        sent: BlockId,
+        closed: BlockId,
+    },
+    ChannelReceive {
+        receiver: ValueId,
+        value: BlockId,
+        end: BlockId,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -1621,6 +1632,8 @@ fn verify_ownership(program: &Program) -> Result<(), OwnershipError> {
                 Terminator::ChannelNew {
                     success, failure, ..
                 } => vec![success.0, failure.0],
+                Terminator::ChannelSend { sent, closed, .. } => vec![sent.0, closed.0],
+                Terminator::ChannelReceive { value, end, .. } => vec![value.0, end.0],
             };
             for target in successors {
                 match &mut incoming[target] {
@@ -1740,7 +1753,14 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                     if param_index != param.0
                         || function.value_types[param.0] != expected
                         || (function.param_modes[param_index] == ParamMode::Own
-                            && !matches!(expected, Type::I64 | Type::Bool | Type::Data(_)))
+                            && !matches!(
+                                expected,
+                                Type::I64
+                                    | Type::Bool
+                                    | Type::Data(_)
+                                    | Type::SenderI64
+                                    | Type::ReceiverI64
+                            ))
                     {
                         return Err(format!("{}: invalid function parameter", function.name));
                     }
@@ -1801,6 +1821,18 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                         ));
                     }
                     vec![*success, *failure]
+                }
+                Terminator::ChannelSend { sent, closed, .. } => {
+                    if sent == closed {
+                        return Err(format!("{}: send edges must be distinct", function.name));
+                    }
+                    vec![*sent, *closed]
+                }
+                Terminator::ChannelReceive { value, end, .. } => {
+                    if value == end {
+                        return Err(format!("{}: receive edges must be distinct", function.name));
+                    }
+                    vec![*value, *end]
                 }
             };
             for target in targets {
@@ -2008,6 +2040,43 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                         ));
                     }
                 }
+                Terminator::ChannelSend {
+                    sender,
+                    message,
+                    sent,
+                    closed,
+                } => {
+                    check_use(*sender, block_id, end)?;
+                    check_use(*message, block_id, end)?;
+                    if function.value_types[sender.0] != Type::SenderI64
+                        || function.value_types[message.0] != Type::I64
+                        || !function.blocks[sent.0].params.is_empty()
+                        || !function.blocks[closed.0].params.is_empty()
+                    {
+                        return Err(format!(
+                            "{}: channel send edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
+                Terminator::ChannelReceive {
+                    receiver,
+                    value,
+                    end: end_block,
+                } => {
+                    check_use(*receiver, block_id, end)?;
+                    let params = &function.blocks[value.0].params;
+                    if function.value_types[receiver.0] != Type::ReceiverI64
+                        || params.len() != 1
+                        || function.value_types[params[0].0] != Type::I64
+                        || !function.blocks[end_block.0].params.is_empty()
+                    {
+                        return Err(format!(
+                            "{}: channel receive edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
             }
         }
     }
@@ -2083,14 +2152,24 @@ fn verify_capability_edges(program: &Program) -> Result<(), String> {
             .blocks
             .iter()
             .map(|block| {
-                let actions = block
-                    .instructions
-                    .iter()
-                    .filter_map(|instruction| match instruction.operation {
-                        Operation::CloseHandle(value) => Some(CapAction::Close(slot(value))),
-                        _ => None,
-                    })
-                    .collect();
+                let mut actions = Vec::new();
+                for instruction in &block.instructions {
+                    match &instruction.operation {
+                        Operation::CloseHandle(value) => {
+                            actions.push(CapAction::Close(slot(*value)))
+                        }
+                        Operation::Call(_, args) => {
+                            for arg in args {
+                                if let CallArg::Value(value) = arg
+                                    && is_channel_handle(function.value_types[value.0])
+                                {
+                                    actions.push(CapAction::Transfer(slot(*value)));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 let edge = |target: CapTarget, actions| capability_flow::Edge { target, actions };
                 let exits = match &block.terminator {
                     Terminator::Return(_) => vec![edge(CapTarget::Return, vec![])],
@@ -2131,6 +2210,31 @@ fn verify_capability_edges(program: &Program) -> Result<(), String> {
                                 }],
                             ),
                             edge(CapTarget::Block(failure.0), vec![]),
+                        ]
+                    }
+                    Terminator::ChannelSend {
+                        sender,
+                        sent,
+                        closed,
+                        ..
+                    } => {
+                        let require = vec![CapAction::Require(slot(*sender))];
+                        vec![
+                            edge(CapTarget::Block(sent.0), require.clone()),
+                            edge(CapTarget::Block(closed.0), require.clone()),
+                            edge(CapTarget::Retry, require),
+                        ]
+                    }
+                    Terminator::ChannelReceive {
+                        receiver,
+                        value,
+                        end,
+                    } => {
+                        let require = vec![CapAction::Require(slot(*receiver))];
+                        vec![
+                            edge(CapTarget::Block(value.0), require.clone()),
+                            edge(CapTarget::Block(end.0), require.clone()),
+                            edge(CapTarget::Retry, require),
                         ]
                     }
                 };
@@ -2184,6 +2288,46 @@ impl Program {
             .map(|(index, function)| (FunctionId(index), function))
     }
 
+    /// A runtime pointer is needed only by functions that perform a runtime
+    /// operation and their transitive callers. Value types alone do not force
+    /// a runtime dependency.
+    pub fn runtime_context_functions(&self) -> Vec<bool> {
+        let mut callers = vec![Vec::new(); self.functions.len()];
+        let mut needed = vec![false; self.functions.len()];
+        let mut ready = VecDeque::new();
+        for (caller, function) in self.functions.iter().enumerate() {
+            for block in &function.blocks {
+                if !needed[caller]
+                    && (matches!(
+                        block.terminator,
+                        Terminator::ChannelNew { .. }
+                            | Terminator::ChannelSend { .. }
+                            | Terminator::ChannelReceive { .. }
+                    ) || block.instructions.iter().any(|instruction| {
+                        matches!(instruction.operation, Operation::CloseHandle(_))
+                    }))
+                {
+                    needed[caller] = true;
+                    ready.push_back(caller);
+                }
+                for instruction in &block.instructions {
+                    if let Operation::Call(target, _) = instruction.operation {
+                        callers[target.0].push(caller);
+                    }
+                }
+            }
+        }
+        while let Some(callee) = ready.pop_front() {
+            for &caller in &callers[callee] {
+                if !needed[caller] {
+                    needed[caller] = true;
+                    ready.push_back(caller);
+                }
+            }
+        }
+        needed
+    }
+
     pub fn interpret(&self, name: &str, args: &[i64]) -> Result<i64, String> {
         self.interpret_with_limits(name, args, ScopeLimits::default())
     }
@@ -2217,232 +2361,16 @@ impl Program {
             .iter()
             .map(|value| Value::I64(*value))
             .collect::<Vec<_>>();
-        if self.functions.iter().any(|function| {
-            function
-                .value_types
-                .iter()
-                .any(|ty| matches!(ty, Type::SenderI64 | Type::ReceiverI64))
-        }) {
-            let root = CoreTask {
-                program: self.clone(),
-                entry: id,
-                args,
-            };
+        let root = CoreTask::new(self.clone(), id, args);
+        if self.runtime_context_functions()[id.0] {
             let mut scheduler =
                 Scheduler::new(root, limits.tasks, limits.channels, limits.replies)?;
             scheduler.run()
         } else {
-            Ok(as_i64(self.interpret_id(
-                id,
-                &args,
-                &mut Vec::new(),
-                0,
-                None,
-            )?))
-        }
-    }
-
-    fn interpret_id(
-        &self,
-        id: FunctionId,
-        args: &[Value],
-        stores: &mut Vec<Option<Value>>,
-        depth: usize,
-        mut context: Option<&mut Context<'_>>,
-    ) -> Result<Value, String> {
-        if depth >= 1024 {
-            return Err("interpreter call depth exceeded 1024".into());
-        }
-        let function = &self.functions[id.0];
-        if args.len() != function.blocks[0].params.len() {
-            return Err(format!(
-                "{} expects {} arguments, got {}",
-                function.name,
-                function.blocks[0].params.len(),
-                args.len()
-            ));
-        }
-        let mut values = vec![None; function.value_types.len()];
-        let base = stores.len();
-        stores.resize(base + function.place_types.len(), None);
-        for (param, arg) in function.blocks[0].params.iter().zip(args) {
-            values[param.0] = Some(arg.clone());
-        }
-        let mut current = 0usize;
-        loop {
-            let block = &function.blocks[current];
-            for instruction in &block.instructions {
-                let get = |id: ValueId| values[id.0].clone().expect("verified value is defined");
-                let value = match &instruction.operation {
-                    Operation::Const(x) => Some(Value::I64(*x)),
-                    Operation::Bool(x) => Some(Value::Bool(*x)),
-                    Operation::Move(value) => Some(get(*value)),
-                    Operation::Copy(value) => Some(get(*value)),
-                    Operation::Variant(data_id, tag, payload) => Some(Value::Data(
-                        *data_id,
-                        *tag,
-                        payload.map(|value| Box::new(get(value))),
-                    )),
-                    Operation::Product(data_id, fields) => Some(Value::Product(
-                        *data_id,
-                        fields.iter().map(|field| get(*field)).collect(),
-                    )),
-                    Operation::Field(owner, index) => {
-                        let Value::Product(_, fields) = get(*owner) else {
-                            unreachable!("verified product")
-                        };
-                        Some(fields[*index].clone())
-                    }
-                    Operation::ReadField(place, index) => {
-                        let Some(Value::Product(_, fields)) = &stores[base + place.0] else {
-                            unreachable!("verified live product place")
-                        };
-                        Some(fields[*index].clone())
-                    }
-                    Operation::Neg(a) => Some(Value::I64(as_i64(get(*a)).wrapping_neg())),
-                    Operation::Add(a, b) => {
-                        Some(Value::I64(as_i64(get(*a)).wrapping_add(as_i64(get(*b)))))
-                    }
-                    Operation::Sub(a, b) => {
-                        Some(Value::I64(as_i64(get(*a)).wrapping_sub(as_i64(get(*b)))))
-                    }
-                    Operation::Mul(a, b) => {
-                        Some(Value::I64(as_i64(get(*a)).wrapping_mul(as_i64(get(*b)))))
-                    }
-                    Operation::Eq(a, b) => Some(Value::Bool(get(*a) == get(*b))),
-                    Operation::Lt(a, b) => Some(Value::Bool(as_i64(get(*a)) < as_i64(get(*b)))),
-                    Operation::Call(target, args) => {
-                        let args = args
-                            .iter()
-                            .map(|arg| match arg {
-                                CallArg::Value(value) | CallArg::Ref(value, _) => get(*value),
-                                CallArg::Borrow(place, _) => Value::Ref(base + place.0),
-                            })
-                            .collect::<Vec<_>>();
-                        Some(self.interpret_id(
-                            *target,
-                            &args,
-                            stores,
-                            depth + 1,
-                            context.as_deref_mut(),
-                        )?)
-                    }
-                    Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
-                        stores[base + place.0] = Some(get(*value));
-                        None
-                    }
-                    Operation::Load(place) => Some(
-                        stores[base + place.0]
-                            .clone()
-                            .expect("verified place is initialized"),
-                    ),
-                    Operation::Take(place) => {
-                        Some(stores[base + place.0].take().expect("verified owned place"))
-                    }
-                    Operation::CopyPlace(place) => Some(
-                        stores[base + place.0]
-                            .clone()
-                            .expect("verified owned place"),
-                    ),
-                    Operation::LoadRef(reference) => {
-                        let Value::Ref(slot) = get(*reference) else {
-                            unreachable!("verified reference")
-                        };
-                        Some(stores[slot].clone().expect("live borrowed place"))
-                    }
-                    Operation::StoreRef(reference, value) => {
-                        let Value::Ref(slot) = get(*reference) else {
-                            unreachable!("verified reference")
-                        };
-                        stores[slot] = Some(get(*value));
-                        None
-                    }
-                    Operation::CloseHandle(value) => {
-                        let context = context.as_deref_mut().expect("channel task has context");
-                        match get(*value) {
-                            Value::Sender(token) => {
-                                context.close_sender(runtime::Sender::from_token(token))?
-                            }
-                            Value::Receiver(token) => {
-                                context.close_receiver(runtime::Receiver::from_token(token))?
-                            }
-                            _ => unreachable!("verified channel endpoint"),
-                        }
-                        None
-                    }
-                };
-                if let Some(result) = instruction.result {
-                    values[result.0] = value;
-                }
-            }
-            let get = |id: ValueId| values[id.0].clone().expect("verified value is defined");
-            match &block.terminator {
-                Terminator::Return(value) => {
-                    let result = get(*value);
-                    stores.truncate(base);
-                    return Ok(result);
-                }
-                Terminator::Jump(target, args) => {
-                    let incoming = args.iter().map(|arg| get(*arg)).collect::<Vec<_>>();
-                    for (param, value) in function.blocks[target.0].params.iter().zip(incoming) {
-                        values[param.0] = Some(value);
-                    }
-                    current = target.0;
-                }
-                Terminator::Branch {
-                    condition,
-                    then_block,
-                    else_block,
-                } => {
-                    current = if as_bool(get(*condition)) {
-                        then_block.0
-                    } else {
-                        else_block.0
-                    };
-                }
-                Terminator::Match { subject, arms } => {
-                    let original = get(*subject);
-                    let Value::Data(_, tag, payload) = &original else {
-                        unreachable!("verified sum value")
-                    };
-                    let arm = arms[*tag];
-                    if let Some(param) = function.blocks[arm.target.0].params.first() {
-                        values[param.0] = Some(match arm.binding {
-                            MatchBinding::Payload => *payload.clone().expect("verified payload"),
-                            MatchBinding::Whole => original,
-                            MatchBinding::Discard => unreachable!("verified match binding"),
-                        });
-                    }
-                    current = arm.target.0;
-                }
-                Terminator::ChannelNew {
-                    capacity,
-                    success,
-                    failure,
-                } => {
-                    let size = as_i64(get(*capacity));
-                    let outcome = usize::try_from(size)
-                        .map_err(|_| ResourceError::InvalidChannelCapacity)
-                        .and_then(|size| {
-                            context
-                                .as_deref_mut()
-                                .expect("channel task has context")
-                                .channel_typed(size)
-                        });
-                    match outcome {
-                        Ok((sender, receiver)) => {
-                            let params = &function.blocks[success.0].params;
-                            values[params[0].0] = Some(Value::Sender(sender.token()));
-                            values[params[1].0] = Some(Value::Receiver(receiver.token()));
-                            current = success.0;
-                        }
-                        Err(error) => {
-                            let param = function.blocks[failure.0].params[0];
-                            values[param.0] = Some(Value::ResourceError(error));
-                            current = failure.0;
-                        }
-                    }
-                }
+            let mut root = root;
+            match root.poll_step(None)? {
+                Poll::Ready(value) => Ok(value),
+                Poll::Pending => unreachable!("pure Core cannot suspend"),
             }
         }
     }
@@ -2450,16 +2378,297 @@ impl Program {
 
 struct CoreTask {
     program: Program,
-    entry: FunctionId,
-    args: Vec<Value>,
+    frames: Vec<InterpreterFrame>,
+    stores: Vec<Option<Value>>,
+}
+
+struct InterpreterFrame {
+    function: FunctionId,
+    values: Vec<Option<Value>>,
+    base: usize,
+    block: usize,
+    instruction: usize,
+    return_to: Option<ValueId>,
+}
+
+impl CoreTask {
+    fn new(program: Program, entry: FunctionId, args: Vec<Value>) -> Self {
+        let mut task = Self {
+            program,
+            frames: Vec::new(),
+            stores: Vec::new(),
+        };
+        task.push_frame(entry, args, None);
+        task
+    }
+
+    fn push_frame(&mut self, function: FunctionId, args: Vec<Value>, return_to: Option<ValueId>) {
+        let signature = &self.program.functions[function.0];
+        let mut values = vec![None; signature.value_types.len()];
+        for (param, arg) in signature.blocks[0].params.iter().zip(args) {
+            values[param.0] = Some(arg);
+        }
+        let base = self.stores.len();
+        self.stores.resize(base + signature.place_types.len(), None);
+        self.frames.push(InterpreterFrame {
+            function,
+            values,
+            base,
+            block: 0,
+            instruction: 0,
+            return_to,
+        });
+    }
+
+    fn value(&self, id: ValueId) -> Value {
+        self.frames.last().expect("active frame").values[id.0]
+            .clone()
+            .expect("verified value is defined")
+    }
+
+    fn enter(&mut self, target: BlockId, args: Vec<Value>) {
+        let function = self.frames.last().expect("active frame").function;
+        let frame = self.frames.last_mut().expect("active frame");
+        for (param, arg) in self.program.functions[function.0].blocks[target.0]
+            .params
+            .iter()
+            .zip(args)
+        {
+            frame.values[param.0] = Some(arg);
+        }
+        frame.block = target.0;
+        frame.instruction = 0;
+    }
+
+    fn eval_instruction(
+        &mut self,
+        instruction: &Instruction,
+        context: Option<&mut Context<'_>>,
+    ) -> Result<Option<Value>, String> {
+        let get = |id| self.value(id);
+        let base = self.frames.last().expect("active frame").base;
+        Ok(match &instruction.operation {
+            Operation::Const(x) => Some(Value::I64(*x)),
+            Operation::Bool(x) => Some(Value::Bool(*x)),
+            Operation::Move(value) | Operation::Copy(value) => Some(get(*value)),
+            Operation::Variant(id, tag, payload) => Some(Value::Data(
+                *id,
+                *tag,
+                payload.map(|value| Box::new(get(value))),
+            )),
+            Operation::Product(id, fields) => Some(Value::Product(
+                *id,
+                fields.iter().map(|field| get(*field)).collect(),
+            )),
+            Operation::Field(owner, index) => {
+                let Value::Product(_, fields) = get(*owner) else {
+                    unreachable!("verified product")
+                };
+                Some(fields[*index].clone())
+            }
+            Operation::ReadField(place, index) => {
+                let Some(Value::Product(_, fields)) = &self.stores[base + place.0] else {
+                    unreachable!("verified product place")
+                };
+                Some(fields[*index].clone())
+            }
+            Operation::Neg(a) => Some(Value::I64(as_i64(get(*a)).wrapping_neg())),
+            Operation::Add(a, b) => Some(Value::I64(as_i64(get(*a)).wrapping_add(as_i64(get(*b))))),
+            Operation::Sub(a, b) => Some(Value::I64(as_i64(get(*a)).wrapping_sub(as_i64(get(*b))))),
+            Operation::Mul(a, b) => Some(Value::I64(as_i64(get(*a)).wrapping_mul(as_i64(get(*b))))),
+            Operation::Eq(a, b) => Some(Value::Bool(get(*a) == get(*b))),
+            Operation::Lt(a, b) => Some(Value::Bool(as_i64(get(*a)) < as_i64(get(*b)))),
+            Operation::Call(_, _) => unreachable!("calls push a retained frame"),
+            Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
+                let value = get(*value);
+                self.stores[base + place.0] = Some(value);
+                None
+            }
+            Operation::Load(place) | Operation::CopyPlace(place) => {
+                Some(self.stores[base + place.0].clone().expect("verified place"))
+            }
+            Operation::Take(place) => Some(
+                self.stores[base + place.0]
+                    .take()
+                    .expect("verified owned place"),
+            ),
+            Operation::LoadRef(reference) => {
+                let Value::Ref(slot) = get(*reference) else {
+                    unreachable!("verified reference")
+                };
+                Some(self.stores[slot].clone().expect("verified borrowed place"))
+            }
+            Operation::StoreRef(reference, value) => {
+                let Value::Ref(slot) = get(*reference) else {
+                    unreachable!("verified reference")
+                };
+                let value = get(*value);
+                self.stores[slot] = Some(value);
+                None
+            }
+            Operation::CloseHandle(value) => {
+                let context = context.expect("runtime operation has a context");
+                match get(*value) {
+                    Value::Sender(token) => {
+                        context.close_sender(runtime::Sender::from_token(token))?
+                    }
+                    Value::Receiver(token) => {
+                        context.close_receiver(runtime::Receiver::from_token(token))?
+                    }
+                    _ => unreachable!("verified channel endpoint"),
+                }
+                None
+            }
+        })
+    }
+}
+
+impl CoreTask {
+    fn poll_step(&mut self, mut context: Option<&mut Context<'_>>) -> Result<Poll<i64>, String> {
+        loop {
+            let frame = self.frames.last().expect("active frame");
+            let block = &self.program.functions[frame.function.0].blocks[frame.block];
+            if frame.instruction < block.instructions.len() {
+                let instruction = block.instructions[frame.instruction].clone();
+                if let Operation::Call(target, args) = &instruction.operation {
+                    let base = frame.base;
+                    let args = args
+                        .iter()
+                        .map(|arg| match arg {
+                            CallArg::Value(value) | CallArg::Ref(value, _) => self.value(*value),
+                            CallArg::Borrow(place, _) => Value::Ref(base + place.0),
+                        })
+                        .collect();
+                    if self.frames.len() >= 1024 {
+                        return Err("interpreter call depth exceeded 1024".into());
+                    }
+                    self.frames.last_mut().expect("caller frame").instruction += 1;
+                    self.push_frame(*target, args, instruction.result);
+                    continue;
+                }
+                let result = self.eval_instruction(&instruction, context.as_deref_mut())?;
+                let frame = self.frames.last_mut().expect("active frame");
+                if let Some(id) = instruction.result {
+                    frame.values[id.0] = result;
+                }
+                frame.instruction += 1;
+                continue;
+            }
+            let terminator = block.terminator.clone();
+            match terminator {
+                Terminator::Return(value) => {
+                    let result = self.value(value);
+                    let frame = self.frames.pop().expect("active frame");
+                    self.stores.truncate(frame.base);
+                    if let Some(parent) = self.frames.last_mut() {
+                        parent.values[frame.return_to.expect("call has result").0] = Some(result);
+                    } else {
+                        return Ok(Poll::Ready(as_i64(result)));
+                    }
+                }
+                Terminator::Jump(target, args) => {
+                    let args = args.into_iter().map(|arg| self.value(arg)).collect();
+                    self.enter(target, args);
+                }
+                Terminator::Branch {
+                    condition,
+                    then_block,
+                    else_block,
+                } => {
+                    self.enter(
+                        if as_bool(self.value(condition)) {
+                            then_block
+                        } else {
+                            else_block
+                        },
+                        Vec::new(),
+                    );
+                }
+                Terminator::Match { subject, arms } => {
+                    let original = self.value(subject);
+                    let Value::Data(_, tag, payload) = &original else {
+                        unreachable!("verified sum")
+                    };
+                    let arm = arms[*tag];
+                    let args = match arm.binding {
+                        MatchBinding::Discard => Vec::new(),
+                        MatchBinding::Payload => vec![*payload.clone().expect("verified payload")],
+                        MatchBinding::Whole => vec![original],
+                    };
+                    self.enter(arm.target, args);
+                }
+                Terminator::ChannelNew {
+                    capacity,
+                    success,
+                    failure,
+                } => {
+                    let result = usize::try_from(as_i64(self.value(capacity)))
+                        .map_err(|_| ResourceError::InvalidChannelCapacity)
+                        .and_then(|capacity| {
+                            context
+                                .as_deref_mut()
+                                .expect("runtime context")
+                                .channel_typed(capacity)
+                        });
+                    match result {
+                        Ok((sender, receiver)) => self.enter(
+                            success,
+                            vec![
+                                Value::Sender(sender.token()),
+                                Value::Receiver(receiver.token()),
+                            ],
+                        ),
+                        Err(error) => self.enter(failure, vec![Value::ResourceError(error)]),
+                    }
+                }
+                Terminator::ChannelSend {
+                    sender,
+                    message,
+                    sent,
+                    closed,
+                } => {
+                    let Value::Sender(token) = self.value(sender) else {
+                        unreachable!("verified sender")
+                    };
+                    let message = as_i64(self.value(message));
+                    match context
+                        .as_deref_mut()
+                        .expect("runtime context")
+                        .send(&runtime::Sender::from_token(token), message)?
+                    {
+                        runtime::SendResult::Sent => self.enter(sent, Vec::new()),
+                        runtime::SendResult::Closed(_) => self.enter(closed, Vec::new()),
+                        runtime::SendResult::Pending(_) => return Ok(Poll::Pending),
+                    }
+                }
+                Terminator::ChannelReceive {
+                    receiver,
+                    value,
+                    end,
+                } => {
+                    let Value::Receiver(token) = self.value(receiver) else {
+                        unreachable!("verified receiver")
+                    };
+                    match context
+                        .as_deref_mut()
+                        .expect("runtime context")
+                        .receive(&runtime::Receiver::from_token(token))?
+                    {
+                        runtime::ReceiveResult::Value(message) => {
+                            self.enter(value, vec![Value::I64(message)])
+                        }
+                        runtime::ReceiveResult::End => self.enter(end, Vec::new()),
+                        runtime::ReceiveResult::Pending => return Ok(Poll::Pending),
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Task for CoreTask {
     fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
-        let value =
-            self.program
-                .interpret_id(self.entry, &self.args, &mut Vec::new(), 0, Some(context))?;
-        Ok(Poll::Ready(as_i64(value)))
+        self.poll_step(Some(context))
     }
 }
 
@@ -2631,10 +2840,145 @@ impl fmt::Display for Program {
                         "    channel.new.i64 v{} success block{} failure block{}",
                         capacity.0, success.0, failure.0
                     )?,
+                    Terminator::ChannelSend {
+                        sender,
+                        message,
+                        sent,
+                        closed,
+                    } => writeln!(
+                        f,
+                        "    channel.send.i64 v{}, v{} sent block{} closed block{} pending retry",
+                        sender.0, message.0, sent.0, closed.0
+                    )?,
+                    Terminator::ChannelReceive {
+                        receiver,
+                        value,
+                        end,
+                    } => writeln!(
+                        f,
+                        "    channel.receive.i64 v{} value block{} end block{} pending retry",
+                        receiver.0, value.0, end.0
+                    )?,
                 }
             }
             writeln!(f, "}}")?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod interpreter_frame_tests {
+    use super::*;
+    use crate::runtime::{Sender, TaskId};
+
+    fn instruction(result: Option<ValueId>, operation: Operation) -> Instruction {
+        Instruction {
+            result,
+            operation,
+            span: Span { start: 0, end: 0 },
+        }
+    }
+
+    fn receiver_program() -> Program {
+        Program {
+            data: vec![],
+            functions: vec![Function {
+                name: "child".into(),
+                param_modes: vec![ParamMode::Own],
+                return_type: Type::I64,
+                value_types: vec![Type::ReceiverI64, Type::I64, Type::I64],
+                place_types: vec![],
+                blocks: vec![
+                    Block {
+                        params: vec![ValueId(0)],
+                        instructions: vec![],
+                        terminator: Terminator::ChannelReceive {
+                            receiver: ValueId(0),
+                            value: BlockId(1),
+                            end: BlockId(2),
+                        },
+                    },
+                    Block {
+                        params: vec![ValueId(1)],
+                        instructions: vec![instruction(None, Operation::CloseHandle(ValueId(0)))],
+                        terminator: Terminator::Return(ValueId(1)),
+                    },
+                    Block {
+                        params: vec![],
+                        instructions: vec![
+                            instruction(None, Operation::CloseHandle(ValueId(0))),
+                            instruction(Some(ValueId(2)), Operation::Const(0)),
+                        ],
+                        terminator: Terminator::Return(ValueId(2)),
+                    },
+                ],
+            }],
+        }
+    }
+
+    struct Root {
+        program: Program,
+        sender: Option<Sender>,
+        child: Option<TaskId>,
+        phase: u8,
+    }
+
+    impl Task for Root {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            if self.phase == 0 {
+                let (sender, receiver) = context.channel(1)?;
+                let token = receiver.token();
+                let child = CoreTask::new(
+                    self.program.clone(),
+                    FunctionId(0),
+                    vec![Value::Receiver(token)],
+                );
+                self.child = Some(context.spawn(child, &[token])?);
+                self.sender = Some(sender);
+                self.phase = 1;
+                context.yield_now()?;
+                return Ok(Poll::Pending);
+            }
+            if self.phase == 1 {
+                assert_eq!(
+                    context.send(self.sender.as_ref().expect("sender"), 42)?,
+                    runtime::SendResult::Sent
+                );
+                context.close_sender(self.sender.take().expect("sender"))?;
+                self.phase = 2;
+            }
+            match context.join()? {
+                Poll::Pending => Ok(Poll::Pending),
+                Poll::Ready(()) => Ok(Poll::Ready(
+                    context
+                        .task_result(self.child.expect("child"))?
+                        .expect("child result"),
+                )),
+            }
+        }
+    }
+
+    #[test]
+    fn retained_core_child_frame_resumes_after_receive_wake() {
+        let program = receiver_program();
+        verify(&program).unwrap();
+        let mut scheduler = Scheduler::new(
+            Root {
+                program,
+                sender: None,
+                child: None,
+                phase: 0,
+            },
+            2,
+            1,
+            0,
+        )
+        .unwrap();
+        assert_eq!(scheduler.run().unwrap(), 42);
+        assert!(scheduler.stats().parks >= 1);
+        assert!(scheduler.stats().wakes >= 1);
+        assert_eq!(scheduler.open_handles(), 0);
+        scheduler.verify().unwrap();
     }
 }

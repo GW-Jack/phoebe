@@ -1,5 +1,6 @@
 //! Exact ownership flow for capability slots.
-//! Core IR derives these graphs for channel creation, close, and block edges.
+//! Core IR derives these graphs for channel creation, close, send, receive,
+//! and block edges. `Retry` resumes a terminator with its retained frame.
 
 use std::collections::VecDeque;
 
@@ -20,6 +21,7 @@ pub enum Action {
 pub enum Target {
     Block(usize),
     Suspend(usize),
+    Retry,
     Return,
     Failure,
 }
@@ -169,6 +171,19 @@ pub fn verify(graph: &Graph) -> Result<FlowFacts, String> {
             let mut outgoing = state.clone();
             apply(&edge.actions, &mut outgoing, block_id)?;
             match edge.target {
+                Target::Retry => {
+                    if outgoing != state {
+                        return Err(format!(
+                            "block {block_id}: retry edge changes retained capability ownership"
+                        ));
+                    }
+                    facts.suspensions.push(Suspension {
+                        block: block_id,
+                        edge: edge_id,
+                        resume: block_id,
+                        live: live_slots(&outgoing),
+                    });
+                }
                 Target::Block(target) | Target::Suspend(target) => {
                     if matches!(edge.target, Target::Suspend(_)) {
                         facts.suspensions.push(Suspension {

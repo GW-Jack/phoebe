@@ -16,7 +16,7 @@ and block boundaries. The current shapes are:
 | `&I64`, `&mut I64` | one native address |
 | Bare `SenderI64`, `ReceiverI64`, `ResourceError` | one I64 handle or error code |
 
-Functions that contain channel capabilities, and their transitive callers,
+Functions that perform channel runtime operations, and their transitive callers,
 receive a hidden pointer to the current scoped runtime context. Unrelated
 functions keep their existing signatures. Calls forward the pointer only when
 the callee requires it. `channel.new.i64` calls a C ABI shim with the context, capacity,

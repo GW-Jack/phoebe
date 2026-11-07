@@ -47,8 +47,9 @@ Rust tasks. All capacity reservations precede publication of either new
 right, so an error creates no partial endpoint pair. Core lowers hand-built
 `channel.new.i64` edges through `channel_typed` in its interpreter, and its
 verifier checks the success/failure ownership graph. Source syntax and native
-code generation use this bridge for creation and close. The current Core interpreter uses one
-root task; send, receive, child tasks, and suspension are not yet executable
+code generation use this bridge for creation and close. The Core interpreter
+now retains call frames and places across pending scalar sends and receives.
+It still runs one Core root task; child task creation is not yet executable
 through Core.
 
 `reply()` creates a one-shot right and receiver. A `Request` holds an `I64`

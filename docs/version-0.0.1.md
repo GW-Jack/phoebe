@@ -111,8 +111,15 @@ lexical cleanup remain open. `docs/capability-ir.md` specifies
 the integration boundary.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
-retry across both operations. Core and Cranelift still need generated task
-frames and suspension edges before source send/receive can use those calls.
+retry across both operations. Cranelift still needs generated task frames
+before source send/receive can use those calls in both execution engines.
+Core now checks scalar send/receive terminators and derives live-right maps
+for retry suspension. Its interpreter retains frames and places across a
+pending operation, and executes buffered scalar traffic. Core child task
+creation and native retained frames remain open. A Rust host test spawns a
+checked Core receiver that parks, wakes on a send, and returns its value.
+Internal Core calls can transfer an endpoint to a callee that closes it;
+interpreter and JIT executions agree on that synchronous path.
 
 ## Commands
 

@@ -164,6 +164,42 @@ fn suspension_records_retained_frame_capabilities() {
 }
 
 #[test]
+fn retry_resumes_at_the_terminator_without_replaying_block_actions() {
+    let graph = Graph {
+        slots: 2,
+        entry_live: vec![],
+        blocks: vec![
+            Block {
+                actions: vec![Action::CreatePair {
+                    first: Slot(0),
+                    second: Slot(1),
+                }],
+                exits: vec![
+                    edge(Target::Retry, vec![Action::Require(Slot(0))]),
+                    edge(Target::Block(1), vec![]),
+                ],
+            },
+            Block {
+                actions: vec![Action::Close(Slot(0)), Action::Close(Slot(1))],
+                exits: vec![edge(Target::Return, vec![])],
+            },
+        ],
+    };
+    let facts = verify(&graph).unwrap();
+    assert_eq!(facts.suspensions.len(), 1);
+    assert_eq!(facts.suspensions[0].resume, 0);
+    assert_eq!(facts.suspensions[0].live, vec![Slot(0), Slot(1)]);
+
+    let mut invalid = graph;
+    invalid.blocks[0].exits[0].actions = vec![Action::Close(Slot(0))];
+    assert!(
+        verify(&invalid)
+            .unwrap_err()
+            .contains("retry edge changes retained")
+    );
+}
+
+#[test]
 fn capability_cannot_be_duplicated_or_consumed_twice() {
     let mut graph = Graph {
         slots: 1,

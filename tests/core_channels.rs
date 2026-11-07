@@ -65,6 +65,140 @@ fn channel_program() -> Program {
     }
 }
 
+fn send_receive_program() -> Program {
+    let mut program = channel_program();
+    let function = &mut program.functions[0];
+    function.value_types.extend([Type::I64; 5]);
+    function.blocks[1].instructions = vec![instruction(Some(4), Operation::Const(41))];
+    function.blocks[1].terminator = Terminator::ChannelSend {
+        sender: ValueId(1),
+        message: ValueId(4),
+        sent: BlockId(3),
+        closed: BlockId(5),
+    };
+    function.blocks.push(Block {
+        params: vec![],
+        instructions: vec![],
+        terminator: Terminator::ChannelReceive {
+            receiver: ValueId(2),
+            value: BlockId(4),
+            end: BlockId(6),
+        },
+    });
+    function.blocks.push(Block {
+        params: vec![ValueId(6)],
+        instructions: vec![
+            instruction(None, Operation::CloseHandle(ValueId(1))),
+            instruction(None, Operation::CloseHandle(ValueId(2))),
+            instruction(Some(7), Operation::Const(1)),
+            instruction(Some(8), Operation::Add(ValueId(6), ValueId(7))),
+        ],
+        terminator: Terminator::Return(ValueId(8)),
+    });
+    for (block_id, result) in [(5, 9), (6, 10)] {
+        function.blocks.push(Block {
+            params: vec![],
+            instructions: vec![
+                instruction(None, Operation::CloseHandle(ValueId(1))),
+                instruction(None, Operation::CloseHandle(ValueId(2))),
+                instruction(Some(result), Operation::Const(block_id as i64)),
+            ],
+            terminator: Terminator::Return(ValueId(result)),
+        });
+    }
+    program
+}
+
+#[test]
+fn checked_core_send_and_receive_preserve_rights_and_value() {
+    let program = send_receive_program();
+    core::verify(&program).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    let printed = program.to_string();
+    assert!(printed.contains("channel.send.i64"));
+    assert!(printed.contains("channel.receive.i64"));
+    assert!(
+        native::run(&program, "main", &[])
+            .unwrap_err()
+            .contains("retained task frames")
+    );
+}
+
+#[test]
+fn core_receive_parks_with_a_retained_frame_until_scope_deadlock() {
+    let mut program = channel_program();
+    let function = &mut program.functions[0];
+    function.value_types.push(Type::I64);
+    function.blocks[1].instructions.clear();
+    function.blocks[1].terminator = Terminator::ChannelReceive {
+        receiver: ValueId(2),
+        value: BlockId(3),
+        end: BlockId(4),
+    };
+    function.blocks.push(Block {
+        params: vec![ValueId(6)],
+        instructions: vec![
+            instruction(None, Operation::CloseHandle(ValueId(1))),
+            instruction(None, Operation::CloseHandle(ValueId(2))),
+        ],
+        terminator: Terminator::Return(ValueId(6)),
+    });
+    function.blocks.push(Block {
+        params: vec![],
+        instructions: vec![
+            instruction(None, Operation::CloseHandle(ValueId(1))),
+            instruction(None, Operation::CloseHandle(ValueId(2))),
+            instruction(Some(4), Operation::Const(0)),
+        ],
+        terminator: Terminator::Return(ValueId(4)),
+    });
+    core::verify(&program).unwrap();
+    assert!(
+        program
+            .interpret("main", &[])
+            .unwrap_err()
+            .contains("scope deadlocked")
+    );
+}
+
+#[test]
+fn owned_endpoint_call_transfers_the_right_to_the_callee() {
+    let mut program = channel_program();
+    let main = &mut program.functions[0];
+    main.blocks[1].instructions = vec![
+        instruction(None, Operation::CloseHandle(ValueId(2))),
+        instruction(
+            Some(4),
+            Operation::Call(FunctionId(1), vec![CallArg::Value(ValueId(1))]),
+        ),
+    ];
+    main.blocks[1].terminator = Terminator::Return(ValueId(4));
+    program.functions.push(Function {
+        name: "close_sender".into(),
+        param_modes: vec![ParamMode::Own],
+        return_type: Type::I64,
+        value_types: vec![Type::SenderI64, Type::I64],
+        place_types: vec![],
+        blocks: vec![Block {
+            params: vec![ValueId(0)],
+            instructions: vec![
+                instruction(None, Operation::CloseHandle(ValueId(0))),
+                instruction(Some(1), Operation::Const(9)),
+            ],
+            terminator: Terminator::Return(ValueId(1)),
+        }],
+    });
+    core::verify(&program).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 9);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 9);
+
+    let main = &mut program.functions[0];
+    main.blocks[1]
+        .instructions
+        .push(instruction(None, Operation::CloseHandle(ValueId(1))));
+    assert!(core::verify(&program).unwrap_err().contains("is not live"));
+}
+
 #[test]
 fn checked_channel_creation_has_two_success_rights_and_a_typed_failure() {
     let program = channel_program();

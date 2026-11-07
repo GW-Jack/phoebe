@@ -3,7 +3,8 @@
 Status: design contract with an initial checked Core and source creation edge. The checker
 in `src/capability_flow.rs` verifies exact capability-slot states at joins and
 normal returns, and derives live-slot maps for failure and suspension edges.
-Core now derives a graph for `channel.new.i64`, endpoint closes, and jumps
+Core now derives a graph for `channel.new.i64`, endpoint closes, scalar
+send/receive, and jumps
 between capability-bearing block parameters. The interpreter, Cranelift JIT,
 and standalone executable run creation and close through the bounded runtime
 kernel. Source `val (sender, receiver) = channel<I64>(capacity = n)?` now lowers
@@ -164,14 +165,25 @@ in printable IR and avoids a second, implicit compiler cleanup algorithm.
 The flow checker rejects implicit capability loss in an abstract graph,
 including differing branch states, loop backedges, duplicate creation, and
 normal return. Core now classifies bare `SenderI64` and `ReceiverI64` values
-and derives graphs for creation, close, and jump edges. Source lowering invokes
+and derives graphs for creation, close, send/receive, and jump edges. Pending
+send/receive uses a `Retry` suspension edge: it records the retained live
+slots but does not re-enter the block or replay its instructions. Source lowering invokes
 the exact checker so `phoebe check` rejects a forgotten right. It does not yet handle
 capability-bearing aggregates, place replacement, or match discard. Next,
-extend that integration, lower `with` and structural cleanup, then add the
-send/receive/reply terminators and retained frame layout. Interpreter and
-Cranelift executions must agree on the same IR, including failed and canceled
-paths. Source syntax currently exposes only creation and explicit close;
-send/receive and task operations need the remaining model.
+extend that integration and lower `with` and structural cleanup. Scalar
+send/receive terminators and interpreter frames now exist; reply operations,
+child tasks, and native retained frames remain. Interpreter and Cranelift
+executions must agree on the same IR, including failed and canceled paths.
+Source syntax currently exposes only creation and explicit close.
+
+An internal Core function may own a bare endpoint parameter. A synchronous
+call transfers the caller's slot to the callee's entry slot; the callee must
+dispose of it on every normal return. The runtime token remains owned by the
+same task throughout that call. The verifier rejects a second caller-side
+use after transfer. A retry edge may check a slot with `Require`, but it must
+leave the exact slot set unchanged so a later poll can safely repeat the
+terminator. The interpreter retains values, places, and call frames across
+that retry. Native retained frames and task spawn remain future work.
 
 The verifier establishes a property of the checked IR, conditional on its
 implementation and runtime ABI. It does not prove that Rust cleanup, Cranelift
