@@ -38,8 +38,10 @@ buck2 build //crates/runtime:runtime_archive
 buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 buck2 build //crates/core:phoebe_core
 buck2 test //crates/core:unit_tests //crates/runtime:unit_tests //crates/native:unit_tests
+buck2 test //:compiler_tests
 buck2 test //:source_traffic_tests
 buck2 test //:source_spawn_tests
+buck2 test //...
 ```
 
 The root `BUCK` and each `crates/*/BUCK` explicitly declare first-party
@@ -70,7 +72,8 @@ lockfile, generated BUCK file, and fixups together.
 
 ## Cargo and checks
 
-Cargo remains the source of truth for dependency resolution and test running:
+Cargo remains the source of truth for dependency resolution and provides a
+second route for workspace tests:
 
 ```sh
 cargo test --workspace
