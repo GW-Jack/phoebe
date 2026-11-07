@@ -36,8 +36,8 @@ only by prose at release.
 
 The Rust workspace currently parses functions over I64, Bool, nominal sums with
 at most one payload per variant, and nominal products with finite fields.
-User-declared payloads and fields may contain earlier nominal types; recursive
-data and concrete `Result` fields in user declarations remain unsupported.
+User-declared payloads and fields may contain earlier nominal types and finite
+concrete `Result` applications; recursive data remains unsupported.
 It supports up to four owned parameters (I64 borrows only), `val` and
 `var` bindings, assignment, `while`, integer and boolean literals, unary
 negation, `+`, `-`, `*`, `==`, `<`, `if` expressions with block arms, exhaustive
@@ -76,9 +76,9 @@ types. Source spans survive parsing and lowering. `docs/core-ir.md` and
 `docs/call-borrows.md` explain the current operations and their evidence
 boundary. Borrows are confined to one call chain and can span a channel
 suspension; general reference lifetimes and regions are not implemented.
-`docs/result-try.md` states the
-current `?` rule and its missing user-declared `Result` fields, generic
-functions, and cleanup work.
+`docs/result-try.md` states the current `?` rule and its remaining generic
+function and cleanup work. `examples/result_in_data.phoebe` exercises nested
+`Result` fields and variant payloads through all three execution paths.
 
 This slice establishes the parser → checked IR → interpreter/Cranelift path.
 It does not yet implement general ownership, concurrency, or all release

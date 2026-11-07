@@ -1,0 +1,28 @@
+data Envelope { payload: Result<Result<I64, Bool>, Bool> }
+data Packet { Empty, Full(value: Result<Envelope, Bool>) }
+
+fn unpack(packet: Packet) -> I64 = when (packet) {
+  Packet.Empty -> { 0 },
+  Packet.Full(result) -> {
+    when (result) {
+      Result<Envelope, Bool>.Ok(envelope) -> {
+        when (envelope.payload) {
+          Result<Result<I64, Bool>, Bool>.Ok(inner) -> {
+            when (inner) {
+              Result<I64, Bool>.Ok(value) -> { value },
+              Result<I64, Bool>.Err(error) -> { -1 },
+            }
+          },
+          Result<Result<I64, Bool>, Bool>.Err(error) -> { -2 },
+        }
+      },
+      Result<Envelope, Bool>.Err(error) -> { -3 },
+    }
+  },
+}
+
+fn main() -> I64 = unpack(Packet.Full(
+  Result<Envelope, Bool>.Ok(
+    Envelope(Result<Result<I64, Bool>, Bool>.Ok(Result<I64, Bool>.Ok(42)))
+  )
+))

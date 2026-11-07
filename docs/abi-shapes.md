@@ -61,9 +61,10 @@ nominal products or sums, or other finite `Result` applications. The verifier
 requires nested payload types to precede their containing sum in the data
 table, so shape computation cannot recurse indefinitely.
 
-User-declared sums and products may contain earlier nominal types. Their
-shapes remain finite because the verifier rejects a reference to the current
-or a later data declaration. A nominal product field projection consumes its
+User-declared sums and products may contain earlier nominal types and finite
+concrete `Result` applications. Their shapes remain finite because the verifier
+rejects a reference to the current or a later data declaration. A nominal
+product field projection consumes its
 owner; a primitive field read leaves the owner live. A nested nominal value
 can be duplicated only with explicit `copy(x)`, which appears in the cost
 ledger. User-declared fields of a concrete `Result` application remain

@@ -57,6 +57,7 @@ rust_test(
         "examples/nested_result.phoebe",
         "examples/payload.phoebe",
         "examples/product.phoebe",
+        "examples/result_in_data.phoebe",
         "examples/try.phoebe",
         "examples/variant.phoebe",
     ],

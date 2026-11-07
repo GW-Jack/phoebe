@@ -860,3 +860,28 @@ fn copying_a_scalar_has_no_cost_event() {
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
     assert!(program.cost_events().is_empty());
 }
+
+#[test]
+fn concrete_result_fields_and_variant_payloads_cross_all_backends() {
+    let program = compile(include_str!("../examples/result_in_data.phoebe"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-result-data-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\n");
+
+    let recursive = "data Loop { value: Result<Loop, Bool> } fn main() -> I64 = 0";
+    let error = core::lower(&syntax::parse(recursive).unwrap()).unwrap_err();
+    assert!(
+        error.message.contains("unknown data type Loop"),
+        "{error:?}"
+    );
+    assert!(error.span.start > 0);
+}

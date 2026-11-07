@@ -1019,6 +1019,51 @@ impl<'a> Lowerer<'a> {
     }
 }
 
+fn register_result_application(
+    application: &TypeName,
+    span: Span,
+    data: &mut Vec<DataDef>,
+    data_names: &mut HashMap<String, DataId>,
+) -> Result<DataId, Diagnostic> {
+    let TypeName::Result(ok, err) = application else {
+        unreachable!("only Result applications are registered here")
+    };
+    let name = application.key();
+    if let Some(id) = data_names.get(&name) {
+        return Ok(*id);
+    }
+    let mut payload = |ty: &TypeName| -> Result<Type, Diagnostic> {
+        match ty {
+            TypeName::I64 => Ok(Type::I64),
+            TypeName::Bool => Ok(Type::Bool),
+            TypeName::SenderI64 | TypeName::ReceiverI64 => Err(Diagnostic::new(
+                span,
+                "Result cannot carry channel endpoints yet",
+            )),
+            TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
+            TypeName::Named(name) => data_names
+                .get(name)
+                .copied()
+                .map(Type::Data)
+                .ok_or_else(|| Diagnostic::new(span, format!("unknown data type {name}"))),
+            TypeName::Result(_, _) => {
+                register_result_application(ty, span, data, data_names).map(Type::Data)
+            }
+        }
+    };
+    let ok = payload(ok)?;
+    let err = payload(err)?;
+    let id = DataId(data.len());
+    data_names.insert(name.clone(), id);
+    data.push(DataDef {
+        name,
+        variants: vec!["Ok".into(), "Err".into()],
+        payloads: vec![Some(ok), Some(err)],
+        fields: vec![],
+    });
+    Ok(id)
+}
+
 pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     if let Some(import) = ast.imports.first() {
         return Err(Diagnostic::new(
@@ -1072,12 +1117,12 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
                             )
                         })?,
                 ),
-                Some(TypeName::Result(_, _)) => {
-                    return Err(Diagnostic::new(
-                        variant.span,
-                        "Result variant payloads are not implemented",
-                    ));
-                }
+                Some(ty @ TypeName::Result(_, _)) => Some(Type::Data(register_result_application(
+                    ty,
+                    variant.span,
+                    &mut data,
+                    &mut data_names,
+                )?)),
             };
             variants.push(variant.name.clone());
             payloads.push(payload);
@@ -1108,12 +1153,12 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
                                 format!("product field type `{name}` must be declared earlier"),
                             )
                         })?,
-                    TypeName::Result(_, _) => {
-                        return Err(Diagnostic::new(
-                            field.span,
-                            "Result product fields are not implemented",
-                        ));
-                    }
+                    ty @ TypeName::Result(_, _) => Type::Data(register_result_application(
+                        ty,
+                        field.span,
+                        &mut data,
+                        &mut data_names,
+                    )?),
                 };
             fields.push((field.name.clone(), ty));
         }
@@ -1151,40 +1196,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         });
     }
     for (application, span) in &ast.applied_results {
-        let TypeName::Result(ok, err) = application else {
-            unreachable!("parser only records Result applications")
-        };
-        let name = application.key();
-        if data_names.contains_key(&name) {
-            continue;
-        }
-        let concrete = |ty: &TypeName| match ty {
-            TypeName::I64 => Ok(Type::I64),
-            TypeName::Bool => Ok(Type::Bool),
-            TypeName::SenderI64 | TypeName::ReceiverI64 => Err(Diagnostic::new(
-                *span,
-                "Result cannot carry channel endpoints yet",
-            )),
-            TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
-            TypeName::Named(name) => data_names
-                .get(name)
-                .copied()
-                .map(Type::Data)
-                .ok_or_else(|| Diagnostic::new(*span, format!("unknown data type {name}"))),
-            TypeName::Result(_, _) => data_names
-                .get(&ty.key())
-                .copied()
-                .map(Type::Data)
-                .ok_or_else(|| Diagnostic::new(*span, "unknown Result application")),
-        };
-        let payloads = vec![Some(concrete(ok)?), Some(concrete(err)?)];
-        data_names.insert(name.clone(), DataId(data.len()));
-        data.push(DataDef {
-            name,
-            variants: vec!["Ok".into(), "Err".into()],
-            payloads,
-            fields: vec![],
-        });
+        register_result_application(application, *span, &mut data, &mut data_names)?;
     }
     let resolve = |name: &TypeName, span: Span| -> Result<Type, Diagnostic> {
         match name {

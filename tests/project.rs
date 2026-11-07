@@ -115,3 +115,29 @@ fn main() -> I64 {
     assert_eq!(program.interpret("main", &[]).unwrap(), 7);
     std::fs::remove_dir_all(path).unwrap();
 }
+
+#[test]
+fn project_qualifies_result_fields_with_imported_nominal_arguments() {
+    let path = temp_project();
+    std::fs::write(
+        path.join("app.phoebe"),
+        r#"
+import math
+data Boxed { result: Result<math.Maybe, Bool> }
+
+fn main() -> I64 {
+  val boxed = Boxed(Result<math.Maybe, Bool>.Ok(math.wrap()));
+  when (boxed.result) {
+    Result<math.Maybe, Bool>.Ok(value) -> { math.unwrap(value) },
+    Result<math.Maybe, Bool>.Err(error) -> { 0 },
+  }
+}
+"#,
+    )
+    .unwrap();
+    let loaded = project::load(&path).unwrap();
+    let program = core::lower(&loaded.ast).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 22);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 22);
+    std::fs::remove_dir_all(path).unwrap();
+}

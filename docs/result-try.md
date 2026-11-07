@@ -9,8 +9,9 @@ is a distinct checked type with `Ok` and `Err` variants carrying the
 corresponding payload. Constructors and patterns spell the application
 explicitly, for example `Result<I64, Bool>.Err(true)`. A user declaration
 named `Result` is reserved. `?` requires the enclosing function to return
-that same concrete application. Generic functions, user-declared nested
-payloads, and error conversion are still unimplemented.
+that same concrete application. Generic functions and error conversion are
+still unimplemented. User data may store finite concrete `Result`
+applications when their nominal argument types were declared earlier.
 
 For `val x = expression?`, lowering evaluates `expression` once, then emits a
 Core IR `match`. The `Ok` target receives its payload as a typed block
