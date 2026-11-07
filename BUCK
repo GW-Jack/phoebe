@@ -9,6 +9,7 @@ rust_library(
         "//crates/core:phoebe_core",
         "//crates/frame:phoebe_frame",
         "//crates/native:phoebe_native",
+        "//crates/package:phoebe_package",
         "//crates/project:phoebe_project",
         "//crates/runtime:phoebe_runtime",
         "//crates/syntax:phoebe_syntax",

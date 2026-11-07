@@ -1,8 +1,9 @@
 # Local project modules
 
 Status: executable local modules with in-process parsed-module and checked-Core
-function reuse sessions. External packages, lockfiles, visibility, and
-incremental native object rebuilds are not implemented yet.
+function reuse sessions. Local path dependency lock verification is available
+through `phoebe lock` and `phoebe deps`; dependency compilation, visibility,
+and incremental native object rebuilds are not implemented yet.
 
 `phoebe.toml` uses this form:
 
@@ -70,7 +71,7 @@ Current limitations are explicit: imported modules cannot construct another
 module's variants directly, the root module cannot be imported, imports are
 module-wide rather than item-level, and all declarations in an imported
 module are currently visible. There is no cached typed interface or pinned
-external dependency graph. A
-`[dependencies]` table is rejected so it cannot be mistaken for a resolved
-package graph. A standalone `.phoebe` file still works without a manifest,
+external dependency graph in the compiler. A `[dependencies]` table is
+rejected during compilation; `docs/packages.md` describes the separate
+lockfile graph commands. A standalone `.phoebe` file still works without a manifest,
 but `import` in that mode produces a diagnostic.

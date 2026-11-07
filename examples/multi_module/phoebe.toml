@@ -1,5 +1,6 @@
 [package]
 name = "multi_module"
+version = "0.0.1"
 root = "app"
 
 [modules]

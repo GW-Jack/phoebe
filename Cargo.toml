@@ -18,6 +18,7 @@ phoebe-capability = { path = "crates/capability" }
 phoebe-core = { path = "crates/core" }
 phoebe-frame = { path = "crates/frame" }
 phoebe-native = { path = "crates/native" }
+phoebe-package = { path = "crates/package" }
 phoebe-project = { path = "crates/project" }
 phoebe-runtime = { path = "crates/runtime" }
 phoebe-syntax = { path = "crates/syntax" }

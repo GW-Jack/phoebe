@@ -2834,3 +2834,166 @@ cargo.rust_library(
     },
     visibility = [],
 )
+
+# SHA-256 package lockfile dependencies.
+
+http_archive(
+    name = "block-buffer-0.10.4.crate",
+    sha256 = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71",
+    strip_prefix = "block-buffer-0.10.4",
+    urls = ["https://static.crates.io/crates/block-buffer/0.10.4/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "block-buffer-0.10",
+    srcs = [":block-buffer-0.10.4.crate"],
+    crate = "block_buffer",
+    crate_root = "block-buffer-0.10.4.crate/src/lib.rs",
+    edition = "2018",
+    visibility = [],
+    deps = [":generic-array-0.14"],
+)
+
+http_archive(
+    name = "cpufeatures-0.2.17.crate",
+    sha256 = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280",
+    strip_prefix = "cpufeatures-0.2.17",
+    urls = ["https://static.crates.io/crates/cpufeatures/0.2.17/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "cpufeatures-0.2",
+    srcs = [":cpufeatures-0.2.17.crate"],
+    crate = "cpufeatures",
+    crate_root = "cpufeatures-0.2.17.crate/src/lib.rs",
+    edition = "2018",
+    platform = {
+        "linux-arm64": dict(
+            deps = [":libc-0.2"],
+        ),
+        "macos-arm64": dict(
+            deps = [":libc-0.2"],
+        ),
+    },
+    visibility = [],
+)
+
+http_archive(
+    name = "crypto-common-0.1.7.crate",
+    sha256 = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a",
+    strip_prefix = "crypto-common-0.1.7",
+    urls = ["https://static.crates.io/crates/crypto-common/0.1.7/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "crypto-common-0.1",
+    srcs = [":crypto-common-0.1.7.crate"],
+    crate = "crypto_common",
+    crate_root = "crypto-common-0.1.7.crate/src/lib.rs",
+    edition = "2018",
+    features = ["std"],
+    visibility = [],
+    deps = [
+        ":generic-array-0.14",
+        ":typenum-1",
+    ],
+)
+
+http_archive(
+    name = "digest-0.10.7.crate",
+    sha256 = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292",
+    strip_prefix = "digest-0.10.7",
+    urls = ["https://static.crates.io/crates/digest/0.10.7/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "digest-0.10",
+    srcs = [":digest-0.10.7.crate"],
+    crate = "digest",
+    crate_root = "digest-0.10.7.crate/src/lib.rs",
+    edition = "2018",
+    features = [
+        "alloc",
+        "block-buffer",
+        "core-api",
+        "default",
+        "std",
+    ],
+    visibility = [],
+    deps = [
+        ":block-buffer-0.10",
+        ":crypto-common-0.1",
+    ],
+)
+
+http_archive(
+    name = "generic-array-0.14.7.crate",
+    sha256 = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a",
+    strip_prefix = "generic-array-0.14.7",
+    urls = ["https://static.crates.io/crates/generic-array/0.14.7/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "generic-array-0.14",
+    srcs = [":generic-array-0.14.7.crate"],
+    crate = "generic_array",
+    crate_root = "generic-array-0.14.7.crate/src/lib.rs",
+    edition = "2015",
+    features = ["more_lengths"],
+    visibility = [],
+    deps = [":typenum-1"],
+)
+
+alias(
+    name = "sha2",
+    actual = ":sha2-0.10",
+    visibility = ["PUBLIC"],
+)
+
+http_archive(
+    name = "sha2-0.10.9.crate",
+    sha256 = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283",
+    strip_prefix = "sha2-0.10.9",
+    urls = ["https://static.crates.io/crates/sha2/0.10.9/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "sha2-0.10",
+    srcs = [":sha2-0.10.9.crate"],
+    crate = "sha2",
+    crate_root = "sha2-0.10.9.crate/src/lib.rs",
+    edition = "2018",
+    features = [
+        "default",
+        "std",
+    ],
+    visibility = [],
+    deps = [
+        ":cfg-if-1",
+        ":cpufeatures-0.2",
+        ":digest-0.10",
+    ],
+)
+
+http_archive(
+    name = "typenum-1.20.1.crate",
+    sha256 = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20",
+    strip_prefix = "typenum-1.20.1",
+    urls = ["https://static.crates.io/crates/typenum/1.20.1/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "typenum-1",
+    srcs = [":typenum-1.20.1.crate"],
+    crate = "typenum",
+    crate_root = "typenum-1.20.1.crate/src/lib.rs",
+    edition = "2018",
+    visibility = [],
+)

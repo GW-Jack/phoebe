@@ -3,10 +3,10 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use phoebe::{core, frame_layout, native, project, syntax};
+use phoebe::{core, frame_layout, native, package, project, syntax};
 
 fn usage() -> &'static str {
-    "usage: phoebe check <file|project> | phoebe ir <file|project> | phoebe frames <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable>"
+    "usage: phoebe lock <project> | phoebe deps <project> | phoebe check <file|project> | phoebe ir <file|project> | phoebe frames <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable>"
 }
 
 fn command() -> Result<(), String> {
@@ -14,11 +14,25 @@ fn command() -> Result<(), String> {
     let action = args.next().ok_or_else(|| usage().to_owned())?;
     if !matches!(
         action.as_str(),
-        "check" | "ir" | "frames" | "clif" | "cost" | "run" | "build"
+        "lock" | "deps" | "check" | "ir" | "frames" | "clif" | "cost" | "run" | "build"
     ) {
         return Err(usage().to_owned());
     }
     let path = args.next().ok_or_else(|| usage().to_owned())?;
+    if matches!(action.as_str(), "lock" | "deps") {
+        if args.next().is_some() {
+            return Err(usage().into());
+        }
+        let graph = if action == "lock" {
+            package::write_lock(Path::new(&path))?
+        } else {
+            package::resolve(Path::new(&path))?
+        };
+        for entry in graph.packages {
+            println!("{}\t{}\t{}", entry.locator, entry.name, entry.version);
+        }
+        return Ok(());
+    }
     let program = if Path::new(&path).is_dir() || path.ends_with(".toml") {
         let loaded = project::load(Path::new(&path))?;
         core::lower(&loaded.ast).map_err(|error| loaded.render(&error))?

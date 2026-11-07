@@ -5,6 +5,7 @@ pub use phoebe_capability as capability_flow;
 pub use phoebe_core as core;
 pub use phoebe_frame as frame_layout;
 pub use phoebe_native as native;
+pub use phoebe_package as package;
 pub use phoebe_project as project;
 pub use phoebe_runtime as runtime;
 pub use phoebe_syntax as syntax;
