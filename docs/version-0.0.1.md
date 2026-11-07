@@ -121,8 +121,8 @@ cleanup, and cancellation cleanup remain open. `docs/capability-ir.md` specifies
 the integration boundary.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
-retry across both operations. The first generated receive leaf uses a retained
-task frame, but the normal native entry path still needs generated calls and
+retry across both operations. Generated send and receive leaves use retained
+task frames, but the normal native entry path still needs generated calls and
 spawn before source channel programs can run natively.
 Core now checks scalar send/receive terminators and derives live-right maps
 for retry suspension. Its interpreter retains frames and places across a
@@ -138,14 +138,15 @@ interpreter and JIT executions agree on that synchronous path.
 liveness pass finds only functions that can park and the values and places
 needed at each channel retry or pending call. It leaves creation-only and
 spawn-only functions on the direct-call path. `docs/native-frames.md` states
-the frame ABI obligations and evidence boundary. The first receive leaf
-consumes this analysis to generate an exact retry spill.
+the frame ABI obligations and evidence boundary. The generated poll leaves
+consume this analysis to produce exact retry spills.
 The runtime now owns a stable word-array frame for a versioned native poll
 entry. Synthetic poll functions exercise yield/resume and receive park/wake
 through the real scheduler and ABI. A constrained Cranelift poll function
-now executes a checked source receive leaf through that same scheduler;
-its value and end branches are covered. Native source channel traffic through
-the public `run` and `build` commands remains unsupported.
+now executes checked source receive and two-send leaves through that same
+scheduler. Tests cover value, end, backpressure, and closed-send branches.
+Native source channel traffic through the public `run` and `build` commands
+remains unsupported.
 The compiler now assigns physical word ranges from the existing flattened
 ABI shapes. A suspendable function reserves its result, entry parameters,
 and values and places live across a pending operation. Entry parameters

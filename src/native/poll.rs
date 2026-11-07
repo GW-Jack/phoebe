@@ -1,18 +1,18 @@
-//! First retained native code path: a verified leaf with one receive retry.
+//! Retained native code path for verified leaves with channel retries.
 //! The accepted Core subset is deliberately explicit until call continuations
 //! and task spawn have frame protocols of their own.
 
 use super::*;
 use cranelift_frontend::Variable;
 
-pub struct ReceivePollExecutable {
+pub struct PollLeafExecutable {
     module: JITModule,
     entry: FuncId,
     layout: FrameWords,
     clif: String,
 }
 
-impl ReceivePollExecutable {
+impl PollLeafExecutable {
     pub fn layout(&self) -> &FrameWords {
         &self.layout
     }
@@ -30,12 +30,9 @@ impl ReceivePollExecutable {
     }
 }
 
-/// Compile a single checked receive leaf, including its exact retry spill.
+/// Compile a checked channel leaf, including exact per-point retry spills.
 /// This is an executable stepping stone for the general retained backend.
-pub fn compile_receive_leaf_jit(
-    program: &Program,
-    name: &str,
-) -> Result<ReceivePollExecutable, String> {
+pub fn compile_poll_leaf_jit(program: &Program, name: &str) -> Result<PollLeafExecutable, String> {
     core::verify(program)?;
     let (id, function) = program
         .function(name)
@@ -48,23 +45,24 @@ pub fn compile_receive_leaf_jit(
         || !function.place_types.is_empty()
     {
         return Err(
-            "receive poll leaf requires an I64 result, owned parameters, and no places".into(),
+            "channel poll leaf requires an I64 result, owned parameters, and no places".into(),
         );
     }
     let frames = frame_word_layouts(program)?;
     let layout = frames
         .into_iter()
         .find(|layout| layout.function == id)
-        .ok_or("receive poll leaf has no suspension frame")?;
-    if layout.resumes.len() != 1 || layout.resumes[0].instruction.is_some() {
-        return Err("receive poll leaf requires exactly one receive retry".into());
+        .ok_or("channel poll leaf has no suspension frame")?;
+    if layout.resumes.is_empty() || layout.resumes.iter().any(|slot| slot.instruction.is_some()) {
+        return Err("channel poll leaf requires only channel retry points".into());
     }
-    let retry_block = layout.resumes[0].block.0;
-    if !matches!(
-        function.blocks[retry_block].terminator,
-        Terminator::ChannelReceive { .. }
-    ) {
-        return Err("receive poll leaf requires a channel receive terminator".into());
+    for slot in &layout.resumes {
+        if !matches!(
+            function.blocks[slot.block.0].terminator,
+            Terminator::ChannelReceive { .. } | Terminator::ChannelSend { .. }
+        ) {
+            return Err("channel poll leaf has a non-channel suspension".into());
+        }
     }
     for (block_id, block) in function.blocks.iter().enumerate() {
         for instruction in &block.instructions {
@@ -79,7 +77,7 @@ pub fn compile_receive_leaf_jit(
                     | Operation::Sub(_, _)
                     | Operation::CloseHandle(_)
             ) {
-                return Err("operation is not yet supported by receive poll leaf".into());
+                return Err("operation is not yet supported by channel poll leaf".into());
             }
         }
         if !matches!(
@@ -89,10 +87,13 @@ pub fn compile_receive_leaf_jit(
                 | Terminator::Branch { .. }
                 | Terminator::Match { .. }
                 | Terminator::ChannelReceive { .. }
-        ) || matches!(block.terminator, Terminator::ChannelReceive { .. })
-            && block_id != retry_block
+                | Terminator::ChannelSend { .. }
+        ) || matches!(
+            block.terminator,
+            Terminator::ChannelReceive { .. } | Terminator::ChannelSend { .. }
+        ) && !layout.resumes.iter().any(|slot| slot.block.0 == block_id)
         {
-            return Err("terminator is not yet supported by receive poll leaf".into());
+            return Err("terminator is not yet supported by channel poll leaf".into());
         }
     }
 
@@ -109,6 +110,10 @@ pub fn compile_receive_leaf_jit(
     jit.symbol(
         "phoebe_rt_v1_receive_i64",
         runtime::phoebe_receive_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_send_i64",
+        runtime::phoebe_send_i64 as *const u8,
     );
     jit.symbol(
         "phoebe_rt_v1_close_handle_i64",
@@ -132,6 +137,16 @@ pub fn compile_receive_leaf_jit(
             &receive_signature,
         )
         .map_err(|e| e.to_string())?;
+    let mut send_signature = module.make_signature();
+    send_signature.params.extend([
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+        AbiParam::new(types::I64),
+    ]);
+    send_signature.returns.push(AbiParam::new(types::I64));
+    let send = module
+        .declare_function("phoebe_rt_v1_send_i64", Linkage::Import, &send_signature)
+        .map_err(|e| e.to_string())?;
     let mut close_signature = module.make_signature();
     close_signature.params.extend([
         AbiParam::new(pointer),
@@ -152,7 +167,7 @@ pub fn compile_receive_leaf_jit(
         .extend([AbiParam::new(pointer), AbiParam::new(pointer)]);
     signature.returns.push(AbiParam::new(types::I64));
     let entry = module
-        .declare_function("phoebe_receive_poll_leaf", Linkage::Local, &signature)
+        .declare_function("phoebe_channel_poll_leaf", Linkage::Local, &signature)
         .map_err(|e| e.to_string())?;
     let mut ctx = module.make_context();
     ctx.func.signature = signature;
@@ -162,14 +177,22 @@ pub fn compile_receive_leaf_jit(
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_context);
         let dispatch = builder.create_block();
         let first = builder.create_block();
-        let resume = builder.create_block();
         let fault = builder.create_block();
         let blocks = function
             .blocks
             .iter()
             .map(|_| builder.create_block())
             .collect::<Vec<_>>();
-        let receive_block = builder.create_block();
+        let resume_blocks = layout
+            .resumes
+            .iter()
+            .map(|_| builder.create_block())
+            .collect::<Vec<_>>();
+        let retry_blocks = layout
+            .resumes
+            .iter()
+            .map(|_| builder.create_block())
+            .collect::<Vec<_>>();
         builder.append_block_params_for_function_params(dispatch);
         let bridge = builder.block_params(dispatch)[0];
         let frame = builder.block_params(dispatch)[1];
@@ -190,13 +213,21 @@ pub fn compile_receive_leaf_jit(
             .ins()
             .load(types::I64, MemFlagsData::new(), frame, 0);
         let initial = builder.ins().icmp_imm_s(IntCC::Equal, pc, 0);
-        let check_resume = builder.create_block();
-        builder.ins().brif(initial, first, &[], check_resume, &[]);
-        builder.switch_to_block(check_resume);
-        let valid = builder
-            .ins()
-            .icmp_imm_s(IntCC::Equal, pc, layout.resumes[0].pc);
-        builder.ins().brif(valid, resume, &[], fault, &[]);
+        let mut check = builder.create_block();
+        builder.ins().brif(initial, first, &[], check, &[]);
+        for (index, slot) in layout.resumes.iter().enumerate() {
+            builder.switch_to_block(check);
+            let valid = builder.ins().icmp_imm_s(IntCC::Equal, pc, slot.pc);
+            let next = if index + 1 == layout.resumes.len() {
+                fault
+            } else {
+                builder.create_block()
+            };
+            builder
+                .ins()
+                .brif(valid, resume_blocks[index], &[], next, &[]);
+            check = next;
+        }
 
         builder.switch_to_block(first);
         for slot in &layout.entry_params {
@@ -204,22 +235,25 @@ pub fn compile_receive_leaf_jit(
         }
         builder.ins().jump(blocks[0], &[]);
 
-        builder.switch_to_block(resume);
-        for value in &layout.resumes[0].values {
-            let slot = layout
-                .values
-                .iter()
-                .find(|slot| slot.id == *value)
-                .expect("spill slot");
-            load_slot(&mut builder, frame, slot, &variables, &shapes, function);
+        for (index, point) in layout.resumes.iter().enumerate() {
+            builder.switch_to_block(resume_blocks[index]);
+            for value in &point.values {
+                let slot = layout
+                    .values
+                    .iter()
+                    .find(|slot| slot.id == *value)
+                    .expect("spill slot");
+                load_slot(&mut builder, frame, slot, &variables, &shapes, function);
+            }
+            builder.ins().jump(retry_blocks[index], &[]);
         }
-        builder.ins().jump(receive_block, &[]);
 
         builder.switch_to_block(fault);
         let fault_code = builder.ins().iconst(types::I64, 255);
         builder.ins().return_(&[fault_code]);
 
         let receive_ref = module.declare_func_in_func(receive, builder.func);
+        let send_ref = module.declare_func_in_func(send, builder.func);
         let close_ref = module.declare_func_in_func(close, builder.func);
         for (block_id, block) in function.blocks.iter().enumerate() {
             builder.switch_to_block(blocks[block_id]);
@@ -386,73 +420,112 @@ pub fn compile_receive_leaf_jit(
                         }
                     }
                 }
-                Terminator::ChannelReceive { .. } => {
-                    builder.ins().jump(receive_block, &[]);
+                Terminator::ChannelReceive { .. } | Terminator::ChannelSend { .. } => {
+                    let index = layout
+                        .resumes
+                        .iter()
+                        .position(|slot| slot.block.0 == block_id)
+                        .expect("verified retry point");
+                    builder.ins().jump(retry_blocks[index], &[]);
                 }
                 _ => unreachable!("validated poll terminator"),
             }
         }
 
-        builder.switch_to_block(receive_block);
-        let Terminator::ChannelReceive {
-            receiver,
-            value,
-            end,
-        } = function.blocks[retry_block].terminator
-        else {
-            unreachable!()
-        };
-        let token = builder.use_var(variables[receiver.0][0]);
-        let out = builder
-            .ins()
-            .iadd_imm_s(frame, word_offset(layout.result.start) as i64);
-        let call = builder.ins().call(receive_ref, &[bridge, token, out]);
-        let status = builder.inst_results(call)[0];
-        let pending = builder.create_block();
-        let completed = builder.create_block();
-        let is_pending = builder.ins().icmp_imm_s(IntCC::Equal, status, 1);
-        builder.ins().brif(is_pending, pending, &[], completed, &[]);
-        builder.switch_to_block(pending);
-        for value in &layout.resumes[0].values {
-            let slot = layout
-                .values
-                .iter()
-                .find(|slot| slot.id == *value)
-                .expect("spill slot");
-            for (index, var) in variables[value.0].iter().enumerate() {
-                let component = builder.use_var(*var);
-                builder.ins().store(
-                    MemFlagsData::new(),
-                    component,
-                    frame,
-                    word_offset(slot.words.start + index),
-                );
+        for (index, point) in layout.resumes.iter().enumerate() {
+            builder.switch_to_block(retry_blocks[index]);
+            let terminator = &function.blocks[point.block.0].terminator;
+            let status = match terminator {
+                Terminator::ChannelReceive { receiver, .. } => {
+                    let token = builder.use_var(variables[receiver.0][0]);
+                    let out = builder
+                        .ins()
+                        .iadd_imm_s(frame, word_offset(layout.result.start) as i64);
+                    let call = builder.ins().call(receive_ref, &[bridge, token, out]);
+                    builder.inst_results(call)[0]
+                }
+                Terminator::ChannelSend {
+                    sender, message, ..
+                } => {
+                    let token = builder.use_var(variables[sender.0][0]);
+                    let message = builder.use_var(variables[message.0][0]);
+                    let call = builder.ins().call(send_ref, &[bridge, token, message]);
+                    builder.inst_results(call)[0]
+                }
+                _ => unreachable!("verified channel retry"),
+            };
+            let pending = builder.create_block();
+            let completed = builder.create_block();
+            let is_pending = builder.ins().icmp_imm_s(IntCC::Equal, status, 1);
+            builder.ins().brif(is_pending, pending, &[], completed, &[]);
+            builder.switch_to_block(pending);
+            for value in &point.values {
+                let slot = layout
+                    .values
+                    .iter()
+                    .find(|slot| slot.id == *value)
+                    .expect("spill slot");
+                for (part, var) in variables[value.0].iter().enumerate() {
+                    let component = builder.use_var(*var);
+                    builder.ins().store(
+                        MemFlagsData::new(),
+                        component,
+                        frame,
+                        word_offset(slot.words.start + part),
+                    );
+                }
+            }
+            let pc = builder.ins().iconst(types::I64, point.pc);
+            builder.ins().store(MemFlagsData::new(), pc, frame, 0);
+            let pending_code = builder.ins().iconst(types::I64, 1);
+            builder.ins().return_(&[pending_code]);
+
+            builder.switch_to_block(completed);
+            let is_success = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+            let success = builder.create_block();
+            let check_other = builder.create_block();
+            builder
+                .ins()
+                .brif(is_success, success, &[], check_other, &[]);
+            builder.switch_to_block(success);
+            match terminator {
+                Terminator::ChannelReceive { value, .. } => {
+                    let received = builder.ins().load(
+                        types::I64,
+                        MemFlagsData::new(),
+                        frame,
+                        word_offset(layout.result.start),
+                    );
+                    let param = function.blocks[value.0].params[0];
+                    builder.def_var(variables[param.0][0], received);
+                    builder.ins().jump(blocks[value.0], &[]);
+                }
+                Terminator::ChannelSend { sent, .. } => {
+                    builder.ins().jump(blocks[sent.0], &[]);
+                }
+                _ => unreachable!(),
+            }
+            builder.switch_to_block(check_other);
+            let is_terminal = builder.ins().icmp_imm_s(IntCC::Equal, status, 2);
+            let terminal = builder.create_block();
+            builder.ins().brif(is_terminal, terminal, &[], fault, &[]);
+            builder.switch_to_block(terminal);
+            match terminator {
+                Terminator::ChannelReceive { end, .. } => {
+                    builder.ins().jump(blocks[end.0], &[]);
+                }
+                Terminator::ChannelSend {
+                    message, closed, ..
+                } => {
+                    if let Some(param) = function.blocks[closed.0].params.first() {
+                        let message = builder.use_var(variables[message.0][0]);
+                        builder.def_var(variables[param.0][0], message);
+                    }
+                    builder.ins().jump(blocks[closed.0], &[]);
+                }
+                _ => unreachable!(),
             }
         }
-        let pc = builder.ins().iconst(types::I64, layout.resumes[0].pc);
-        builder.ins().store(MemFlagsData::new(), pc, frame, 0);
-        let pending_code = builder.ins().iconst(types::I64, 1);
-        builder.ins().return_(&[pending_code]);
-        builder.switch_to_block(completed);
-        let has_value = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
-        let value_adapter = builder.create_block();
-        let check_end = builder.create_block();
-        builder
-            .ins()
-            .brif(has_value, value_adapter, &[], check_end, &[]);
-        builder.switch_to_block(value_adapter);
-        let received = builder.ins().load(
-            types::I64,
-            MemFlagsData::new(),
-            frame,
-            word_offset(layout.result.start),
-        );
-        let param = function.blocks[value.0].params[0];
-        builder.def_var(variables[param.0][0], received);
-        builder.ins().jump(blocks[value.0], &[]);
-        builder.switch_to_block(check_end);
-        let is_end = builder.ins().icmp_imm_s(IntCC::Equal, status, 2);
-        builder.ins().brif(is_end, blocks[end.0], &[], fault, &[]);
 
         builder.seal_all_blocks();
         builder.finalize(module.target_config());
@@ -463,7 +536,7 @@ pub fn compile_receive_leaf_jit(
         .map_err(|e| e.to_string())?;
     module.clear_context(&mut ctx);
     module.finalize_definitions().map_err(|e| e.to_string())?;
-    Ok(ReceivePollExecutable {
+    Ok(PollLeafExecutable {
         module,
         entry,
         layout,
@@ -501,7 +574,7 @@ fn load_slot(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::{NativePollTask, Sender};
+    use crate::runtime::{NativePollTask, ReceiveResult, Receiver, Sender};
     use std::sync::{
         Arc,
         atomic::{AtomicI64, Ordering},
@@ -586,7 +659,7 @@ fn main() -> I64 = 0
     #[test]
     fn generated_receive_leaf_parks_resumes_and_handles_end() {
         let program = core::lower(&crate::syntax::parse(SOURCE).unwrap()).unwrap();
-        let executable = compile_receive_leaf_jit(&program, "wait").unwrap();
+        let executable = compile_poll_leaf_jit(&program, "wait").unwrap();
         let layout = executable.layout();
         assert_eq!(layout.entry_params.len(), 2);
         assert_eq!(layout.values.len(), 2);
@@ -607,5 +680,137 @@ fn main() -> I64 = 0
             assert_eq!(scheduler.run().unwrap(), expected);
             assert!(scheduler.stats().parks >= 1);
         }
+    }
+
+    struct ProducerHost {
+        entry: runtime::NativePollEntry,
+        frame_words: usize,
+        sender_word: usize,
+        child_return: Arc<AtomicI64>,
+        receiver: Option<Receiver>,
+        received: Vec<i64>,
+        phase: u8,
+    }
+
+    impl Task for ProducerHost {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            if self.phase == 0 {
+                let (sender, receiver) = context.channel(1)?;
+                let token = sender.token();
+                let mut child = unsafe { NativePollTask::new(self.entry, self.frame_words) }
+                    .map_err(|error| error.to_string())?;
+                child.write_token(self.sender_word, token)?;
+                context
+                    .spawn_owned(
+                        Capture {
+                            task: child,
+                            answer: self.child_return.clone(),
+                        },
+                        &[token],
+                    )
+                    .map_err(|error| error.message)?;
+                self.receiver = Some(receiver);
+                self.phase = 1;
+            }
+            if self.phase == 1 {
+                loop {
+                    match context.receive(self.receiver.as_ref().expect("receiver"))? {
+                        ReceiveResult::Value(value) => self.received.push(value),
+                        ReceiveResult::Pending => return Ok(Poll::Pending),
+                        ReceiveResult::End => {
+                            context.close_receiver(self.receiver.take().expect("receiver"))?;
+                            self.phase = 2;
+                            break;
+                        }
+                    }
+                }
+            }
+            match context.join()? {
+                Poll::Pending => Ok(Poll::Pending),
+                Poll::Ready(()) => {
+                    assert_eq!(self.received, [20, 22]);
+                    assert_eq!(self.child_return.load(Ordering::SeqCst), 0);
+                    Ok(Poll::Ready(self.received.iter().sum()))
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn generated_two_send_leaf_retries_after_one_slot_backpressure() {
+        let program = core::lower(
+            &crate::syntax::parse(include_str!("../../examples/channel_exchange.phoebe")).unwrap(),
+        )
+        .unwrap();
+        let executable = compile_poll_leaf_jit(&program, "producer").unwrap();
+        assert_eq!(executable.layout().resumes.len(), 2);
+        let host = ProducerHost {
+            entry: unsafe { executable.entry() },
+            frame_words: executable.layout().total_words,
+            sender_word: executable.layout().entry_params[0].words.start,
+            child_return: Arc::new(AtomicI64::new(-1)),
+            receiver: None,
+            received: Vec::new(),
+            phase: 0,
+        };
+        let mut scheduler = Scheduler::new(host, 2, 1, 0).unwrap();
+        assert_eq!(scheduler.run().unwrap(), 42);
+        assert!(scheduler.stats().parks >= 2);
+        assert!(scheduler.stats().wakes >= 2);
+        scheduler.verify().unwrap();
+    }
+
+    struct ClosedSendHost {
+        entry: runtime::NativePollEntry,
+        frame_words: usize,
+        sender_word: usize,
+        child_return: Arc<AtomicI64>,
+        started: bool,
+    }
+
+    impl Task for ClosedSendHost {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            if !self.started {
+                let (sender, receiver) = context.channel(1)?;
+                let token = sender.token();
+                let mut child = unsafe { NativePollTask::new(self.entry, self.frame_words) }
+                    .map_err(|error| error.to_string())?;
+                child.write_token(self.sender_word, token)?;
+                context
+                    .spawn_owned(
+                        Capture {
+                            task: child,
+                            answer: self.child_return.clone(),
+                        },
+                        &[token],
+                    )
+                    .map_err(|error| error.message)?;
+                context.close_receiver(receiver)?;
+                self.started = true;
+            }
+            match context.join()? {
+                Poll::Pending => Ok(Poll::Pending),
+                Poll::Ready(()) => Ok(Poll::Ready(self.child_return.load(Ordering::SeqCst))),
+            }
+        }
+    }
+
+    #[test]
+    fn generated_send_leaf_returns_the_original_message_when_closed() {
+        let program = core::lower(
+            &crate::syntax::parse(include_str!("../../examples/channel_exchange.phoebe")).unwrap(),
+        )
+        .unwrap();
+        let executable = compile_poll_leaf_jit(&program, "producer").unwrap();
+        let host = ClosedSendHost {
+            entry: unsafe { executable.entry() },
+            frame_words: executable.layout().total_words,
+            sender_word: executable.layout().entry_params[0].words.start,
+            child_return: Arc::new(AtomicI64::new(-1)),
+            started: false,
+        };
+        let mut scheduler = Scheduler::new(host, 2, 1, 0).unwrap();
+        assert_eq!(scheduler.run().unwrap(), 20);
+        scheduler.verify().unwrap();
     }
 }

@@ -26,7 +26,7 @@ use crate::runtime::{self, Context, NativeCallContext, Scheduler, ScopeLimits, T
 use crate::syntax::ParamMode;
 
 mod poll;
-pub use poll::compile_receive_leaf_jit;
+pub use poll::compile_poll_leaf_jit;
 
 pub struct JitExecutable {
     module: JITModule,
