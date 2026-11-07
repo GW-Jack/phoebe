@@ -40,36 +40,16 @@ describe the current IR and its limits.
 `docs/native-frames.md` explains their current evidence and the remaining
 native poll ABI work.
 
+Build and run the compiler with Buck2:
+
 ```sh
-cargo run -- run examples/hello.phoebe
-cargo run -- run examples/branch.phoebe
-cargo run -- run examples/loop.phoebe
-cargo run -- run examples/borrow.phoebe
-cargo run -- run examples/variant.phoebe
-cargo run -- run examples/product.phoebe
-cargo run -- run examples/payload.phoebe
-cargo run -- run examples/try.phoebe
-cargo run -- run examples/nested_result.phoebe
-cargo run -- run examples/nested_variant.phoebe
-cargo run -- run examples/copy.phoebe
-cargo run -- run examples/channel_exchange.phoebe
-cargo run -- run examples/channel_exchange_helper.phoebe
-cargo run -- run examples/channel_accumulator.phoebe
-cargo run -- run examples/borrow_across_wait.phoebe
-cargo run -- run examples/wide_after_wait.phoebe
-cargo run -- run examples/spawn_direct_from_poll.phoebe
-cargo run -- run examples/spawn_pair.phoebe
-cargo run -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
+buck2 build //:phoebe_dist
+buck2 run //:phoebe -- run examples/hello.phoebe
+buck2 run //:phoebe -- run examples/channel_exchange.phoebe
+buck2 run //:phoebe -- run examples/multi_module
+buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 /tmp/phoebe-exchange
-cargo run -- run examples/multi_module
-cargo run -- deps examples/package_graph/app
-cargo run -- run examples/package_graph/app
-cargo run -- cost examples/copy.phoebe
-cargo run -- clif examples/cost/identity.phoebe
-cargo run -- run examples/hello.phoebe --interp
-cargo run -- ir examples/hello.phoebe
-cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow
-/tmp/phoebe-borrow
+buck2 test //...
 ```
 
 `docs/spec.md` states the proposed language contract and marks open decisions.
@@ -78,13 +58,7 @@ criteria for the future compiler.
 `docs/compiler-architecture.md` records the research-informed proof and
 hackability plan.
 `docs/build-system.md` describes the crate graph, Buck2 targets, dependency
-pinning, and development commands. Build and run with Buck2:
-
-```sh
-buck2 build //:phoebe
-buck2 run //:phoebe -- run examples/hello.phoebe
-buck2 build //:phoebe_dist
-```
+pinning, and development commands.
 
 Cargo remains available for tests and standalone runtime archives:
 

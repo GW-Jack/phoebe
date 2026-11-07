@@ -242,28 +242,28 @@ CPU-heavy backedges remain open.
 ## Commands
 
 ```sh
-cargo run -- run examples/hello.phoebe
-cargo run -- run examples/branch.phoebe
-cargo run -- run examples/loop.phoebe
-cargo run -- run examples/borrow.phoebe
-cargo run -- run examples/variant.phoebe
-cargo run -- run examples/product.phoebe
-cargo run -- run examples/payload.phoebe
-cargo run -- run examples/try.phoebe
-cargo run -- run examples/nested_result.phoebe
-cargo run -- run examples/nested_variant.phoebe
-cargo run -- run examples/copy.phoebe
-cargo run -- run examples/channel_create.phoebe
-cargo run -- run examples/channel_cleanup.phoebe
-cargo run -- run examples/spawn_close.phoebe --interp
-cargo run -- run examples/channel_exchange.phoebe --interp
-cargo run -- run examples/channel_exchange.phoebe
-cargo run -- frames examples/channel_exchange.phoebe
-cargo run -- cost examples/copy.phoebe
-cargo run -- run examples/hello.phoebe --interp
-cargo run -- ir examples/hello.phoebe
-cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow
+buck2 build //:phoebe_dist
+buck2 run //:phoebe -- run examples/hello.phoebe
+buck2 run //:phoebe -- run examples/branch.phoebe
+buck2 run //:phoebe -- run examples/loop.phoebe
+buck2 run //:phoebe -- run examples/borrow.phoebe
+buck2 run //:phoebe -- run examples/variant.phoebe
+buck2 run //:phoebe -- run examples/product.phoebe
+buck2 run //:phoebe -- run examples/payload.phoebe
+buck2 run //:phoebe -- run examples/try.phoebe
+buck2 run //:phoebe -- run examples/nested_result.phoebe
+buck2 run //:phoebe -- run examples/nested_variant.phoebe
+buck2 run //:phoebe -- run examples/copy.phoebe
+buck2 run //:phoebe -- run examples/channel_create.phoebe
+buck2 run //:phoebe -- run examples/channel_cleanup.phoebe
+buck2 run //:phoebe -- run examples/spawn_close.phoebe --interp
+buck2 run //:phoebe -- run examples/channel_exchange.phoebe --interp
+buck2 run //:phoebe -- run examples/channel_exchange.phoebe
+buck2 run //:phoebe -- frames examples/channel_exchange.phoebe
+buck2 run //:phoebe -- cost examples/copy.phoebe
+buck2 run //:phoebe -- ir examples/hello.phoebe
+buck2 run //:phoebe -- build examples/borrow.phoebe -o /tmp/phoebe-borrow
 /tmp/phoebe-borrow
-cargo test
+buck2 test //...
 python3 formal/check_models.py
 ```
