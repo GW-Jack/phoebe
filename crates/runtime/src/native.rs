@@ -12,6 +12,7 @@ fn resource_code(error: ResourceError) -> i64 {
     match error {
         ResourceError::InvalidChannelCapacity => 1,
         ResourceError::ChannelLimit => 2,
+        ResourceError::HandleLimit => 6,
         ResourceError::ReplyLimit => 3,
         ResourceError::Allocation => 4,
         ResourceError::TaskLimit => 5,
@@ -602,12 +603,7 @@ pub unsafe extern "C" fn phoebe_runtime_main(
 ) -> i32 {
     let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let limits = ScopeLimits::default();
-        let mut scheduler = Scheduler::new(
-            StandaloneRootTask { entry },
-            limits.tasks,
-            limits.channels,
-            limits.replies,
-        )?;
+        let mut scheduler = Scheduler::with_limits(StandaloneRootTask { entry }, limits)?;
         scheduler.run()
     }));
     match outcome {
@@ -636,7 +632,7 @@ pub unsafe extern "C" fn phoebe_runtime_main_poll(
         let root =
             unsafe { NativePollTask::new(entry, words) }.map_err(|error| error.to_string())?;
         let limits = ScopeLimits::default();
-        let mut scheduler = Scheduler::new(root, limits.tasks, limits.channels, limits.replies)?;
+        let mut scheduler = Scheduler::with_limits(root, limits)?;
         scheduler.run()
     }));
     match outcome {

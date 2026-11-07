@@ -24,6 +24,7 @@ fn lexical_endpoint_cleanup_agrees_across_engines() {
         tasks: 1,
         channels: 1,
         replies: 0,
+        ..ScopeLimits::default()
     };
     assert_eq!(
         program.interpret_with_limits("main", &[], limits).unwrap(),

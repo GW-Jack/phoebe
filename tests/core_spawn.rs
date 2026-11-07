@@ -145,7 +145,8 @@ fn checked_core_spawn_transfers_sender_and_wakes_parent_receiver() {
                 ScopeLimits {
                     tasks: 2,
                     channels: 1,
-                    replies: 0
+                    replies: 0,
+                    ..ScopeLimits::default()
                 }
             )
             .unwrap(),
@@ -165,7 +166,8 @@ fn failed_spawn_keeps_both_endpoints_with_parent() {
                 ScopeLimits {
                     tasks: 1,
                     channels: 1,
-                    replies: 0
+                    replies: 0,
+                    ..ScopeLimits::default()
                 }
             )
             .unwrap(),
@@ -179,7 +181,8 @@ fn failed_spawn_keeps_both_endpoints_with_parent() {
                 ScopeLimits {
                     tasks: 2,
                     channels: 0,
-                    replies: 0
+                    replies: 0,
+                    ..ScopeLimits::default()
                 }
             )
             .unwrap(),
@@ -273,7 +276,8 @@ fn closed_nominal_argument_moves_only_if_spawn_commits() {
                 ScopeLimits {
                     tasks: 1,
                     channels: 0,
-                    replies: 0
+                    replies: 0,
+                    ..ScopeLimits::default()
                 }
             )
             .unwrap(),
@@ -287,7 +291,8 @@ fn closed_nominal_argument_moves_only_if_spawn_commits() {
                 ScopeLimits {
                     tasks: 2,
                     channels: 0,
-                    replies: 0
+                    replies: 0,
+                    ..ScopeLimits::default()
                 }
             )
             .unwrap(),

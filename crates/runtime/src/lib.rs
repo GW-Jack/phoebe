@@ -64,6 +64,7 @@ pub struct OwnedError<T> {
 pub enum ResourceError {
     InvalidChannelCapacity,
     ChannelLimit,
+    HandleLimit,
     ReplyLimit,
     TaskLimit,
     Allocation,
@@ -75,6 +76,7 @@ impl fmt::Display for ResourceError {
             Self::InvalidChannelCapacity | Self::ChannelLimit => {
                 f.write_str("channel capacity or scope channel limit exceeded")
             }
+            Self::HandleLimit => f.write_str("scope handle limit exceeded"),
             Self::ReplyLimit => f.write_str("scope reply limit exceeded"),
             Self::TaskLimit => f.write_str("scope task limit exceeded"),
             Self::Allocation => f.write_str("scope allocation failed"),
@@ -170,6 +172,9 @@ pub struct RuntimeStats {
 pub struct ScopeLimits {
     pub tasks: usize,
     pub channels: usize,
+    /// Maximum number of channel handles minted in this scope. Tokens are
+    /// never reused, so closed handles still count against this budget.
+    pub handles: usize,
     pub replies: usize,
 }
 
@@ -178,6 +183,7 @@ impl Default for ScopeLimits {
         Self {
             tasks: 64,
             channels: 64,
+            handles: 256,
             replies: 0,
         }
     }
@@ -272,6 +278,7 @@ pub struct Scheduler {
     reply_slots: Vec<ReplySlot>,
     max_tasks: usize,
     max_channels: usize,
+    max_handles: usize,
     max_replies: usize,
     stats: RuntimeStats,
 }
@@ -289,6 +296,26 @@ impl Scheduler {
         max_channels: usize,
         max_replies: usize,
     ) -> Result<Self, String> {
+        Self::with_limits(
+            root,
+            ScopeLimits {
+                tasks: max_tasks,
+                channels: max_channels,
+                handles: max_channels
+                    .saturating_mul(2)
+                    .max(ScopeLimits::default().handles),
+                replies: max_replies,
+            },
+        )
+    }
+
+    pub fn with_limits(root: impl Task + 'static, limits: ScopeLimits) -> Result<Self, String> {
+        let ScopeLimits {
+            tasks: max_tasks,
+            channels: max_channels,
+            handles: max_handles,
+            replies: max_replies,
+        } = limits;
         if max_tasks == 0 {
             return Err("scope requires capacity for its root task".into());
         }
@@ -314,6 +341,7 @@ impl Scheduler {
             reply_slots: Vec::new(),
             max_tasks,
             max_channels,
+            max_handles,
             max_replies,
             stats: RuntimeStats {
                 tasks_created: 1,
@@ -346,6 +374,9 @@ impl Scheduler {
     }
 
     pub fn verify(&self) -> Result<(), String> {
+        if self.handles.len() > self.max_handles {
+            return Err("scope handle budget exceeded".into());
+        }
         let mut senders = vec![0usize; self.channels.len()];
         let mut receivers = vec![0usize; self.channels.len()];
         let mut queued_rights = vec![0usize; self.reply_rights.len()];
@@ -1000,6 +1031,15 @@ impl Context<'_> {
         if self.scheduler.channels.len() >= self.scheduler.max_channels {
             return Err(ResourceError::ChannelLimit);
         }
+        if self
+            .scheduler
+            .handles
+            .len()
+            .checked_add(2)
+            .is_none_or(|next| next > self.scheduler.max_handles)
+        {
+            return Err(ResourceError::HandleLimit);
+        }
         let mut queue = VecDeque::new();
         queue
             .try_reserve_exact(capacity)
@@ -1053,6 +1093,9 @@ impl Context<'_> {
         let channel = self
             .scheduler
             .check_handle(self.task, sender.token, HandleKind::Sender)?;
+        if self.scheduler.handles.len() >= self.scheduler.max_handles {
+            return Ok(Err(ResourceError::HandleLimit));
+        }
         if self.scheduler.handles.try_reserve(1).is_err() {
             return Ok(Err(ResourceError::Allocation));
         }
@@ -1080,6 +1123,9 @@ impl Context<'_> {
         let channel =
             self.scheduler
                 .check_handle(self.task, receiver.token, HandleKind::Receiver)?;
+        if self.scheduler.handles.len() >= self.scheduler.max_handles {
+            return Ok(Err(ResourceError::HandleLimit));
+        }
         if self.scheduler.handles.try_reserve(1).is_err() {
             return Ok(Err(ResourceError::Allocation));
         }

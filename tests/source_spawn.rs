@@ -45,6 +45,7 @@ fn direct_parent_spawns_suspending_child_in_jit_and_object() {
         tasks: 1,
         channels: 1,
         replies: 0,
+        ..ScopeLimits::default()
     };
     assert_eq!(
         program.interpret_with_limits("main", &[], limited).unwrap(),
@@ -58,6 +59,7 @@ fn direct_parent_spawns_suspending_child_in_jit_and_object() {
         tasks: 2,
         channels: 1,
         replies: 0,
+        ..ScopeLimits::default()
     };
     assert_eq!(
         program
@@ -110,6 +112,7 @@ fn source_spawn_transfers_endpoint_and_failure_closes_parent_rights() {
                     tasks: 2,
                     channels: 1,
                     replies: 0,
+                    ..ScopeLimits::default()
                 },
             )
             .unwrap(),
@@ -124,6 +127,7 @@ fn source_spawn_transfers_endpoint_and_failure_closes_parent_rights() {
                     tasks: 1,
                     channels: 1,
                     replies: 0,
+                    ..ScopeLimits::default()
                 },
             )
             .unwrap(),
@@ -138,7 +142,8 @@ fn source_spawn_transfers_endpoint_and_failure_closes_parent_rights() {
                 ScopeLimits {
                     tasks: 1,
                     channels: 1,
-                    replies: 0
+                    replies: 0,
+                    ..ScopeLimits::default()
                 }
             )
             .unwrap(),

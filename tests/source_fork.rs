@@ -1,4 +1,5 @@
 use phoebe::core::{Operation, Terminator};
+use phoebe::runtime::ScopeLimits;
 use phoebe::{core, native, syntax};
 use std::process::Command;
 
@@ -177,4 +178,24 @@ fn verifier_rejects_a_forged_fork_edge() {
             .unwrap_err()
             .contains("fork edges must be distinct")
     );
+}
+
+#[test]
+fn handle_limit_failure_closes_rights_in_interpreter_and_jit() {
+    let source = include_str!("../examples/fork_channel.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    for handles in [2, 3] {
+        let limits = ScopeLimits {
+            handles,
+            ..ScopeLimits::default()
+        };
+        assert_eq!(
+            program.interpret_with_limits("main", &[], limits).unwrap(),
+            0
+        );
+        assert_eq!(
+            native::run_with_limits(&program, "main", &[], limits).unwrap(),
+            0
+        );
+    }
 }

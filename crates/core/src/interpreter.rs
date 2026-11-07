@@ -126,8 +126,7 @@ impl Program {
             .collect::<Vec<_>>();
         let root = CoreTask::new(Arc::new(self.clone()), id, args);
         if self.runtime_context_functions()[id.0] {
-            let mut scheduler =
-                Scheduler::new(root, limits.tasks, limits.channels, limits.replies)?;
+            let mut scheduler = Scheduler::with_limits(root, limits)?;
             scheduler.run()
         } else {
             let mut root = root;

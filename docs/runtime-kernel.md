@@ -8,8 +8,8 @@ Source syntax covers fallible `I64` channel creation, explicit endpoint
 close, task spawn, and `I64` send/receive outcomes. Native call continuations
 run in the supported poll subset; general typed messages remain open.
 
-`Scheduler` owns bounded tables of task records, channels, and reply slots.
-The caller supplies all three limits. Each task has
+`Scheduler` owns bounded tables of task records, channels, handles, and reply slots.
+The caller supplies all four limits. Each task has
 one retained `Task` frame and is polled until it returns `Ready` or registers a
 wait and returns `Pending`. The scheduler runs on one OS thread. A full send
 parks the sender with the original message still in its frame; a receive of an
@@ -20,8 +20,9 @@ as a blocked channel operation. Source `yield;` now lowers to a retained
 continuation in the interpreter and native ABI. Compiler-generated backedge
 checkpoints are still needed to make CPU-heavy Phoebe loops fair without an
 explicit yield.
-The default source-run scope permits 64 tasks and 64 channels, with no reply
-slots; callers can set tighter limits through the Rust API. Task creation
+The default source-run scope permits 64 tasks, 64 channels, and 256 total
+channel handles, with no reply slots; callers can set tighter limits through
+the Rust API. Task creation
 therefore succeeds in the ordinary interpreter CLI example, while a one-task
 limit exercises the typed failure edge.
 The versioned `phoebe_rt_v1_main_poll` entry runs a native poll function with
@@ -34,8 +35,10 @@ poll children in the source exchange.
 
 `Sender` and `Receiver` wrap opaque tokens. The handle table records each
 token's one task owner. `fork` creates another handle explicitly and returns
-a typed allocation failure before changing channel counts or publishing a
-handle; invalid tokens remain internal faults. Source binds the new right
+a typed handle-limit or allocation failure before changing channel counts or
+publishing a handle; invalid tokens remain internal faults. Handle tokens are
+never reused in a scope, so the handle budget counts total minted handles,
+including closed ones. Source binds the new right
 with `val another = sender.fork()?` or `receiver.fork()?`. `spawn`
 validates all transfers before changing their owners. A successful send
 copies a closed `I64` into a pre-reserved FIFO slot. If no receiver remains,
@@ -94,7 +97,7 @@ does not run that scan.
 
 The kernel allocates bounded channel storage and retained frames under scope
 ownership, without a garbage collector or a general shared program heap.
-The task, channel, and reply tables have explicit limits. Channel queues reserve
+The task, channel, handle, and reply tables have explicit limits. Channel queues reserve
 their full capacity before use. Rust `Box` frame allocation and the host
 allocator are not yet fallible in this implementation, so this does not meet
 the release requirement for safe allocation failure. The public Rust `Task`
@@ -128,6 +131,6 @@ different ABI version fails at link time.
 
 The creation status is `0` on success, `1` for invalid capacity, `2` for the
 channel limit, and `4` for allocation failure (`3` is reserved for the reply
-limit and `5` for the task limit). `255` marks an internal ABI fault; the native task reports that fault
+limit, `5` for the task limit, and `6` for the handle limit). `255` marks an internal ABI fault; the native task reports that fault
 after the generated function returns. These codes are an internal bridge,
 not a stable source-language error representation.

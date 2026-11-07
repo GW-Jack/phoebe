@@ -213,6 +213,7 @@ fn checked_channel_creation_has_two_success_rights_and_a_typed_failure() {
                     tasks: 1,
                     channels: 0,
                     replies: 0,
+                    ..ScopeLimits::default()
                 },
             )
             .unwrap(),
@@ -230,6 +231,7 @@ fn checked_channel_creation_has_two_success_rights_and_a_typed_failure() {
                 tasks: 1,
                 channels: 0,
                 replies: 0,
+                ..ScopeLimits::default()
             },
         )
         .unwrap(),

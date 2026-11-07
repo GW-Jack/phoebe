@@ -3,8 +3,8 @@ use std::task::Poll;
 
 use phoebe::runtime::{
     CompleteResult, Context, NativeCallContext, Receiver, ReplyReceiveResult, Request,
-    ResourceError, Scheduler, Sender, Task, phoebe_channel_new_i64, phoebe_close_handle_i64,
-    phoebe_receive_i64, phoebe_send_i64,
+    ResourceError, Scheduler, ScopeLimits, Sender, Task, phoebe_channel_new_i64,
+    phoebe_close_handle_i64, phoebe_fork_handle_i64, phoebe_receive_i64, phoebe_send_i64,
 };
 
 struct UnstartedChild {
@@ -190,6 +190,99 @@ impl Task for NativeAbiRoot {
 #[test]
 fn native_abi_publishes_both_handles_only_on_success() {
     let mut scheduler = Scheduler::new(NativeAbiRoot, 1, 2, 0).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
+    assert_eq!(scheduler.open_handles(), 0);
+    scheduler.verify().unwrap();
+}
+
+struct HandleBudgetRoot;
+
+impl Task for HandleBudgetRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        let (sender, receiver) = context.channel_typed(1).map_err(|e| e.to_string())?;
+        let fork = context
+            .fork_sender_typed(&sender)?
+            .map_err(|e| e.to_string())?;
+        assert_eq!(
+            context.fork_receiver_typed(&receiver)?.unwrap_err(),
+            ResourceError::HandleLimit
+        );
+        context.close_sender(sender)?;
+        context.close_sender(fork)?;
+        context.close_receiver(receiver)?;
+        assert_eq!(
+            context.channel_typed(1).unwrap_err(),
+            ResourceError::HandleLimit
+        );
+        Ok(Poll::Ready(42))
+    }
+}
+
+#[test]
+fn handle_budget_rejects_fork_before_changing_ownership() {
+    let limits = ScopeLimits {
+        tasks: 1,
+        channels: 2,
+        handles: 3,
+        replies: 0,
+    };
+    let mut scheduler = Scheduler::with_limits(HandleBudgetRoot, limits).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
+    assert_eq!(scheduler.open_handles(), 0);
+    scheduler.verify().unwrap();
+}
+
+struct NativeForkBudgetRoot;
+
+impl Task for NativeForkBudgetRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        let mut fault = false;
+        let mut bridge = NativeCallContext {
+            context: context as *mut _ as *mut c_void,
+            fault: &mut fault,
+            call_request: std::ptr::null_mut(),
+        };
+        let mut sender = -1;
+        let mut receiver = -1;
+        assert_eq!(
+            unsafe { phoebe_channel_new_i64(&mut bridge, 1, &mut sender, &mut receiver) },
+            0
+        );
+        let mut out = 123;
+        assert_eq!(
+            unsafe { phoebe_fork_handle_i64(&mut bridge, sender, 0, &mut out) },
+            6
+        );
+        assert_eq!(out, 123);
+        assert_eq!(unsafe { phoebe_send_i64(&mut bridge, sender, 42) }, 0);
+        let mut value = -1;
+        assert_eq!(
+            unsafe { phoebe_receive_i64(&mut bridge, receiver, &mut value) },
+            0
+        );
+        assert_eq!(value, 42);
+        assert_eq!(
+            unsafe { phoebe_close_handle_i64(&mut bridge, sender, 0) },
+            0
+        );
+        assert_eq!(
+            unsafe { phoebe_close_handle_i64(&mut bridge, receiver, 1) },
+            0
+        );
+        assert!(!fault);
+        Ok(Poll::Ready(value))
+    }
+}
+
+#[test]
+fn native_fork_budget_status_preserves_original_and_output() {
+    let limits = ScopeLimits {
+        tasks: 1,
+        channels: 1,
+        handles: 2,
+        replies: 0,
+    };
+    let mut scheduler = Scheduler::with_limits(NativeForkBudgetRoot, limits).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.open_handles(), 0);
     scheduler.verify().unwrap();

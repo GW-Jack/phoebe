@@ -133,8 +133,7 @@ impl JitExecutable {
                 entry: pointer,
                 args: args.to_vec(),
             };
-            let mut scheduler =
-                Scheduler::new(root, limits.tasks, limits.channels, limits.replies)?;
+            let mut scheduler = Scheduler::with_limits(root, limits)?;
             return scheduler.run();
         }
         // The checked I64 signature and owning module make this invocation valid.
@@ -253,7 +252,7 @@ pub fn run_with_limits(
     for (arg, slot) in args.iter().zip(&executable.layout().entry_params) {
         root.frame_mut()[slot.words.start] = *arg;
     }
-    let mut scheduler = Scheduler::new(root, limits.tasks, limits.channels, limits.replies)?;
+    let mut scheduler = Scheduler::with_limits(root, limits)?;
     scheduler.run()
 }
 

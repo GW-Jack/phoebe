@@ -123,7 +123,10 @@ edges, and a resource failure creates no new handle. Core checks the fresh
 slot and requires the original right on each edge. Direct code, retained
 tasks, the interpreter, and standalone binaries run the same fork operation;
 `examples/fork_channel.phoebe` exercises both handle kinds. Allocation
-failure is represented in the ABI but has not been forced in a test.
+failure is represented in the ABI but has not been forced in a test. A scope
+now also bounds total channel handles minted (default 256); a handle-limit
+failure is tested in the kernel, native ABI, interpreter, and JIT. Closed
+tokens are not reused, so a close does not refund that budget.
 Source `send` and `receive` now yield explicit `Send<I64>` and `Receive<I64>`
 outcomes. A two-message source exchange over a one-slot channel exercises
 parking and wakeup in the interpreter. The outcome types are added to Core

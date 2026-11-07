@@ -31,6 +31,7 @@ fn source_two_message_exchange_parks_and_wakes() {
                     tasks: 2,
                     channels: 1,
                     replies: 0,
+                    ..ScopeLimits::default()
                 },
             )
             .unwrap(),
@@ -47,6 +48,7 @@ fn source_two_message_exchange_parks_and_wakes() {
                 tasks: 1,
                 channels: 1,
                 replies: 0,
+                ..ScopeLimits::default()
             }
         )
         .unwrap(),
@@ -61,6 +63,7 @@ fn source_two_message_exchange_parks_and_wakes() {
                 tasks: 2,
                 channels: 0,
                 replies: 0,
+                ..ScopeLimits::default()
             }
         )
         .unwrap(),
@@ -269,6 +272,7 @@ fn unused_exchange() -> Result<I64, ResourceError> {
         tasks: 1,
         channels: 1,
         replies: 0,
+        ..ScopeLimits::default()
     };
     assert_eq!(
         program.interpret_with_limits("main", &[], limits).unwrap(),
