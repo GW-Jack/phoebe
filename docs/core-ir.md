@@ -152,4 +152,5 @@ queue transfer, unpack and completion, closed-send recovery, a child service
 that waits for a request and completes its parent's reply, and rejected
 implicit loss. Source syntax for requests is still open. This concrete
 layout does not establish the general nested aggregate
-capability rule.
+capability rule. The proposed control-flow source surface is in
+`docs/request-source-design.md`.

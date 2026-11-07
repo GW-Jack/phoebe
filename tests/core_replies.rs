@@ -423,3 +423,64 @@ fn checked_core_spawn_moves_reply_right_and_retries_receive() {
     );
     assert_standalone(&program, "spawn", 42);
 }
+
+#[test]
+fn checked_core_spawn_moves_right_nested_in_request() {
+    let mut program = spawned_reply();
+    let parent = &mut program.functions[0];
+    parent.value_types.extend([Type::I64, Type::RequestI64]);
+    parent.blocks[1].instructions.extend([
+        instruction(Some(8), Operation::Const(42)),
+        instruction(
+            Some(9),
+            Operation::PackRequest {
+                value: ValueId(8),
+                right: ValueId(0),
+            },
+        ),
+    ]);
+    if let Terminator::Spawn { args, .. } = &mut parent.blocks[1].terminator {
+        *args = vec![ValueId(9)];
+    } else {
+        unreachable!();
+    }
+    parent.blocks[4].instructions[0].operation = Operation::CloseRequest(ValueId(9));
+
+    let child = &mut program.functions[1];
+    child.value_types[0] = Type::RequestI64;
+    child.value_types.push(Type::ReplyToI64);
+    child.blocks[0].instructions.clear();
+    child.blocks[0].terminator = Terminator::RequestUnpack {
+        request: ValueId(0),
+        next: BlockId(3),
+    };
+    child.blocks.push(Block {
+        params: vec![ValueId(1), ValueId(4)],
+        instructions: vec![],
+        terminator: Terminator::ReplyComplete {
+            right: ValueId(4),
+            value: ValueId(1),
+            delivered: BlockId(1),
+            closed: BlockId(2),
+        },
+    });
+
+    core::verify(&program).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "spawn-request", 42);
+    let task_limit = ScopeLimits {
+        tasks: 1,
+        ..limits(1)
+    };
+    assert_eq!(
+        program
+            .interpret_with_limits("main", &[], task_limit)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        native::run_with_limits(&program, "main", &[], task_limit).unwrap(),
+        0
+    );
+}
