@@ -72,8 +72,9 @@ definition uniqueness, dominance, place initialization, affine moves,
 block-argument types, call targets and modes, and return
 types. Source spans survive parsing and lowering. `docs/core-ir.md` and
 `docs/call-borrows.md` explain the current operations and their evidence
-boundary. Borrows are confined to synchronous calls; general reference
-lifetimes and regions are not implemented. `docs/result-try.md` states the
+boundary. Borrows are confined to one call chain and can span a channel
+suspension; general reference lifetimes and regions are not implemented.
+`docs/result-try.md` states the
 current `?` rule and its missing user-declared `Result` fields, generic
 functions, and cleanup work.
 
@@ -173,6 +174,9 @@ interpreter, JIT, and standalone executable paths. Retained calls now pass
 borrowed places and forwarded references to suspendable callees. The caller
 frame owns the borrowed place until the child returns; tests cover exclusive
 and shared borrows across receive. General reference regions remain open.
+The bounded Maude retained-borrow model checks one nested call chain with
+park, wake, return, and ordered failure unwind. It does not prove the Rust
+implementation or generated code.
 The runtime has a tested same-task native call mailbox and child frame stack;
 generated Cranelift calls use that continuation ABI.
 

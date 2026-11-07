@@ -1,0 +1,89 @@
+--- Bounded nested-call model for one borrowed I64 place. The parent owns the
+--- place; the middle function forwards its exclusive reference to a child
+--- that can park. No reference can escape the call chain or cross a task.
+mod PHOEBE-RETAINED-BORROW is
+  protecting BOOL .
+
+  sorts Parent Middle Child Frame Loan Value State .
+  ops pRun pWait pCancel pDone pFailed : -> Parent [ctor] .
+  ops mAbsent mRun mWait mDone : -> Middle [ctor] .
+  ops cAbsent cRun cPark cDone : -> Child [ctor] .
+  ops live dead : -> Frame [ctor] .
+  ops noLoan active released : -> Loan [ctor] .
+  ops old updated : -> Value [ctor] .
+  op st : Parent Middle Child Frame Frame Loan Loan Value -> State [ctor] .
+  op initial : -> State .
+  eq initial = st(pRun, mAbsent, cAbsent, live, dead,
+                  noLoan, noLoan, old) .
+
+  vars P : Parent .
+  vars M : Middle .
+  vars C : Child .
+  vars PF MF : Frame .
+  vars L1 L2 : Loan .
+  vars V : Value .
+
+  rl [call-forward] : st(pRun, mAbsent, cAbsent, live, dead,
+                         noLoan, noLoan, V)
+    => st(pWait, mRun, cAbsent, live, live,
+          active, noLoan, V) .
+  rl [forward-to-child] : st(pWait, mRun, cAbsent, live, live,
+                             active, noLoan, V)
+    => st(pWait, mWait, cRun, live, live,
+          active, active, V) .
+  rl [park] : st(pWait, mWait, cRun, live, live,
+                 active, active, old)
+    => st(pWait, mWait, cPark, live, live,
+          active, active, old) .
+  rl [wake] : st(pWait, mWait, cPark, live, live,
+                 active, active, old)
+    => st(pWait, mWait, cRun, live, live,
+          active, active, old) .
+  rl [write-through-ref] : st(pWait, mWait, cRun, live, live,
+                              active, active, old)
+    => st(pWait, mWait, cRun, live, live,
+          active, active, updated) .
+  rl [return-child] : st(pWait, mWait, cRun, live, live,
+                          active, active, updated)
+    => st(pWait, mRun, cDone, live, live,
+          active, released, updated) .
+  rl [return-middle] : st(pWait, mRun, cDone, live, live,
+                           active, released, updated)
+    => st(pRun, mDone, cDone, live, dead,
+          released, released, updated) .
+  rl [return-parent] : st(pRun, mDone, cDone, live, dead,
+                           released, released, updated)
+    => st(pDone, mDone, cDone, dead, dead,
+          released, released, updated) .
+
+  --- A failure unwinds the nested same-task call from child to parent.
+  --- Each loan is released before the frame that roots it can be freed.
+  rl [fail-before-or-after-call] : st(pRun, M, C, live, MF, L1, L2, V)
+    => st(pFailed, mDone, cDone, dead, dead,
+          released, released, V) .
+  rl [begin-unwind] : st(pWait, M, C, live, live, active, L2, V)
+    => st(pCancel, M, C, live, live, active, L2, V) .
+  rl [release-child-loan] : st(pCancel, mWait, C, live, live,
+                               active, active, V)
+    => st(pCancel, mRun, cDone, live, live,
+          active, released, V) .
+  rl [release-middle-loan] : st(pCancel, mRun, cDone, live, live,
+                                active, released, V)
+    => st(pCancel, mDone, cDone, live, dead,
+          released, released, V) .
+  rl [free-parent] : st(pCancel, mDone, cDone, live, dead,
+                        released, released, V)
+    => st(pFailed, mDone, cDone, dead, dead,
+          released, released, V) .
+
+  op bad : State -> Bool .
+  eq bad(st(P, M, C, dead, MF, active, L2, V)) = true .
+  eq bad(st(P, M, C, dead, MF, L1, active, V)) = true .
+  eq bad(st(P, M, C, PF, dead, L1, active, V)) = true .
+  eq bad(st(P, M, C, PF, dead, active, L2, V)) = true .
+  eq bad(st(P, M, cPark, PF, MF, L1, noLoan, V)) = true .
+  eq bad(st(P, M, cDone, PF, MF, L1, active, V)) = true .
+  eq bad(st(pDone, M, C, live, MF, L1, L2, V)) = true .
+  eq bad(st(pFailed, M, C, live, MF, L1, L2, V)) = true .
+  eq bad(st(P, M, C, PF, MF, L1, L2, V)) = false [owise] .
+endm

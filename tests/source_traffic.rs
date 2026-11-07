@@ -167,6 +167,45 @@ fn main() -> I64 {
 }
 
 #[test]
+fn deadlocked_borrowed_call_releases_native_scope_resources() {
+    let source = r#"
+fn wait(value: &I64, receiver: Receiver<I64>) -> I64 {
+  val item = receiver.receive();
+  receiver.close();
+  value
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  val held = 42;
+  val answer = wait(&held, receiver);
+  sender.close();
+  Result<I64, ResourceError>.Ok(answer)
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert!(
+        program
+            .interpret("main", &[])
+            .unwrap_err()
+            .contains("scope deadlocked")
+    );
+    let executable = native::compile_poll_jit(&program, "main").unwrap();
+    let root = unsafe { NativePollTask::new(executable.entry(), executable.layout().total_words) }
+        .unwrap();
+    let mut scheduler = Scheduler::new(root, 1, 1, 0).unwrap();
+    assert!(scheduler.run().unwrap_err().contains("scope deadlocked"));
+    scheduler.verify().unwrap();
+}
+
+#[test]
 fn suspendable_functions_call_direct_helpers_without_poll_continuations() {
     let source = include_str!("../examples/channel_exchange_helper.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

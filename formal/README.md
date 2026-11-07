@@ -47,14 +47,30 @@ reachable states with no encoded bad state. Ten positive queries witness
 ownership transfer, successful and canceled completion, discard, failure,
 and both scope outcomes. A deliberately inconsistent state is classified bad.
 
+## Retained borrow through a nested call
+
+`retained_borrow.maude` models one parent-owned scalar place borrowed by a
+middle function and forwarded to a child that can park. The parent and middle
+frames stay live while the child holds the reference. A successful path wakes,
+writes through the reference, releases the child and middle loans, and frees
+the parent frame. Failure can begin while the child runs or parks; it unwinds
+the two loans in order before freeing the parent frame. The search explores
+18 states with no encoded dangling reference or premature frame release.
+Four witnesses cover parking, writing, normal return, and cleanup after a
+parked failure. A deliberately freed parent with active loans is classified
+bad.
+
 ## Evidence boundary
 
-These are finite explorations of three handwritten abstract machines. The
+These are finite explorations of four handwritten abstract machines. The
 two-task model does not include regions or references; the one-task model
-does not include handle fork. Neither models multiple queued messages,
-blocking/parking, scheduling fairness, foreign calls, or executable compiler
-IR. The reply model does not cover multiple reply rights, general transferable
-handles, multiple queued requests, or memory regions. In particular, no proof
-yet connects any model to the proposed
-compiler, runtime, or generated machine code. A `No solution.` result means
-only that its stated bad predicate is unreachable under its stated rules.
+does not include handle fork. Neither models multiple queued messages or
+blocking/parking. The reply model does not cover multiple reply rights,
+general transferable handles, multiple queued requests, or memory regions.
+The retained borrow model includes parking but only one same-task call chain,
+one scalar place, and an abstract ordered unwind. It does not encode the
+generated frame offsets, Rust pointer operations, or allocator behavior.
+None models scheduling fairness, foreign calls, or executable compiler IR.
+No proof yet connects any model to the compiler, runtime, or generated machine
+code. A `No solution.` result means only that its stated bad predicate is
+unreachable under its stated rules.

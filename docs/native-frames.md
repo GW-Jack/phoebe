@@ -70,6 +70,11 @@ also evaluates product fields, arithmetic, and comparisons after resumption.
 callee that parks on receive, then writes through it. The caller place stays
 in its stable frame until the callee returns; the callee frame retains the
 reference value during the wait.
+A deadlocked borrowed call is also tested through the native scheduler:
+scope cleanup releases its handles and the runtime ownership verifier passes.
+`formal/retained_borrow.maude` separately explores a bounded nested-call
+model, including ordered unwind after a parked failure. It does not prove
+the generated frame code.
 
 ## Native ABI obligations
 

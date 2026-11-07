@@ -1,0 +1,20 @@
+load retained_borrow.maude
+
+--- A deliberately freed parent with an active loan must be detected.
+reduce in PHOEBE-RETAINED-BORROW :
+  bad(st(pWait, mWait, cPark, dead, live, active, active, old)) .
+
+search [1] in PHOEBE-RETAINED-BORROW : initial =>* X:State
+  such that bad(X:State) == true .
+
+--- Non-vacuous witnesses for the parked borrow, the write, normal return,
+--- and failure cleanup from a parked state.
+search [1] in PHOEBE-RETAINED-BORROW : initial =>*
+  st(pWait, mWait, cPark, live, live, active, active, old) .
+search [1] in PHOEBE-RETAINED-BORROW : initial =>*
+  st(pWait, mWait, cRun, live, live, active, active, updated) .
+search [1] in PHOEBE-RETAINED-BORROW : initial =>*
+  st(pDone, mDone, cDone, dead, dead, released, released, updated) .
+search [1] in PHOEBE-RETAINED-BORROW :
+  st(pWait, mWait, cPark, live, live, active, active, old) =>+
+  st(pFailed, mDone, cDone, dead, dead, released, released, old) .
