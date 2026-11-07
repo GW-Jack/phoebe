@@ -57,6 +57,28 @@ development and CI; it is not invoked for each compilation.
 The following is the intended checked Core vocabulary. `T` must be sendable
 for a channel, and a queue's capacity is established when it is created.
 Resource creation has a typed failure edge rather than an allocation panic.
+Because creation can fail, `channel.new` and `reply.new` are terminators. Their
+success successors receive two fresh capability-bearing block parameters;
+their failure successors receive a small resource error and no new capability.
+Ordinary instructions retain zero or one result. The Core representation
+must model the two creation outputs on the success edge, rather than pay for
+multi-result storage on every instruction.
+
+For creation from live state `O`, the verifier checks these edge equations:
+
+```text
+channel.new success: O' = O ∪ {sender, receiver}
+channel.new failure: O' = O
+reply.new success:   O' = O ∪ {reply_to, reply_receiver}
+reply.new failure:   O' = O
+```
+
+The fresh slots exist only on the success successor. They must be distinct,
+and the runtime must publish both rights or neither. A normal return from
+either successor still requires exact disposition of every live right. The
+same edge form handles `spawn_owned`: success transfers the child frame's
+slots to the new task; failure returns the intact frame and retains its slots
+with the parent.
 
 | Operation | Required task ownership | Success transition | Other edge |
 | --- | --- | --- | --- |
