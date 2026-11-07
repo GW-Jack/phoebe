@@ -139,6 +139,10 @@ needed at each channel retry or pending call. It leaves creation-only and
 spawn-only functions on the direct-call path. `docs/native-frames.md` states
 the frame ABI obligations and evidence boundary; this analysis is not yet
 connected to native code generation.
+The runtime now owns a stable word-array frame for a versioned native poll
+entry. Synthetic poll functions exercise yield/resume and receive park/wake
+through the real scheduler and ABI. Cranelift has not generated a poll
+function yet, so native source channel traffic remains unsupported.
 
 ## Commands
 

@@ -253,6 +253,79 @@ struct StandaloneRootTask {
     entry: extern "C" fn(*mut NativeCallContext) -> i64,
 }
 
+/// Poll status: 0 ready, 1 pending, 255 fault. A poll function writes its
+/// result to frame word 1 only on Ready. Word 0 is its program counter.
+pub type NativePollEntry = extern "C" fn(*mut NativeCallContext, *mut i64) -> i64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeFrameError {
+    InvalidLayout,
+    Allocation,
+}
+
+impl fmt::Display for NativeFrameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidLayout => f.write_str("native poll frame requires a two-word header"),
+            Self::Allocation => f.write_str("native poll frame allocation failed"),
+        }
+    }
+}
+
+pub struct NativePollTask {
+    entry: NativePollEntry,
+    frame: Vec<i64>,
+}
+
+impl NativePollTask {
+    /// Allocate a stable, zeroed frame before any endpoint ownership transfer.
+    ///
+    /// # Safety
+    ///
+    /// `entry` must be verified generated code using the v1 poll ABI and must
+    /// access only the `frame_words` allocated words. It must preserve the
+    /// frame's ownership invariants when returning Pending or Ready.
+    pub unsafe fn new(
+        entry: NativePollEntry,
+        frame_words: usize,
+    ) -> Result<Self, NativeFrameError> {
+        if frame_words < 2 {
+            return Err(NativeFrameError::InvalidLayout);
+        }
+        let mut frame = Vec::new();
+        frame
+            .try_reserve_exact(frame_words)
+            .map_err(|_| NativeFrameError::Allocation)?;
+        frame.resize(frame_words, 0);
+        Ok(Self { entry, frame })
+    }
+
+    pub fn frame_mut(&mut self) -> &mut [i64] {
+        &mut self.frame
+    }
+}
+
+impl Task for NativePollTask {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        let mut fault = false;
+        let mut bridge = NativeCallContext {
+            context: context as *mut _ as *mut c_void,
+            fault: &mut fault,
+        };
+        let status = (self.entry)(&mut bridge, self.frame.as_mut_ptr());
+        if fault {
+            return Err("native runtime ABI fault".into());
+        }
+        match status {
+            0 if context.wait.is_none() => Ok(Poll::Ready(self.frame[1])),
+            0 => Err("native poll returned Ready with a registered wait".into()),
+            1 => Ok(Poll::Pending),
+            255 => Err("native poll function failed".into()),
+            code => Err(format!("invalid native poll status {code}")),
+        }
+    }
+}
+
 impl Task for StandaloneRootTask {
     fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
         let mut fault = false;
@@ -288,6 +361,35 @@ pub unsafe extern "C" fn phoebe_runtime_main(
             limits.channels,
             limits.replies,
         )?;
+        scheduler.run()
+    }));
+    match outcome {
+        Ok(Ok(value)) => {
+            unsafe { *result_out = value };
+            0
+        }
+        _ => 1,
+    }
+}
+
+/// Run a zero-argument generated poll entry under the default bounded scope.
+///
+/// # Safety
+///
+/// `entry` must satisfy `NativePollTask::new` for `frame_words` words, which
+/// include the two-word header. `result_out` must be aligned and writable.
+#[unsafe(export_name = "phoebe_rt_v1_main_poll")]
+pub unsafe extern "C" fn phoebe_runtime_main_poll(
+    entry: NativePollEntry,
+    frame_words: i64,
+    result_out: *mut i64,
+) -> i32 {
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let words = usize::try_from(frame_words).map_err(|_| "negative poll frame size")?;
+        let root =
+            unsafe { NativePollTask::new(entry, words) }.map_err(|error| error.to_string())?;
+        let limits = ScopeLimits::default();
+        let mut scheduler = Scheduler::new(root, limits.tasks, limits.channels, limits.replies)?;
         scheduler.run()
     }));
     match outcome {
@@ -1466,6 +1568,135 @@ impl Context<'_> {
 #[cfg(test)]
 mod native_poll_tests {
     use super::*;
+
+    extern "C" fn synthetic_poll(bridge: *mut NativeCallContext, frame: *mut i64) -> i64 {
+        let words = unsafe { std::slice::from_raw_parts_mut(frame, 4) };
+        match words[0] {
+            0 => {
+                words[0] = 1;
+                words[2] = 41;
+                words[3] = frame as usize as i64;
+                let bridge = unsafe { &mut *bridge };
+                let context = unsafe { &mut *(bridge.context as *mut Context<'_>) };
+                context.yield_now().expect("first poll may yield");
+                1
+            }
+            1 => {
+                assert_eq!(words[3], frame as usize as i64);
+                words[1] = words[2] + 1;
+                0
+            }
+            _ => 255,
+        }
+    }
+
+    #[test]
+    fn poll_abi_retains_a_stable_frame_across_scheduler_yield() {
+        assert!(matches!(
+            unsafe { NativePollTask::new(synthetic_poll, 1) },
+            Err(NativeFrameError::InvalidLayout)
+        ));
+        assert!(matches!(
+            unsafe { NativePollTask::new(synthetic_poll, usize::MAX) },
+            Err(NativeFrameError::Allocation)
+        ));
+        let task = unsafe { NativePollTask::new(synthetic_poll, 4) }.unwrap();
+        let mut scheduler = Scheduler::new(task, 1, 0, 0).unwrap();
+        assert_eq!(scheduler.run().unwrap(), 42);
+        assert_eq!(scheduler.stats().yields, 1);
+        scheduler.verify().unwrap();
+
+        let mut result = -1;
+        assert_eq!(
+            unsafe { phoebe_runtime_main_poll(synthetic_poll, 4, &mut result) },
+            0
+        );
+        assert_eq!(result, 42);
+    }
+
+    extern "C" fn synthetic_receive_poll(bridge: *mut NativeCallContext, frame: *mut i64) -> i64 {
+        let words = unsafe { std::slice::from_raw_parts_mut(frame, 3) };
+        let mut received = -1;
+        match unsafe { phoebe_receive_i64(bridge, words[2], &mut received) } {
+            1 => {
+                assert_eq!(received, -1);
+                words[0] = 1;
+                1
+            }
+            0 => {
+                assert_eq!(unsafe { phoebe_close_handle_i64(bridge, words[2], 1) }, 0);
+                words[1] = received;
+                0
+            }
+            _ => 255,
+        }
+    }
+
+    #[derive(Default)]
+    struct PollReceiverHost {
+        sender: Option<Sender>,
+        phase: u8,
+    }
+
+    impl Task for PollReceiverHost {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            if self.phase == 0 {
+                let (sender, receiver) = context.channel(1)?;
+                let token = receiver.token();
+                let mut child = unsafe { NativePollTask::new(synthetic_receive_poll, 3) }
+                    .map_err(|error| error.to_string())?;
+                child.frame_mut()[2] = token.0 as i64;
+                context
+                    .spawn_owned(child, &[token])
+                    .map_err(|error| error.message)?;
+                self.sender = Some(sender);
+                self.phase = 1;
+                context.yield_now()?;
+                return Ok(Poll::Pending);
+            }
+            if self.phase == 1 {
+                assert_eq!(
+                    context.send(self.sender.as_ref().expect("sender"), 42)?,
+                    SendResult::Sent
+                );
+                context.close_sender(self.sender.take().expect("sender"))?;
+                self.phase = 2;
+            }
+            match context.join()? {
+                Poll::Pending => Ok(Poll::Pending),
+                Poll::Ready(()) => Ok(Poll::Ready(42)),
+            }
+        }
+    }
+
+    #[test]
+    fn poll_abi_retries_receive_after_scheduler_wake() {
+        let mut scheduler = Scheduler::new(PollReceiverHost::default(), 2, 1, 0).unwrap();
+        assert_eq!(scheduler.run().unwrap(), 42);
+        assert!(scheduler.stats().parks >= 1);
+        assert!(scheduler.stats().wakes >= 1);
+        scheduler.verify().unwrap();
+    }
+
+    extern "C" fn invalid_ready_with_wait(bridge: *mut NativeCallContext, frame: *mut i64) -> i64 {
+        let bridge = unsafe { &mut *bridge };
+        let context = unsafe { &mut *(bridge.context as *mut Context<'_>) };
+        context.yield_now().expect("yield registers a wait");
+        unsafe { *frame.add(1) = 1 };
+        0
+    }
+
+    #[test]
+    fn poll_abi_rejects_ready_with_a_registered_wait() {
+        let task = unsafe { NativePollTask::new(invalid_ready_with_wait, 2) }.unwrap();
+        let mut scheduler = Scheduler::new(task, 1, 0, 0).unwrap();
+        assert!(
+            scheduler
+                .run()
+                .unwrap_err()
+                .contains("Ready with a registered wait")
+        );
+    }
 
     struct Drain {
         receiver: Option<Receiver>,

@@ -22,6 +22,12 @@ The default source-run scope permits 64 tasks and 64 channels, with no reply
 slots; callers can set tighter limits through the Rust API. Task creation
 therefore succeeds in the ordinary interpreter CLI example, while a one-task
 limit exercises the typed failure edge.
+The versioned `phoebe_rt_v1_main_poll` entry runs a native poll function with
+a stable word-array frame: program counter in word 0, result in word 1, and
+generated payload afterward. Status `0` means Ready, `1` Pending, and `255`
+fault. Synthetic poll tests prove the runtime driver preserves its frame
+address across yield and a channel receive wake. Cranelift does not emit this
+poll ABI yet.
 
 `Sender` and `Receiver` wrap opaque tokens. The handle table records each
 token's one task owner. `fork` creates another handle explicitly; `spawn`

@@ -1,8 +1,9 @@
 # Retained native task frames
 
 Status: the spill analysis and `phoebe frames` inspection command run on
-verified Core. Generated poll functions, frame allocation, and native task
-spawn are not implemented yet. The analysis is tested, not formally proved.
+verified Core. The runtime can allocate and poll a stable native frame through
+the versioned v1 ABI. Generated Cranelift poll functions and native task spawn
+are not implemented yet. The analysis is tested, not formally proved.
 
 ## Suspension boundary
 
@@ -47,8 +48,17 @@ layout, not yet native code generation.
 
 ## Native ABI obligations
 
-The eventual poll ABI needs an explicit `Ready(value)`, `Pending`, or fault
-status, a stable frame address, and a program counter that distinguishes
+The v1 poll ABI uses status `0` for Ready, `1` for Pending, and `255` for fault.
+The frame is a stable array of `I64` words: word 0 is the program counter,
+word 1 is the result written only on Ready, and later words are the generated
+payload layout. The runtime allocates and zeroes it before execution and
+keeps it in the task record across Pending. The standalone entry point
+`phoebe_rt_v1_main_poll` runs a zero-argument poll function under a bounded
+scope. A synthetic poll test yields and resumes at the same frame address;
+another parks in the versioned receive ABI, wakes from a transferred sender,
+retries receive, and closes its endpoint.
+
+Generated code still needs a program counter that distinguishes
 first entry from each retry or child continuation. The scheduler owns a
 pending frame until completion or cancellation. Frame initialization and
 task admission must reserve storage before transferring endpoint ownership;
