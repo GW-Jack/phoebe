@@ -25,6 +25,9 @@ use crate::frame_layout::{self, FrameWords};
 use crate::runtime::{self, Context, NativeCallContext, Scheduler, ScopeLimits, Task};
 use crate::syntax::ParamMode;
 
+mod poll;
+pub use poll::compile_receive_leaf_jit;
+
 pub struct JitExecutable {
     module: JITModule,
     entry: FuncId,

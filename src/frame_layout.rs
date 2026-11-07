@@ -40,6 +40,8 @@ pub struct ResumeSlot {
     pub pc: i64,
     pub block: BlockId,
     pub instruction: Option<usize>,
+    pub values: Vec<ValueId>,
+    pub places: Vec<PlaceId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,6 +148,8 @@ pub fn word_layout(
                     .map_err(|_| "native resume count overflow")?,
                 block: point.block,
                 instruction: point.instruction,
+                values: point.values.clone(),
+                places: point.places.clone(),
             })
         })
         .collect::<Result<Vec<_>, String>>()?;

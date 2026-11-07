@@ -2,8 +2,10 @@
 
 Status: the spill analysis and `phoebe frames` inspection command run on
 verified Core. The runtime can allocate and poll a stable native frame through
-the versioned v1 ABI. Generated Cranelift poll functions and native task spawn
-are not implemented yet. The analysis is tested, not formally proved.
+the versioned v1 ABI. A first generated Cranelift poll path handles a verified
+leaf with one receive retry; it has not yet been connected to normal `run` or
+`build`. Native send, calls into suspendable functions, and task spawn still
+need generated continuations. The analysis is tested, not formally proved.
 
 ## Suspension boundary
 
@@ -91,7 +93,11 @@ The compiler must establish two correspondences for every suspension point:
 
 The current liveness tests include loop backedges, dead-value exclusion,
 mutable places, and transitive calls. They do not establish these obligations
-for all Core programs or the future native implementation. A bounded model
-and differential tests should check the poll ABI after it exists. The
-compiler should run the established analysis, not execute a model checker
-for each build.
+for all Core programs or the full native implementation. The first generated
+receive leaf is tested with scheduler parking, wake, value delivery, and end
+of stream. The test retains a scalar computed before the receive while an
+entry parameter dies before retry. Its pre-legalization CLIF is available
+from the compiled artifact.
+A broader differential suite and bounded model should check subsequent poll
+paths. The compiler should run the established analysis, not execute a model
+checker for each build.

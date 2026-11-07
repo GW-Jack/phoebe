@@ -121,8 +121,9 @@ cleanup, and cancellation cleanup remain open. `docs/capability-ir.md` specifies
 the integration boundary.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
-retry across both operations. Cranelift still needs generated task frames
-before source send/receive can use those calls in native execution.
+retry across both operations. The first generated receive leaf uses a retained
+task frame, but the normal native entry path still needs generated calls and
+spawn before source channel programs can run natively.
 Core now checks scalar send/receive terminators and derives live-right maps
 for retry suspension. Its interpreter retains frames and places across a
 pending operation, and executes buffered scalar traffic. Core `spawn` now
@@ -137,16 +138,20 @@ interpreter and JIT executions agree on that synchronous path.
 liveness pass finds only functions that can park and the values and places
 needed at each channel retry or pending call. It leaves creation-only and
 spawn-only functions on the direct-call path. `docs/native-frames.md` states
-the frame ABI obligations and evidence boundary; this analysis is not yet
-connected to native code generation.
+the frame ABI obligations and evidence boundary. The first receive leaf
+consumes this analysis to generate an exact retry spill.
 The runtime now owns a stable word-array frame for a versioned native poll
 entry. Synthetic poll functions exercise yield/resume and receive park/wake
-through the real scheduler and ABI. Cranelift has not generated a poll
-function yet, so native source channel traffic remains unsupported.
+through the real scheduler and ABI. A constrained Cranelift poll function
+now executes a checked source receive leaf through that same scheduler;
+its value and end branches are covered. Native source channel traffic through
+the public `run` and `build` commands remains unsupported.
 The compiler now assigns physical word ranges from the existing flattened
-ABI shapes. A suspendable function reserves as many result words as its
-return type needs, followed only by values and places live across a pending
-operation. The native backend does not consume those ranges yet.
+ABI shapes. A suspendable function reserves its result, entry parameters,
+and values and places live across a pending operation. Entry parameters
+already in the spill set share their slots. Stable per-function resume IDs
+identify the retry site. The first poll generator consumes these ranges;
+general retained code generation remains open.
 
 ## Commands
 

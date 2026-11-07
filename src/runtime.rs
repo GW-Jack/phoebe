@@ -13,6 +13,12 @@ pub struct TaskId(usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Token(usize);
 
+impl Token {
+    pub(crate) fn native_word(self) -> Result<i64, String> {
+        i64::try_from(self.0).map_err(|_| "channel token exceeds native ABI word".into())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ReplyToken(usize);
 
@@ -303,6 +309,17 @@ impl NativePollTask {
 
     pub fn frame_mut(&mut self) -> &mut [i64] {
         &mut self.frame
+    }
+
+    /// Initialize a checked endpoint parameter before transferring its right
+    /// into this task. The caller still performs the scheduler transfer.
+    pub fn write_token(&mut self, word: usize, token: Token) -> Result<(), String> {
+        let slot = self
+            .frame
+            .get_mut(word)
+            .ok_or("native frame token slot is out of bounds")?;
+        *slot = token.native_word()?;
+        Ok(())
     }
 }
 
