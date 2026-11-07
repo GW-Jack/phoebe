@@ -1042,13 +1042,20 @@ impl Context<'_> {
     }
 
     pub fn fork_sender(&mut self, sender: &Sender) -> Result<Sender, String> {
+        self.fork_sender_typed(sender)?
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn fork_sender_typed(
+        &mut self,
+        sender: &Sender,
+    ) -> Result<Result<Sender, ResourceError>, String> {
         let channel = self
             .scheduler
             .check_handle(self.task, sender.token, HandleKind::Sender)?;
-        self.scheduler
-            .handles
-            .try_reserve(1)
-            .map_err(|error| error.to_string())?;
+        if self.scheduler.handles.try_reserve(1).is_err() {
+            return Ok(Err(ResourceError::Allocation));
+        }
         self.scheduler.channels[channel].senders += 1;
         let fork = Sender {
             token: Token(self.scheduler.handles.len()),
@@ -1058,17 +1065,24 @@ impl Context<'_> {
             kind: HandleKind::Sender,
             owner: Some(self.task),
         });
-        Ok(fork)
+        Ok(Ok(fork))
     }
 
     pub fn fork_receiver(&mut self, receiver: &Receiver) -> Result<Receiver, String> {
+        self.fork_receiver_typed(receiver)?
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn fork_receiver_typed(
+        &mut self,
+        receiver: &Receiver,
+    ) -> Result<Result<Receiver, ResourceError>, String> {
         let channel =
             self.scheduler
                 .check_handle(self.task, receiver.token, HandleKind::Receiver)?;
-        self.scheduler
-            .handles
-            .try_reserve(1)
-            .map_err(|error| error.to_string())?;
+        if self.scheduler.handles.try_reserve(1).is_err() {
+            return Ok(Err(ResourceError::Allocation));
+        }
         self.scheduler.channels[channel].receivers += 1;
         let fork = Receiver {
             token: Token(self.scheduler.handles.len()),
@@ -1078,7 +1092,7 @@ impl Context<'_> {
             kind: HandleKind::Receiver,
             owner: Some(self.task),
         });
-        Ok(fork)
+        Ok(Ok(fork))
     }
 
     pub fn spawn(
