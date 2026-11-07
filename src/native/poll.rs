@@ -574,7 +574,8 @@ fn load_slot(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::{NativePollTask, ReceiveResult, Receiver, Sender};
+    use crate::runtime::{NativeFrameInit, NativePollTask, ReceiveResult, Receiver, Sender};
+    use std::ffi::c_void;
     use std::sync::{
         Arc,
         atomic::{AtomicI64, Ordering},
@@ -686,7 +687,6 @@ fn main() -> I64 = 0
         entry: runtime::NativePollEntry,
         frame_words: usize,
         sender_word: usize,
-        child_return: Arc<AtomicI64>,
         receiver: Option<Receiver>,
         received: Vec<i64>,
         phase: u8,
@@ -697,18 +697,31 @@ fn main() -> I64 = 0
             if self.phase == 0 {
                 let (sender, receiver) = context.channel(1)?;
                 let token = sender.token();
-                let mut child = unsafe { NativePollTask::new(self.entry, self.frame_words) }
-                    .map_err(|error| error.to_string())?;
-                child.write_token(self.sender_word, token)?;
-                context
-                    .spawn_owned(
-                        Capture {
-                            task: child,
-                            answer: self.child_return.clone(),
-                        },
-                        &[token],
+                let mut fault = false;
+                let mut bridge = NativeCallContext {
+                    context: context as *mut _ as *mut c_void,
+                    fault: &mut fault,
+                };
+                let token_word = token.native_word()?;
+                let initial = [NativeFrameInit {
+                    word: self.sender_word as i64,
+                    value: token_word,
+                }];
+                let transfers = [token_word];
+                let code = unsafe {
+                    runtime::phoebe_spawn_poll(
+                        &mut bridge,
+                        self.entry,
+                        self.frame_words as i64,
+                        initial.as_ptr(),
+                        initial.len() as i64,
+                        transfers.as_ptr(),
+                        transfers.len() as i64,
                     )
-                    .map_err(|error| error.message)?;
+                };
+                if fault || code != 0 {
+                    return Err(format!("native spawn failed: {code}"));
+                }
                 self.receiver = Some(receiver);
                 self.phase = 1;
             }
@@ -729,7 +742,6 @@ fn main() -> I64 = 0
                 Poll::Pending => Ok(Poll::Pending),
                 Poll::Ready(()) => {
                     assert_eq!(self.received, [20, 22]);
-                    assert_eq!(self.child_return.load(Ordering::SeqCst), 0);
                     Ok(Poll::Ready(self.received.iter().sum()))
                 }
             }
@@ -748,7 +760,6 @@ fn main() -> I64 = 0
             entry: unsafe { executable.entry() },
             frame_words: executable.layout().total_words,
             sender_word: executable.layout().entry_params[0].words.start,
-            child_return: Arc::new(AtomicI64::new(-1)),
             receiver: None,
             received: Vec::new(),
             phase: 0,
@@ -757,6 +768,63 @@ fn main() -> I64 = 0
         assert_eq!(scheduler.run().unwrap(), 42);
         assert!(scheduler.stats().parks >= 2);
         assert!(scheduler.stats().wakes >= 2);
+        scheduler.verify().unwrap();
+    }
+
+    struct FailedSpawnHost {
+        entry: runtime::NativePollEntry,
+        frame_words: usize,
+        sender_word: usize,
+    }
+
+    impl Task for FailedSpawnHost {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            let (sender, receiver) = context.channel(1)?;
+            let token_word = sender.token().native_word()?;
+            let initial = [NativeFrameInit {
+                word: self.sender_word as i64,
+                value: token_word,
+            }];
+            let transfers = [token_word];
+            let mut fault = false;
+            let mut bridge = NativeCallContext {
+                context: context as *mut _ as *mut c_void,
+                fault: &mut fault,
+            };
+            let code = unsafe {
+                runtime::phoebe_spawn_poll(
+                    &mut bridge,
+                    self.entry,
+                    self.frame_words as i64,
+                    initial.as_ptr(),
+                    initial.len() as i64,
+                    transfers.as_ptr(),
+                    transfers.len() as i64,
+                )
+            };
+            assert_eq!(code, 5);
+            assert!(!fault);
+            context.close_sender(sender)?;
+            context.close_receiver(receiver)?;
+            Ok(Poll::Ready(0))
+        }
+    }
+
+    #[test]
+    fn native_spawn_limit_keeps_parent_rights() {
+        let program = core::lower(
+            &crate::syntax::parse(include_str!("../../examples/channel_exchange.phoebe")).unwrap(),
+        )
+        .unwrap();
+        let executable = compile_poll_leaf_jit(&program, "producer").unwrap();
+        let host = FailedSpawnHost {
+            entry: unsafe { executable.entry() },
+            frame_words: executable.layout().total_words,
+            sender_word: executable.layout().entry_params[0].words.start,
+        };
+        let mut scheduler = Scheduler::new(host, 1, 1, 0).unwrap();
+        assert_eq!(scheduler.run().unwrap(), 0);
+        assert_eq!(scheduler.stats().tasks_created, 1);
         scheduler.verify().unwrap();
     }
 

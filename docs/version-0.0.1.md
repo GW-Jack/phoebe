@@ -145,6 +145,8 @@ entry. Synthetic poll functions exercise yield/resume and receive park/wake
 through the real scheduler and ABI. A constrained Cranelift poll function
 now executes checked source receive and two-send leaves through that same
 scheduler. Tests cover value, end, backpressure, and closed-send branches.
+The versioned spawn ABI initializes a generated child frame before committing
+capability transfer; a task-limit test confirms the parent retains its rights.
 Native source channel traffic through the public `run` and `build` commands
 remains unsupported.
 The compiler now assigns physical word ranges from the existing flattened

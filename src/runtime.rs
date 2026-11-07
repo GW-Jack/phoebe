@@ -264,6 +264,15 @@ struct StandaloneRootTask {
 /// its program counter; internal functions may reserve wider result areas.
 pub type NativePollEntry = extern "C" fn(*mut NativeCallContext, *mut i64) -> i64;
 
+/// One initialized word of a child frame. Generated code supplies exact
+/// `entry_params` offsets from the verified physical frame layout.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct NativeFrameInit {
+    pub word: i64,
+    pub value: i64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeFrameError {
     InvalidLayout,
@@ -340,6 +349,96 @@ impl Task for NativePollTask {
             1 => Ok(Poll::Pending),
             255 => Err("native poll function failed".into()),
             code => Err(format!("invalid native poll status {code}")),
+        }
+    }
+}
+
+/// Admit a generated child only after its frame and arguments are complete.
+/// Returns 0 on success, a resource code on a recoverable pre-commit failure,
+/// or 255 on an invalid ABI call. Ownership transfers only on success.
+///
+/// # Safety
+///
+/// `bridge` must borrow a live task context. `entry` must be generated code
+/// valid for `frame_words` and remain executable until the scope finishes.
+/// `initial` and `transfers` must point to readable arrays of their declared
+/// lengths for this call. Transfer tokens must name rights held by the caller.
+#[unsafe(export_name = "phoebe_rt_v1_spawn_poll")]
+pub unsafe extern "C" fn phoebe_spawn_poll(
+    bridge: *mut NativeCallContext,
+    entry: NativePollEntry,
+    frame_words: i64,
+    initial: *const NativeFrameInit,
+    initial_count: i64,
+    transfers: *const i64,
+    transfer_count: i64,
+) -> i64 {
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if bridge.is_null() {
+            return Err(());
+        }
+        let words = usize::try_from(frame_words).map_err(|_| ())?;
+        let initial_count = usize::try_from(initial_count).map_err(|_| ())?;
+        let transfer_count = usize::try_from(transfer_count).map_err(|_| ())?;
+        if words < 2
+            || words
+                .checked_mul(std::mem::size_of::<i64>())
+                .is_none_or(|bytes| bytes > i32::MAX as usize)
+            || initial_count > words
+            || transfer_count > 4
+            || (initial_count != 0 && initial.is_null())
+            || (transfer_count != 0 && transfers.is_null())
+        {
+            return Err(());
+        }
+        let initial = if initial_count == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(initial, initial_count) }
+        };
+        let transfer_words = if transfer_count == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(transfers, transfer_count) }
+        };
+        let mut tokens = [Token(0); 4];
+        for (index, raw) in transfer_words.iter().enumerate() {
+            tokens[index] = Token(usize::try_from(*raw).map_err(|_| ())?);
+        }
+        let mut child = match unsafe { NativePollTask::new(entry, words) } {
+            Ok(child) => child,
+            Err(NativeFrameError::Allocation) => {
+                return Ok(resource_code(ResourceError::Allocation));
+            }
+            Err(NativeFrameError::InvalidLayout) => return Err(()),
+        };
+        for (index, arg) in initial.iter().enumerate() {
+            let word = usize::try_from(arg.word).map_err(|_| ())?;
+            if word == 0
+                || word >= words
+                || initial[..index].iter().any(|prior| prior.word == arg.word)
+            {
+                return Err(());
+            }
+            child.frame_mut()[word] = arg.value;
+        }
+        let bridge = unsafe { &mut *bridge };
+        let context = unsafe { &mut *(bridge.context as *mut Context<'_>) };
+        match context.spawn_owned(child, &tokens[..transfer_count]) {
+            Ok(_) => Ok(0),
+            Err(error) => match error.resource_error {
+                Some(resource_error) => Ok(resource_code(resource_error)),
+                None => Err(()),
+            },
+        }
+    }));
+    match outcome {
+        Ok(Ok(code)) => code,
+        _ => {
+            if !bridge.is_null() {
+                unsafe { *(*bridge).fault = true };
+            }
+            255
         }
     }
 }

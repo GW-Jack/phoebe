@@ -99,6 +99,10 @@ of stream. It retains a scalar computed before the receive while an entry
 parameter dies before retry. A generated two-send leaf tests one-slot
 backpressure, retry, and the closed edge returning the original unsent
 message. Its pre-legalization CLIF is available from the compiled artifact.
+The versioned `phoebe_rt_v1_spawn_poll` ABI initializes a child frame before
+committing endpoint transfer. Tests use a generated send leaf to cover
+successful admission and a task-limit failure that leaves the rights with
+the parent. Generated code does not call this ABI yet.
 A broader differential suite and bounded model should check subsequent poll
 paths. The compiler should run the established analysis, not execute a model
 checker for each build.
