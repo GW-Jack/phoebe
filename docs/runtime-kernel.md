@@ -140,6 +140,14 @@ executable. Hand-built checked Core now interprets the runtime's concrete
 request channel and request value, transferring the nested `ReplyTo` through
 enqueue, dequeue, and unpack. Native request lowering and arbitrary source
 messages carrying `ReplyTo` remain open.
+The native ABI now exports `request_channel_new_i64`, `send_request_i64`,
+and `receive_request_i64`. The concrete request is two I64 words: value and
+reply-right token. Send returns `Sent`, `Pending`, or `Closed`; only `Sent`
+transfers the right to the queue. Receive writes both words only on `Value`,
+retaining the receiver on `Pending`. Synthetic native poll tests cover a
+round trip, closed-send ownership retention, a waiting service's wakeup, and
+creation failure without partial output. Generated Cranelift request code is
+still pending.
 The C ABI creation call publishes both output tokens only on
 success; native generated code loads them only on that edge. Standalone builds
 link `libphoebe_runtime.a`. Buck2 supplies it through the CLI's resource map;

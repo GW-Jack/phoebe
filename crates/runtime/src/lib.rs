@@ -125,6 +125,8 @@ mod native;
 pub use native::*;
 mod native_reply;
 pub use native_reply::*;
+mod native_request;
+pub use native_request::*;
 
 #[derive(Debug)]
 pub enum RequestReceiveResult {

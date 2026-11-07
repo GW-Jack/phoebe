@@ -140,6 +140,10 @@ structural close operations. Its verifier tracks the nested reply right as
 one owned slot across each move and queue boundary; interpreter tests cover
 delivery and rejected-send recovery. Native lowering and source syntax for
 request messages remain open, as do general capability-bearing aggregates.
+The runtime also has native ABI shims for this concrete request layout.
+Native poll tests cover atomic creation, enqueue/dequeue transfer, closed-send
+retention, and pending receive wakeup. Cranelift lowering has not yet been
+connected to these shims.
 Runtime task failure now cancels remaining scope tasks immediately after
 closing the failing task's rights. A host regression catches the case where
 the parent retained another sender and would otherwise report a deadlock
