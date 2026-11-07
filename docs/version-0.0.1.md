@@ -169,8 +169,10 @@ widest child result in a frame. Retained code generation now keeps mutable
 places that cross suspension in frame words and uses local stack slots for
 places that die before suspension. The accumulator example exercises this
 and ordinary scalar and product expressions after resumption through
-interpreter, JIT, and standalone executable paths. General retained
-code generation still needs borrowed parameters.
+interpreter, JIT, and standalone executable paths. Retained calls now pass
+borrowed places and forwarded references to suspendable callees. The caller
+frame owns the borrowed place until the child returns; tests cover exclusive
+and shared borrows across receive. General reference regions remain open.
 The runtime has a tested same-task native call mailbox and child frame stack;
 generated Cranelift calls use that continuation ABI.
 

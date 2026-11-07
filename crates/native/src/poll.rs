@@ -119,6 +119,13 @@ fn compile_poll_module<M: Module>(
     if entry_function.return_type != Type::I64 {
         return Err("external poll entry requires an I64 result".into());
     }
+    if entry_function
+        .param_modes
+        .iter()
+        .any(|mode| *mode != ParamMode::Own)
+    {
+        return Err("external poll entry requires owned parameters".into());
+    }
     let suspendable = frame_layout::suspendable_functions(program)?;
     let mut reachable = Vec::new();
     let mut seen = vec![false; program.functions.len()];
@@ -525,10 +532,14 @@ fn compile_poll_module<M: Module>(
                                 operands.push(bridge);
                             }
                             for arg in args {
-                                let CallArg::Value(value) = arg else {
-                                    unreachable!("validated owned direct call argument")
-                                };
-                                operands.extend(get(*value, &mut builder));
+                                match arg {
+                                    CallArg::Value(value) | CallArg::Ref(value, _) => {
+                                        operands.extend(get(*value, &mut builder));
+                                    }
+                                    CallArg::Borrow(place, _) => {
+                                        operands.push(places[place.0][0]);
+                                    }
+                                }
                             }
                             let call_inst = builder.ins().call(target_ref, &operands);
                             let result = instruction.result.expect("verified direct call result");
@@ -552,20 +563,12 @@ fn compile_poll_module<M: Module>(
                         let child_id = ids[target.0].expect("declared poll callee");
                         let child_ref = module.declare_func_in_func(child_id, builder.func);
                         let child_entry = builder.ins().func_addr(pointer, child_ref);
-                        let owned_args = args
-                            .iter()
-                            .map(|arg| match arg {
-                                CallArg::Value(id) => *id,
-                                _ => unreachable!("validated owned call argument"),
-                            })
-                            .collect::<Vec<_>>();
                         let (initial_ptr, initial_count) = emit_frame_initial(
                             &mut builder,
-                            &owned_args,
+                            args,
                             child_layout,
-                            function,
                             &variables,
-                            &shapes,
+                            &places,
                             pointer,
                         )?;
                         for value in &point.values {
@@ -747,6 +750,21 @@ fn compile_poll_module<M: Module>(
                                 IntCC::SignedLessThan
                             };
                             Some(vec![builder.ins().icmp(cc, a, b)])
+                        }
+                        Operation::LoadRef(reference) => {
+                            let address = get(*reference, &mut builder)[0];
+                            Some(vec![builder.ins().load(
+                                types::I64,
+                                MemFlagsData::new(),
+                                address,
+                                0,
+                            )])
+                        }
+                        Operation::StoreRef(reference, value) => {
+                            let address = get(*reference, &mut builder)[0];
+                            let value = get(*value, &mut builder)[0];
+                            builder.ins().store(MemFlagsData::new(), value, address, 0);
+                            None
                         }
                         Operation::CloseHandle(value) => {
                             let token = get(*value, &mut builder)[0];
@@ -945,11 +963,10 @@ fn compile_poll_module<M: Module>(
                         let child_entry = builder.ins().func_addr(pointer, child_ref);
                         let (initial_ptr, initial_count) = emit_frame_initial(
                             &mut builder,
-                            args,
+                            &args.iter().copied().map(CallArg::Value).collect::<Vec<_>>(),
                             child_layout,
-                            function,
                             &variables,
-                            &shapes,
+                            &places,
                             pointer,
                         )?;
                         let transfers = args
@@ -1157,27 +1174,30 @@ fn word_offset(word: usize) -> i32 {
 
 fn emit_frame_initial(
     builder: &mut FunctionBuilder<'_>,
-    args: &[core::ValueId],
+    args: &[CallArg],
     child: &FrameWords,
-    parent: &core::Function,
     variables: &[Vec<Variable>],
-    shapes: &AbiShapes,
+    places: &[Vec<ClValue>],
     pointer: cranelift_codegen::ir::Type,
 ) -> Result<(ClValue, i64), String> {
     let mut initial = Vec::new();
     for (arg, slot) in args.iter().zip(&child.entry_params) {
-        for (part, ty) in shapes
-            .types(parent.value_types[arg.0])
-            .into_iter()
-            .enumerate()
-        {
-            let value = builder.use_var(variables[arg.0][part]);
-            let word = if ty == types::I8 {
-                builder.ins().uextend(types::I64, value)
-            } else {
-                value
-            };
-            initial.push((slot.words.start + part, word));
+        match arg {
+            CallArg::Value(arg) | CallArg::Ref(arg, _) => {
+                for (part, var) in variables[arg.0].iter().enumerate() {
+                    let value = builder.use_var(*var);
+                    let ty = builder.func.dfg.value_type(value);
+                    let word = if ty == types::I8 {
+                        builder.ins().uextend(types::I64, value)
+                    } else {
+                        value
+                    };
+                    initial.push((slot.words.start + part, word));
+                }
+            }
+            CallArg::Borrow(place, _) => {
+                initial.push((slot.words.start, places[place.0][0]));
+            }
         }
     }
     let count = i64::try_from(initial.len()).map_err(|_| "frame argument count overflow")?;
@@ -1219,27 +1239,18 @@ fn validate_poll_function(
     layout: &FrameWords,
     layouts: &[Option<FrameWords>],
 ) -> Result<(), String> {
-    if function
-        .param_modes
-        .iter()
-        .any(|mode| *mode != ParamMode::Own)
-    {
-        return Err("retained poll requires owned parameters".into());
-    }
     if layout.resumes.is_empty() {
         return Err("retained poll requires a suspension point".into());
     }
     for point in &layout.resumes {
         if let Some(index) = point.instruction {
-            let Operation::Call(target, args) =
+            let Operation::Call(target, _) =
                 &function.blocks[point.block.0].instructions[index].operation
             else {
                 return Err("retained call point does not name a call".into());
             };
-            if layouts[target.0].is_none()
-                || args.iter().any(|arg| !matches!(arg, CallArg::Value(_)))
-            {
-                return Err("retained call requires owned values and a poll callee".into());
+            if layouts[target.0].is_none() {
+                return Err("retained call requires a poll callee".into());
             }
         } else if !matches!(
             function.blocks[point.block.0].terminator,
@@ -1271,23 +1282,21 @@ fn validate_poll_function(
                     | Operation::Mul(_, _)
                     | Operation::Eq(_, _)
                     | Operation::Lt(_, _)
+                    | Operation::LoadRef(_)
+                    | Operation::StoreRef(_, _)
                     | Operation::CloseHandle(_)
                     | Operation::Call(_, _)
             ) {
                 return Err("operation is not yet supported by retained poll".into());
             }
-            if let Operation::Call(target, args) = &instruction.operation {
-                if args.iter().any(|arg| !matches!(arg, CallArg::Value(_))) {
-                    return Err("retained poll calls require owned values".into());
-                }
-                if layouts[target.0].is_some()
-                    && !layout
-                        .resumes
-                        .iter()
-                        .any(|point| point.block.0 == block_id && point.instruction == Some(index))
-                {
-                    return Err("retained call has no continuation point".into());
-                }
+            if let Operation::Call(target, _) = &instruction.operation
+                && layouts[target.0].is_some()
+                && !layout
+                    .resumes
+                    .iter()
+                    .any(|point| point.block.0 == block_id && point.instruction == Some(index))
+            {
+                return Err("retained call has no continuation point".into());
             }
         }
         if !matches!(

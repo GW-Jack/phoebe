@@ -66,6 +66,10 @@ uses this layout for the source exchange.
 receives, so its place lives in the stable frame. Its mutable channel capacity
 dies before the first receive and uses a local stack slot instead. The example
 also evaluates product fields, arithmetic, and comparisons after resumption.
+`examples/borrow_across_wait.phoebe` forwards an exclusive borrow into a
+callee that parks on receive, then writes through it. The caller place stays
+in its stable frame until the callee returns; the callee frame retains the
+reference value during the wait.
 
 ## Native ABI obligations
 

@@ -22,11 +22,18 @@ forwarded reference parameter. Callee reference values are confined to
 cannot be returned or stored in another place. The verifier checks call
 signature modes, alias conflicts within a call, place initialization and
 dominance, reference operation types, and reference provenance restrictions.
-The interpreter resolves references to caller-owned slots; Cranelift receives
-addresses of caller stack slots. Both paths agree on the current examples.
+The interpreter resolves references to caller-owned slots. Direct Cranelift
+calls receive addresses of caller stack slots. When a callee can suspend, the
+frame analysis retains the borrowed caller place in the stable parent frame;
+the child frame stores its address until the call returns. Borrowed parameters
+and forwarded references can be read or written after a channel receive.
+The generated poll entry rejects borrowed external parameters because no
+Phoebe caller owns a place for them. Interpreter, JIT, and standalone tests
+exercise mutable forwarding and a shared borrow of a `val` temporary across
+the receive. This is tested behavior, not a general proof of region safety.
 
 This subset has no first-class reference variables, field or element borrows,
-region inference, task suspension, or cross-task references. It does not
+region inference, or cross-task references. It does not
 establish safety for the future general borrow system. The next step is to
 add explicit region roots and loan lifetimes to checked IR before extending
-references beyond a single synchronous call.
+references beyond the current call scope.

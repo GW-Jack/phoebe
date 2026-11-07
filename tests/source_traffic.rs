@@ -102,6 +102,71 @@ fn retained_mutable_place_survives_receive_without_retaining_dead_place() {
 }
 
 #[test]
+fn borrowed_caller_place_survives_suspended_callee_and_forwarding() {
+    let source = include_str!("../examples/borrow_across_wait.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let (id, _) = program.function("exchange").unwrap();
+    let layout = native::frame_word_layouts(&program)
+        .unwrap()
+        .into_iter()
+        .find(|layout| layout.function == id)
+        .unwrap();
+    assert_eq!(layout.places.len(), 1);
+    assert_eq!(layout.resumes[0].places.len(), 1);
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "borrow-across-wait", 42);
+    assert!(
+        native::compile_poll_jit(&program, "add_after_wait")
+            .err()
+            .unwrap()
+            .contains("external poll entry requires owned parameters")
+    );
+}
+
+#[test]
+fn shared_val_borrow_is_retained_through_pending_receive() {
+    let source = r#"
+fn close(sender: Sender<I64>) -> I64 {
+  sender.close();
+  0
+}
+
+fn wait(value: &I64, receiver: Receiver<I64>) -> I64 {
+  val item = receiver.receive();
+  receiver.close();
+  value
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  val held = 42;
+  spawn close(sender)?;
+  Result<I64, ResourceError>.Ok(wait(&held, receiver))
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let (id, exchange) = program.function("exchange").unwrap();
+    let layout = native::frame_word_layouts(&program)
+        .unwrap()
+        .into_iter()
+        .find(|layout| layout.function == id)
+        .unwrap();
+    assert_eq!(exchange.place_types.len(), 1);
+    assert_eq!(layout.places.len(), 1);
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "shared-borrow-across-wait", 42);
+}
+
+#[test]
 fn suspendable_functions_call_direct_helpers_without_poll_continuations() {
     let source = include_str!("../examples/channel_exchange_helper.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

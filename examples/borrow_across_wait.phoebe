@@ -1,0 +1,40 @@
+fn producer(sender: Sender<I64>) -> I64 {
+  val sent = sender.send(22);
+  sender.close();
+  when (sent) {
+    Send<I64>.Sent -> { 0 },
+    Send<I64>.Closed(unsent) -> { unsent }
+  }
+}
+
+fn read(value: &I64) -> I64 = value
+
+fn add_after_wait(value: &mut I64, receiver: Receiver<I64>) -> I64 {
+  val item = receiver.receive();
+  receiver.close();
+  val received = when (item) {
+    Receive<I64>.Value(number) -> { number },
+    Receive<I64>.End -> { 0 }
+  };
+  value = value + received;
+  read(&value)
+}
+
+fn forward(value: &mut I64, receiver: Receiver<I64>) -> I64 {
+  add_after_wait(&mut value, receiver)
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  var held = 20;
+  spawn producer(sender)?;
+  val answer = forward(&mut held, receiver);
+  Result<I64, ResourceError>.Ok(answer + held - 42)
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

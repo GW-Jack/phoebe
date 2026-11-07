@@ -39,6 +39,7 @@ rust_test(
         "examples/channel_exchange.phoebe",
         "examples/channel_exchange_helper.phoebe",
         "examples/channel_accumulator.phoebe",
+        "examples/borrow_across_wait.phoebe",
         "examples/spawn_direct_from_poll.phoebe",
     ],
     edition = "2024",
