@@ -3,7 +3,8 @@
 Status: concrete built-in `Result<T, E>` applications.
 
 The current source subset accepts concrete `Result<T, E>` applications with
-primitive, existing nominal, or nested `Result` arguments. Each application
+primitive, existing nominal, or nested `Result` arguments. `ResourceError` is
+also a closed error payload. Each application
 is a distinct checked type with `Ok` and `Err` variants carrying the
 corresponding payload. Constructors and patterns spell the application
 explicitly, for example `Result<I64, Bool>.Err(true)`. A user declaration
@@ -19,6 +20,14 @@ another `Err`, copy a payload into a temporary, call a runtime helper, or
 perform a hidden conversion. The verifier checks whether each match edge
 passes its payload, its whole subject, or nothing, and checks the target
 parameter type accordingly.
+
+The first source channel binding is a special pair pattern over a fallible
+creation edge: `val (sender, receiver) = channel<I64>(capacity = n)?`.
+On success, the two fresh endpoint block parameters become the named owners.
+On failure, the `ResourceError` block parameter is wrapped in the enclosing
+`Result<_, ResourceError>.Err` and returned. No endpoint exists on that edge.
+This is not yet a general expression-valued channel pair or a general
+conversion from one error type to another.
 
 This is a normal return edge. Once lexical capability owners exist, lowering
 must insert their structural closes on the error edge before returning. The

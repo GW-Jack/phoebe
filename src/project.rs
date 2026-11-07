@@ -364,6 +364,7 @@ fn rewrite_body(
     };
     for statement in &mut body.statements {
         match statement {
+            Statement::ChannelVal { capacity, .. } => rewrite(capacity)?,
             Statement::Val(_, _, expr)
             | Statement::Var(_, _, expr)
             | Statement::Assign(_, _, expr)
@@ -539,6 +540,17 @@ fn shift_program(program: &mut syntax::Program, offset: usize) {
 fn shift_body(body: &mut Body, offset: usize) {
     for statement in &mut body.statements {
         match statement {
+            Statement::ChannelVal {
+                sender,
+                receiver,
+                capacity,
+                span,
+            } => {
+                shift_span(&mut sender.1, offset);
+                shift_span(&mut receiver.1, offset);
+                shift_span(span, offset);
+                shift_expr(capacity, offset);
+            }
             Statement::Val(_, span, value)
             | Statement::Var(_, span, value)
             | Statement::Assign(_, span, value) => {

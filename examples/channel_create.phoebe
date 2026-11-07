@@ -1,0 +1,13 @@
+fn create_and_close(capacity: I64) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = capacity)?;
+  sender.close();
+  receiver.close();
+  Result<I64, ResourceError>.Ok(7)
+}
+
+fn main() -> I64 {
+  when (create_and_close(1)) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

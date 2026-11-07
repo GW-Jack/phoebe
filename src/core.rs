@@ -316,6 +316,59 @@ impl<'a> Lowerer<'a> {
     ) -> Result<Option<TypedValue>, Diagnostic> {
         for statement in &body.statements {
             match statement {
+                Statement::ChannelVal {
+                    sender,
+                    receiver,
+                    capacity,
+                    span,
+                } => {
+                    for (name, name_span) in [sender, receiver] {
+                        if locals.contains_key(name) || sender.0 == receiver.0 {
+                            return Err(Diagnostic::new(
+                                *name_span,
+                                format!("duplicate local {name}"),
+                            ));
+                        }
+                    }
+                    let Type::Data(result_id) = self.return_type else {
+                        return Err(Diagnostic::new(
+                            *span,
+                            "channel creation with ? requires Result<_, ResourceError> return type",
+                        ));
+                    };
+                    let result = &self.data[result_id.0];
+                    if !result.name.starts_with("Result<")
+                        || result.variants.as_slice() != ["Ok", "Err"]
+                        || result.payloads[1] != Some(Type::ResourceError)
+                    {
+                        return Err(Diagnostic::new(
+                            *span,
+                            "channel creation with ? requires Result<_, ResourceError> return type",
+                        ));
+                    }
+                    let (value, ty) = self.expr(capacity, locals)?;
+                    self.require(ty, Type::I64, capacity.span)?;
+                    let success = self.block();
+                    let send_value = self.block_param(success, Type::SenderI64);
+                    let receive_value = self.block_param(success, Type::ReceiverI64);
+                    let failure = self.block();
+                    let error = self.block_param(failure, Type::ResourceError);
+                    self.terminate(Terminator::ChannelNew {
+                        capacity: value,
+                        success,
+                        failure,
+                    });
+                    self.current = failure;
+                    let failed = self.emit(
+                        Operation::Variant(result_id, 1, Some(error)),
+                        self.return_type,
+                        *span,
+                    );
+                    self.terminate(Terminator::Return(failed));
+                    self.current = success;
+                    locals.insert(sender.0.clone(), Binding::Val(send_value));
+                    locals.insert(receiver.0.clone(), Binding::Val(receive_value));
+                }
                 Statement::Val(name, span, expr) | Statement::Var(name, span, expr) => {
                     if locals.contains_key(name) {
                         return Err(Diagnostic::new(*span, format!("duplicate local {name}")));
@@ -377,7 +430,19 @@ impl<'a> Lowerer<'a> {
                     self.current = exit;
                 }
                 Statement::Expr(expr) => {
-                    self.expr(expr, locals)?;
+                    if let ExprKind::QualifiedCall(name, method, args) = &expr.kind
+                        && method == "close"
+                        && args.is_empty()
+                        && let Some(Binding::Val(value)) = locals.get(name).copied()
+                        && matches!(
+                            self.value_types[value.0],
+                            Type::SenderI64 | Type::ReceiverI64
+                        )
+                    {
+                        self.emit_effect(Operation::CloseHandle(value), expr.span);
+                    } else {
+                        self.expr(expr, locals)?;
+                    }
                 }
             }
         }
@@ -942,8 +1007,10 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     let mut data = Vec::with_capacity(ast.data.len());
     let mut data_names = HashMap::new();
     for declaration in &ast.data {
-        if matches!(declaration.name.as_str(), "I64" | "Bool" | "Result")
-            || data_names.contains_key(&declaration.name)
+        if matches!(
+            declaration.name.as_str(),
+            "I64" | "Bool" | "Result" | "ResourceError"
+        ) || data_names.contains_key(&declaration.name)
         {
             return Err(Diagnostic::new(declaration.span, "duplicate data type"));
         }
@@ -957,6 +1024,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
                 None => None,
                 Some(TypeName::I64) => Some(Type::I64),
                 Some(TypeName::Bool) => Some(Type::Bool),
+                Some(TypeName::Named(name)) if name == "ResourceError" => Some(Type::ResourceError),
                 Some(TypeName::Named(name)) => Some(
                     data_names
                         .get(name)
@@ -988,6 +1056,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
                 match &field.ty {
                     TypeName::I64 => Type::I64,
                     TypeName::Bool => Type::Bool,
+                    TypeName::Named(name) if name == "ResourceError" => Type::ResourceError,
                     TypeName::Named(name) => data_names
                         .get(name)
                         .copied()
@@ -1026,6 +1095,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         let concrete = |ty: &TypeName| match ty {
             TypeName::I64 => Ok(Type::I64),
             TypeName::Bool => Ok(Type::Bool),
+            TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
             TypeName::Named(name) => data_names
                 .get(name)
                 .copied()
@@ -1050,6 +1120,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         match name {
             TypeName::I64 => Ok(Type::I64),
             TypeName::Bool => Ok(Type::Bool),
+            TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
             TypeName::Named(name) => data_names
                 .get(name)
                 .copied()
@@ -1141,6 +1212,15 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     verify_structure(&program)
         .map_err(|message| Diagnostic::new(Span { start: 0, end: 0 }, message))?;
     verify_ownership(&program).map_err(|error| Diagnostic::new(error.span, error.message))?;
+    verify_capability_edges(&program).map_err(|message| {
+        let span = ast
+            .functions
+            .iter()
+            .find(|function| message.starts_with(&format!("{}:", function.name)))
+            .map(|function| function.name_span)
+            .unwrap_or(Span { start: 0, end: 0 });
+        Diagnostic::new(span, message)
+    })?;
     Ok(program)
 }
 
@@ -1583,11 +1663,8 @@ fn verify_structure(program: &Program) -> Result<(), String> {
         if definition.payloads.iter().flatten().any(|ty| match ty {
             Type::I64 | Type::Bool => false,
             Type::Data(id) => id.0 >= index,
-            Type::RefI64
-            | Type::RefMutI64
-            | Type::SenderI64
-            | Type::ReceiverI64
-            | Type::ResourceError => true,
+            Type::ResourceError => false,
+            Type::RefI64 | Type::RefMutI64 | Type::SenderI64 | Type::ReceiverI64 => true,
         }) {
             return Err("invalid variant payload type".into());
         }
@@ -1597,11 +1674,8 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                 || match ty {
                     Type::I64 | Type::Bool => false,
                     Type::Data(id) => id.0 >= index,
-                    Type::RefI64
-                    | Type::RefMutI64
-                    | Type::SenderI64
-                    | Type::ReceiverI64
-                    | Type::ResourceError => true,
+                    Type::ResourceError => false,
+                    Type::RefI64 | Type::RefMutI64 | Type::SenderI64 | Type::ReceiverI64 => true,
                 }
             {
                 return Err("invalid product field".into());
@@ -2013,9 +2087,7 @@ fn verify_capability_edges(program: &Program) -> Result<(), String> {
                     .instructions
                     .iter()
                     .filter_map(|instruction| match instruction.operation {
-                        Operation::CloseHandle(value) => {
-                            Some(CapAction::Close(slot(value)))
-                        }
+                        Operation::CloseHandle(value) => Some(CapAction::Close(slot(value))),
                         _ => None,
                     })
                     .collect();

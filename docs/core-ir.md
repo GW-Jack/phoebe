@@ -83,10 +83,11 @@ parameters, plus a failure successor with a `ResourceError` parameter.
 `close.handle` consumes either endpoint. Core derives a capability-flow graph
 from these operations: only the success edge creates the two rights, jumps
 move rights to destination parameters, and normal return requires both rights
-to be closed. This is exercised with hand-built Core programs. The interpreter
+to be closed. This is exercised with hand-built Core and source programs. The interpreter
 runs creation and close through a one-task scheduler with explicit scope limits,
 including resource-failure edges. `interpret_with_limits` can vary those
 limits; plain `interpret` permits one task and 64 channel creations. Cranelift
 JIT and standalone object execution use the same scheduler through a hidden
 context parameter and agree on the tested success and failure paths. Source
-lowering, send/receive, and task suspension remain open.
+lowering supports a fallible `I64` channel pair binding and explicit endpoint
+close. Send/receive, structural cleanup, and task suspension remain open.

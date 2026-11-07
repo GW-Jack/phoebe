@@ -286,6 +286,12 @@ pub struct Body {
 #[derive(Clone, Debug)]
 pub enum Statement {
     Val(String, Span, Expr),
+    ChannelVal {
+        sender: (String, Span),
+        receiver: (String, Span),
+        capacity: Expr,
+        span: Span,
+    },
     Var(String, Span, Expr),
     Assign(String, Span, Expr),
     While(Expr, Body),
@@ -557,6 +563,51 @@ impl Parser {
                 None
             };
             if let Some(mutable) = binding {
+                if !mutable && self.eat(&TokenKind::LParen).is_some() {
+                    let sender = self.name()?;
+                    self.expect(&TokenKind::Comma, ",")?;
+                    let receiver = self.name()?;
+                    self.expect(&TokenKind::RParen, ")")?;
+                    self.expect(&TokenKind::Equal, "=")?;
+                    let (constructor, start) = self.name()?;
+                    if constructor != "channel" {
+                        return Err(Diagnostic::new(
+                            start,
+                            "pair binding currently requires channel",
+                        ));
+                    }
+                    self.expect(&TokenKind::Less, "<")?;
+                    let (element, element_span) = self.name()?;
+                    if element != "I64" {
+                        return Err(Diagnostic::new(
+                            element_span,
+                            "only I64 channels are implemented",
+                        ));
+                    }
+                    self.expect(&TokenKind::Greater, ">")?;
+                    self.expect(&TokenKind::LParen, "(")?;
+                    if self.current().kind == TokenKind::Ident("capacity".into())
+                        && self
+                            .tokens
+                            .get(self.pos + 1)
+                            .is_some_and(|next| next.kind == TokenKind::Equal)
+                    {
+                        self.pos += 1;
+                        self.pos += 1;
+                    }
+                    let capacity = self.expr(0)?;
+                    self.expect(&TokenKind::RParen, ")")?;
+                    let question =
+                        self.expect(&TokenKind::Question, "? after fallible channel creation")?;
+                    self.expect(&TokenKind::Semicolon, "; after binding")?;
+                    statements.push(Statement::ChannelVal {
+                        sender,
+                        receiver,
+                        capacity,
+                        span: start.join(question.span),
+                    });
+                    continue;
+                }
                 let (name, span) = self.name()?;
                 self.expect(&TokenKind::Equal, "=")?;
                 let value = self.expr(0)?;

@@ -1,12 +1,13 @@
 # Capability flow in Core IR
 
-Status: design contract with an initial checked Core creation edge. The checker
+Status: design contract with an initial checked Core and source creation edge. The checker
 in `src/capability_flow.rs` verifies exact capability-slot states at joins and
 normal returns, and derives live-slot maps for failure and suspension edges.
 Core now derives a graph for `channel.new.i64`, endpoint closes, and jumps
 between capability-bearing block parameters. The interpreter, Cranelift JIT,
 and standalone executable run creation and close through the bounded runtime
-kernel. Source lowering does not yet connect to this path.
+kernel. Source `val (sender, receiver) = channel<I64>(capacity = n)?` now lowers
+directly to those edges, and source `close()` lowers to endpoint close.
 
 ## Why the current affine rule is insufficient
 
@@ -63,8 +64,9 @@ split on its tag or carry a tagged slot state. A blind union of variant slots
 would report nonexistent rights; a blind intersection would lose live ones.
 Projection moves the selected leaf paths from the aggregate owner to the
 result and must account for all unselected live paths through an explicit
-residual owner, close, or transfer. These rules are prerequisites for lowering
-`val (sender, receiver) = channel<T>(n)` and capability-bearing `Result`.
+residual owner, close, or transfer. These rules are prerequisites for a
+first-class channel pair value and capability-bearing `Result`. The current
+source pair binding maps the two success parameters directly to names.
 
 ## Operations and edges
 
@@ -162,12 +164,14 @@ in printable IR and avoids a second, implicit compiler cleanup algorithm.
 The flow checker rejects implicit capability loss in an abstract graph,
 including differing branch states, loop backedges, duplicate creation, and
 normal return. Core now classifies bare `SenderI64` and `ReceiverI64` values
-and derives graphs for creation, close, and jump edges. It does not yet handle
+and derives graphs for creation, close, and jump edges. Source lowering invokes
+the exact checker so `phoebe check` rejects a forgotten right. It does not yet handle
 capability-bearing aggregates, place replacement, or match discard. Next,
 extend that integration, lower `with` and structural cleanup, then add the
 send/receive/reply terminators and retained frame layout. Interpreter and
 Cranelift executions must agree on the same IR, including failed and canceled
-paths. Only after those steps should source syntax expose the operations.
+paths. Source syntax currently exposes only creation and explicit close;
+send/receive and task operations need the remaining model.
 
 The verifier establishes a property of the checked IR, conditional on its
 implementation and runtime ABI. It does not prove that Rust cleanup, Cranelift
