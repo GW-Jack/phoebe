@@ -63,7 +63,16 @@ live value and place, and rejects a layout beyond fixed address offsets.
 For the source exchange, `exchange` reserves two result words for
 `Result<I64, ResourceError>`; the root `main` reserves one.
 The runtime allocates and zeroes the root frame before execution and
-keeps it in the task record across Pending. The standalone entry point
+keeps it in the task record across Pending. A same-task call mailbox now
+accepts a fully initialized child frame after the parent saves its PC.
+The scheduler polls the child, retains both frames across a yield, copies a
+checked result range into the parent, and resumes the parent without
+replaying its entry. Synthetic ABI tests exercise this sequence and reject a
+result range outside the parent frame. A combined scheduler test parks the
+child on a real channel receive, wakes it from a sender task, and then resumes
+the parent. Generated Cranelift calls do not use
+the mailbox yet.
+The standalone entry point
 `phoebe_rt_v1_main_poll` runs a zero-argument poll function under a bounded
 scope. A synthetic poll test yields and resumes at the same frame address;
 another parks in the versioned receive ABI, wakes from a transferred sender,

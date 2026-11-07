@@ -16,4 +16,24 @@ rust_library(
         "//third-party/rust:cranelift-object",
     ],
     visibility = ["PUBLIC"],
+    tests = [":unit_tests"],
+)
+
+rust_test(
+    name = "unit_tests",
+    crate_root = "src/lib.rs",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2024",
+    deps = [
+        "//crates/core:phoebe_core",
+        "//crates/frame:phoebe_frame",
+        "//crates/runtime:phoebe_runtime",
+        "//crates/syntax:phoebe_syntax",
+        "//third-party/rust:cranelift-codegen",
+        "//third-party/rust:cranelift-frontend",
+        "//third-party/rust:cranelift-jit",
+        "//third-party/rust:cranelift-module",
+        "//third-party/rust:cranelift-native",
+        "//third-party/rust:cranelift-object",
+    ],
 )

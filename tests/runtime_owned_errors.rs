@@ -133,6 +133,7 @@ impl Task for NativeAbiRoot {
         let mut bridge = NativeCallContext {
             context: context as *mut _ as *mut c_void,
             fault: &mut fault,
+            call_request: std::ptr::null_mut(),
         };
         let mut sender = 111;
         let mut receiver = 222;

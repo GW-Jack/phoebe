@@ -581,6 +581,21 @@ mod tests {
         atomic::{AtomicI64, Ordering},
     };
 
+    const PRODUCER_SOURCE: &str = r#"
+fn producer(sender: Sender<I64>) -> I64 {
+  val first = sender.send(20);
+  val second = when (first) {
+    Send<I64>.Sent -> { sender.send(22) },
+    Send<I64>.Closed(unsent) -> { Send<I64>.Closed(unsent) }
+  };
+  sender.close();
+  when (second) {
+    Send<I64>.Sent -> { 0 },
+    Send<I64>.Closed(unsent) -> { unsent }
+  }
+}
+"#;
+
     const SOURCE: &str = r#"
 fn wait(receiver: Receiver<I64>, seed: I64) -> I64 {
   val marker = seed + 1;
@@ -701,6 +716,7 @@ fn main() -> I64 = 0
                 let mut bridge = NativeCallContext {
                     context: context as *mut _ as *mut c_void,
                     fault: &mut fault,
+                    call_request: std::ptr::null_mut(),
                 };
                 let token_word = token.native_word()?;
                 let initial = [NativeFrameInit {
@@ -750,13 +766,7 @@ fn main() -> I64 = 0
 
     #[test]
     fn generated_two_send_leaf_retries_after_one_slot_backpressure() {
-        let program = core::lower(
-            &phoebe_syntax::syntax::parse(include_str!(
-                "../../../examples/channel_exchange.phoebe"
-            ))
-            .unwrap(),
-        )
-        .unwrap();
+        let program = core::lower(&phoebe_syntax::syntax::parse(PRODUCER_SOURCE).unwrap()).unwrap();
         let executable = compile_poll_leaf_jit(&program, "producer").unwrap();
         assert_eq!(executable.layout().resumes.len(), 2);
         let host = ProducerHost {
@@ -793,6 +803,7 @@ fn main() -> I64 = 0
             let mut bridge = NativeCallContext {
                 context: context as *mut _ as *mut c_void,
                 fault: &mut fault,
+                call_request: std::ptr::null_mut(),
             };
             let code = unsafe {
                 runtime::phoebe_spawn_poll(
@@ -815,13 +826,7 @@ fn main() -> I64 = 0
 
     #[test]
     fn native_spawn_limit_keeps_parent_rights() {
-        let program = core::lower(
-            &phoebe_syntax::syntax::parse(include_str!(
-                "../../../examples/channel_exchange.phoebe"
-            ))
-            .unwrap(),
-        )
-        .unwrap();
+        let program = core::lower(&phoebe_syntax::syntax::parse(PRODUCER_SOURCE).unwrap()).unwrap();
         let executable = compile_poll_leaf_jit(&program, "producer").unwrap();
         let host = FailedSpawnHost {
             entry: unsafe { executable.entry() },
@@ -871,13 +876,7 @@ fn main() -> I64 = 0
 
     #[test]
     fn generated_send_leaf_returns_the_original_message_when_closed() {
-        let program = core::lower(
-            &phoebe_syntax::syntax::parse(include_str!(
-                "../../../examples/channel_exchange.phoebe"
-            ))
-            .unwrap(),
-        )
-        .unwrap();
+        let program = core::lower(&phoebe_syntax::syntax::parse(PRODUCER_SOURCE).unwrap()).unwrap();
         let executable = compile_poll_leaf_jit(&program, "producer").unwrap();
         let host = ClosedSendHost {
             entry: unsafe { executable.entry() },

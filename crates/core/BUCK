@@ -9,4 +9,17 @@ rust_library(
         "//crates/syntax:phoebe_syntax",
     ],
     visibility = ["PUBLIC"],
+    tests = [":unit_tests"],
+)
+
+rust_test(
+    name = "unit_tests",
+    crate_root = "src/lib.rs",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2024",
+    deps = [
+        "//crates/capability:phoebe_capability",
+        "//crates/runtime:phoebe_runtime",
+        "//crates/syntax:phoebe_syntax",
+    ],
 )

@@ -23,3 +23,14 @@ rust_binary(
     edition = "2024",
     deps = [":phoebe_lib"],
 )
+
+rust_test(
+    name = "source_traffic_tests",
+    crate_root = "tests/source_traffic.rs",
+    srcs = [
+        "tests/source_traffic.rs",
+        "examples/channel_exchange.phoebe",
+    ],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+)

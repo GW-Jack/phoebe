@@ -4,4 +4,12 @@ rust_library(
     srcs = glob(["src/**/*.rs"]),
     edition = "2024",
     visibility = ["PUBLIC"],
+    tests = [":unit_tests"],
+)
+
+rust_test(
+    name = "unit_tests",
+    crate_root = "src/lib.rs",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2024",
 )

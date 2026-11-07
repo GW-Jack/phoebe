@@ -4,6 +4,8 @@ use super::*;
 pub struct NativeCallContext {
     pub context: *mut c_void,
     pub fault: *mut bool,
+    /// Optional one-call mailbox supplied by a retained native task.
+    pub call_request: *mut c_void,
 }
 
 fn resource_code(error: ResourceError) -> i64 {
@@ -207,6 +209,14 @@ impl fmt::Display for NativeFrameError {
 pub struct NativePollTask {
     entry: NativePollEntry,
     frame: Vec<i64>,
+    children: Vec<NativeCallRequest>,
+}
+
+struct NativeCallRequest {
+    entry: NativePollEntry,
+    frame: Vec<i64>,
+    parent_result_word: usize,
+    result_words: usize,
 }
 
 impl NativePollTask {
@@ -229,7 +239,11 @@ impl NativePollTask {
             .try_reserve_exact(frame_words)
             .map_err(|_| NativeFrameError::Allocation)?;
         frame.resize(frame_words, 0);
-        Ok(Self { entry, frame })
+        Ok(Self {
+            entry,
+            frame,
+            children: Vec::new(),
+        })
     }
 
     pub fn frame_mut(&mut self) -> &mut [i64] {
@@ -250,21 +264,146 @@ impl NativePollTask {
 
 impl Task for NativePollTask {
     fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
-        let mut fault = false;
-        let mut bridge = NativeCallContext {
-            context: context as *mut _ as *mut c_void,
-            fault: &mut fault,
-        };
-        let status = (self.entry)(&mut bridge, self.frame.as_mut_ptr());
-        if fault {
-            return Err("native runtime ABI fault".into());
+        loop {
+            let mut fault = false;
+            let mut request: Option<NativeCallRequest> = None;
+            let mut bridge = NativeCallContext {
+                context: context as *mut _ as *mut c_void,
+                fault: &mut fault,
+                call_request: (&mut request as *mut Option<NativeCallRequest>).cast(),
+            };
+            let status = if let Some(child) = self.children.last_mut() {
+                (child.entry)(&mut bridge, child.frame.as_mut_ptr())
+            } else {
+                (self.entry)(&mut bridge, self.frame.as_mut_ptr())
+            };
+            if fault {
+                return Err("native runtime ABI fault".into());
+            }
+            match status {
+                0 if context.wait.is_none() && request.is_none() => {
+                    if let Some(child) = self.children.pop() {
+                        let parent = self
+                            .children
+                            .last_mut()
+                            .map_or(&mut self.frame, |frame| &mut frame.frame);
+                        parent[child.parent_result_word
+                            ..child.parent_result_word + child.result_words]
+                            .copy_from_slice(&child.frame[1..1 + child.result_words]);
+                        continue;
+                    }
+                    return Ok(Poll::Ready(self.frame[1]));
+                }
+                0 => return Err("native poll returned Ready with a registered wait or call".into()),
+                1 if request.is_none() => return Ok(Poll::Pending),
+                3 if context.wait.is_none() => {
+                    let child = request.ok_or("native poll requested call without child frame")?;
+                    let parent_words = self
+                        .children
+                        .last()
+                        .map_or(self.frame.len(), |frame| frame.frame.len());
+                    if child.result_words == 0
+                        || child.result_words + 1 > child.frame.len()
+                        || child.parent_result_word == 0
+                        || child
+                            .parent_result_word
+                            .checked_add(child.result_words)
+                            .is_none_or(|end| end > parent_words)
+                    {
+                        return Err("native call result exceeds its frame".into());
+                    }
+                    self.children
+                        .try_reserve(1)
+                        .map_err(|_| "native call stack allocation failed")?;
+                    self.children.push(child);
+                }
+                3 => return Err("native poll requested call with a registered wait".into()),
+                255 => return Err("native poll function failed".into()),
+                code => return Err(format!("invalid native poll status {code}")),
+            }
         }
-        match status {
-            0 if context.wait.is_none() => Ok(Poll::Ready(self.frame[1])),
-            0 => Err("native poll returned Ready with a registered wait".into()),
-            1 => Ok(Poll::Pending),
-            255 => Err("native poll function failed".into()),
-            code => Err(format!("invalid native poll status {code}")),
+    }
+}
+
+/// Prepare one child frame for a same-task call. The caller must first save
+/// its continuation PC and live values, then return poll status 3. The runtime
+/// retains the parent frame, polls the child, and copies its result into the
+/// specified parent words before resuming the parent.
+///
+/// # Safety
+/// `bridge` must be provided by `NativePollTask::poll`; `entry` and `initial`
+/// must satisfy the generated poll ABI. Initial words must be distinct and
+/// within the child frame.
+#[unsafe(export_name = "phoebe_rt_v1_call_poll")]
+pub unsafe extern "C" fn phoebe_call_poll(
+    bridge: *mut NativeCallContext,
+    entry: NativePollEntry,
+    frame_words: i64,
+    initial: *const NativeFrameInit,
+    initial_count: i64,
+    parent_result_word: i64,
+    result_words: i64,
+) -> i64 {
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if bridge.is_null() {
+            return Err(());
+        }
+        let bridge = unsafe { &mut *bridge };
+        if bridge.call_request.is_null() {
+            return Err(());
+        }
+        let mailbox = unsafe { &mut *(bridge.call_request as *mut Option<NativeCallRequest>) };
+        if mailbox.is_some() {
+            return Err(());
+        }
+        let words = usize::try_from(frame_words).map_err(|_| ())?;
+        let count = usize::try_from(initial_count).map_err(|_| ())?;
+        let parent_result_word = usize::try_from(parent_result_word).map_err(|_| ())?;
+        let result_words = usize::try_from(result_words).map_err(|_| ())?;
+        if words < 2
+            || words
+                .checked_mul(std::mem::size_of::<i64>())
+                .is_none_or(|bytes| bytes > i32::MAX as usize)
+            || count > words
+            || (count != 0 && initial.is_null())
+            || result_words == 0
+            || result_words + 1 > words
+        {
+            return Err(());
+        }
+        let initial = if count == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(initial, count) }
+        };
+        let mut frame = Vec::new();
+        frame.try_reserve_exact(words).map_err(|_| ())?;
+        frame.resize(words, 0);
+        for (index, arg) in initial.iter().enumerate() {
+            let word = usize::try_from(arg.word).map_err(|_| ())?;
+            if word == 0
+                || word >= words
+                || initial[..index].iter().any(|prior| prior.word == arg.word)
+            {
+                return Err(());
+            }
+            frame[word] = arg.value;
+        }
+        *mailbox = Some(NativeCallRequest {
+            entry,
+            frame,
+            parent_result_word,
+            result_words,
+        });
+        Ok(0)
+    }));
+    match outcome {
+        Ok(Ok(code)) => code,
+        _ => {
+            if !bridge.is_null() {
+                unsafe { *(*bridge).fault = true };
+            }
+            255
         }
     }
 }
@@ -365,6 +504,7 @@ impl Task for StandaloneRootTask {
         let mut bridge = NativeCallContext {
             context: context as *mut _ as *mut c_void,
             fault: &mut fault,
+            call_request: std::ptr::null_mut(),
         };
         let value = (self.entry)(&mut bridge);
         if fault {
@@ -437,6 +577,154 @@ pub unsafe extern "C" fn phoebe_runtime_main_poll(
 #[cfg(test)]
 mod native_poll_tests {
     use super::*;
+
+    extern "C" fn synthetic_call_child(bridge: *mut NativeCallContext, frame: *mut i64) -> i64 {
+        let words = unsafe { std::slice::from_raw_parts_mut(frame, 3) };
+        if words[0] == 0 {
+            words[0] = 1;
+            let bridge = unsafe { &mut *bridge };
+            let context = unsafe { &mut *(bridge.context as *mut Context<'_>) };
+            context.yield_now().unwrap();
+            return 1;
+        }
+        words[1] = words[2] + 1;
+        0
+    }
+
+    extern "C" fn synthetic_call_parent(bridge: *mut NativeCallContext, frame: *mut i64) -> i64 {
+        let words = unsafe { std::slice::from_raw_parts_mut(frame, 4) };
+        if words[0] == 0 {
+            words[0] = 1;
+            words[3] += 1;
+            let args = [NativeFrameInit { word: 2, value: 40 }];
+            assert_eq!(
+                unsafe {
+                    phoebe_call_poll(bridge, synthetic_call_child, 3, args.as_ptr(), 1, 2, 1)
+                },
+                0
+            );
+            return 3;
+        }
+        assert_eq!(
+            words[3], 1,
+            "parent entry must not replay after child yields"
+        );
+        words[1] = words[2] + 1;
+        0
+    }
+
+    #[test]
+    fn native_call_retains_parent_and_child_frames_across_yield() {
+        let root = unsafe { NativePollTask::new(synthetic_call_parent, 4) }.unwrap();
+        let mut scheduler = Scheduler::new(root, 1, 0, 0).unwrap();
+        assert_eq!(scheduler.run().unwrap(), 42);
+        assert_eq!(scheduler.stats().yields, 1);
+        scheduler.verify().unwrap();
+    }
+
+    extern "C" fn synthetic_bad_call(bridge: *mut NativeCallContext, frame: *mut i64) -> i64 {
+        let words = unsafe { std::slice::from_raw_parts_mut(frame, 2) };
+        words[0] = 1;
+        assert_eq!(
+            unsafe { phoebe_call_poll(bridge, synthetic_call_child, 3, std::ptr::null(), 0, 2, 1) },
+            0
+        );
+        3
+    }
+
+    #[test]
+    fn native_call_rejects_result_outside_parent_frame() {
+        let root = unsafe { NativePollTask::new(synthetic_bad_call, 2) }.unwrap();
+        let mut scheduler = Scheduler::new(root, 1, 0, 0).unwrap();
+        assert!(
+            scheduler
+                .run()
+                .unwrap_err()
+                .contains("result exceeds its frame")
+        );
+        scheduler.verify().unwrap();
+    }
+
+    extern "C" fn synthetic_receiving_child(
+        bridge: *mut NativeCallContext,
+        frame: *mut i64,
+    ) -> i64 {
+        let words = unsafe { std::slice::from_raw_parts_mut(frame, 3) };
+        let status = unsafe { phoebe_receive_i64(bridge, words[2], &mut words[1]) };
+        match status {
+            0 => {
+                assert_eq!(unsafe { phoebe_close_handle_i64(bridge, words[2], 1) }, 0);
+                0
+            }
+            1 => 1,
+            _ => 255,
+        }
+    }
+
+    extern "C" fn synthetic_receiving_parent(
+        bridge: *mut NativeCallContext,
+        frame: *mut i64,
+    ) -> i64 {
+        let words = unsafe { std::slice::from_raw_parts_mut(frame, 4) };
+        if words[0] == 0 {
+            words[0] = 1;
+            let args = [NativeFrameInit {
+                word: 2,
+                value: words[3],
+            }];
+            assert_eq!(
+                unsafe {
+                    phoebe_call_poll(bridge, synthetic_receiving_child, 3, args.as_ptr(), 1, 2, 1)
+                },
+                0
+            );
+            return 3;
+        }
+        words[1] = words[2];
+        0
+    }
+
+    struct CallingHost {
+        task: NativePollTask,
+        started: bool,
+    }
+
+    impl Task for CallingHost {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            if !self.started {
+                let (sender, receiver) = context.channel(1)?;
+                self.task.write_token(3, receiver.token())?;
+                let sender_token = sender.token();
+                context.spawn(
+                    Producer {
+                        sender: Some(sender),
+                    },
+                    &[sender_token],
+                )?;
+                self.started = true;
+            }
+            self.task.poll(context)
+        }
+    }
+
+    #[test]
+    fn native_child_call_parks_on_channel_and_resumes_parent() {
+        let task = unsafe { NativePollTask::new(synthetic_receiving_parent, 4) }.unwrap();
+        let mut scheduler = Scheduler::new(
+            CallingHost {
+                task,
+                started: false,
+            },
+            2,
+            1,
+            0,
+        )
+        .unwrap();
+        assert_eq!(scheduler.run().unwrap(), 33);
+        assert_eq!(scheduler.stats().parks, 1);
+        assert_eq!(scheduler.stats().wakes, 1);
+        scheduler.verify().unwrap();
+    }
 
     extern "C" fn synthetic_poll(bridge: *mut NativeCallContext, frame: *mut i64) -> i64 {
         let words = unsafe { std::slice::from_raw_parts_mut(frame, 4) };
@@ -613,6 +901,7 @@ mod native_poll_tests {
             let mut bridge = NativeCallContext {
                 context: context as *mut _ as *mut c_void,
                 fault: &mut fault,
+                call_request: std::ptr::null_mut(),
             };
             if self.phase == 1 {
                 let token = self.sender.as_ref().expect("retained sender").token.0 as i64;
@@ -688,6 +977,7 @@ mod native_poll_tests {
                 let mut bridge = NativeCallContext {
                     context: context as *mut _ as *mut c_void,
                     fault: &mut fault,
+                    call_request: std::ptr::null_mut(),
                 };
                 let mut value = -1;
                 match unsafe {

@@ -29,10 +29,13 @@ On failure, the `ResourceError` block parameter is wrapped in the enclosing
 This is not yet a general expression-valued channel pair or a general
 conversion from one error type to another.
 
-This is a normal return edge. Once lexical capability owners exist, lowering
-must insert their structural closes on the error edge before returning. The
-current executable subset has no such owners, so no cleanup operation is
-needed yet. The existing Maude models do not prove this compiler lowering.
+This is a normal return edge. After lowering, the exact capability-flow
+checker finds endpoints still owned at each source `?` error return, and
+lowering inserts a close for each of those rights on that edge. The ordinary
+Core verifier then checks the completed graph. This covers bare scalar
+channel endpoints in the current source subset; nested capability-bearing
+data and general lexical cleanup are not implemented. The existing Maude
+models do not prove this compiler lowering.
 The useful proof obligation is: for any checked expression yielding
 `Result<T, E>`, `?` evaluates it once, returns the exact `Err` value on failure,
 and yields the `Ok` payload on success while preserving the same ownership

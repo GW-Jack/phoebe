@@ -61,7 +61,9 @@ code generation use this bridge for creation and close. The Core interpreter
 now retains call frames and places across pending scalar sends and receives.
 Core `spawn` now creates a child task and transfers its checked arguments on
 success. A test runs a Core producer and parent receiver through the scheduler.
-Source task creation runs in the interpreter; native task creation remains open.
+Source task creation runs in the interpreter and in native code when the child
+cannot suspend. Generated native calls and spawned children that suspend
+remain open.
 
 `reply()` creates a one-shot right and receiver. A `Request` holds an `I64`
 value and that right. `send_request` on a full or closed queue returns the

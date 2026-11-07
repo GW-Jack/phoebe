@@ -34,7 +34,7 @@ only by prose at release.
 
 ## Current executable slice
 
-The Rust crate currently parses functions over I64, Bool, nominal sums with
+The Rust workspace currently parses functions over I64, Bool, nominal sums with
 at most one payload per variant, and nominal products with finite fields.
 User-declared payloads and fields may contain earlier nominal types; recursive
 data and concrete `Result` fields in user declarations remain unsupported.
@@ -86,7 +86,7 @@ the absent external dependency, interface cache, and incremental rebuild
 support. The `examples/cost/` files other than scalar `identity` remain
 design fixtures, not executable acceptance tests.
 
-`src/runtime.rs` implements a cooperative scheduler
+`crates/runtime` implements a cooperative scheduler
 kernel for one scope, bounded `I64` and request channels, and a one-shot
 `ReplyTo<I64>` right. Its tests cover parking, backpressure, FIFO delivery,
 handle transfer, reply transfer through a request queue, rejected sends,
@@ -98,7 +98,7 @@ Typed resource creation errors now distinguish invalid capacity, table
 limits, and allocation failure without publishing partial endpoint pairs.
 `docs/runtime-kernel.md` describes the kernel and the compiler,
 general typed-message, and native-runtime integration still required.
-`src/capability_flow.rs` separately checks exact slot ownership in abstract
+`crates/capability` separately checks exact slot ownership in abstract
 control-flow graphs and derives failure/suspension live-slot maps. Core IR
 now produces those graphs for hand-built `channel.new.i64`, endpoint closes,
 and capability jumps. The interpreter, Cranelift JIT, and standalone object
@@ -112,7 +112,8 @@ on its early error return; ordinary returns still require explicit
 disposition. Source accepts owned `Sender<I64>` and `Receiver<I64>` function
 parameters and `spawn worker(sender)?;` as a fallible statement. On success
 the child owns its argument; on task-limit failure the parent retains it and
-the `?` cleanup closes it. This path currently runs in the interpreter only.
+the `?` cleanup closes it. Children without suspension also run through the
+Cranelift JIT and standalone object path.
 Source `send` and `receive` now yield explicit `Send<I64>` and `Receive<I64>`
 outcomes. A two-message source exchange over a one-slot channel exercises
 parking and wakeup in the interpreter. The outcome types are added to Core
@@ -155,6 +156,8 @@ and values and places live across a pending operation. Entry parameters
 already in the spill set share their slots. Stable per-function resume IDs
 identify the retry site. The first poll generator consumes these ranges;
 general retained code generation remains open.
+The runtime has a tested same-task native call mailbox and child frame stack.
+Generated Cranelift calls do not yet use that continuation ABI.
 
 ## Commands
 

@@ -153,6 +153,7 @@ impl Task for NativeRootTask {
         let mut bridge = NativeCallContext {
             context: context as *mut _ as *mut std::ffi::c_void,
             fault: &mut fault,
+            call_request: std::ptr::null_mut(),
         };
         let pointer = &mut bridge as *mut NativeCallContext;
         // SAFETY: the JIT module outlives this synchronous poll; signatures

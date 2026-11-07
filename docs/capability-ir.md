@@ -1,7 +1,7 @@
 # Capability flow in Core IR
 
 Status: design contract with an initial checked Core and source creation edge. The checker
-in `src/capability_flow.rs` verifies exact capability-slot states at joins and
+in `crates/capability/src/lib.rs` verifies exact capability-slot states at joins and
 normal returns, and derives live-slot maps for failure and suspension edges.
 Core now derives a graph for `channel.new.i64`, endpoint closes, scalar
 send/receive, and jumps

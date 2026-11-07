@@ -34,6 +34,8 @@ root:
 buck2 build //:phoebe
 buck2 run //:phoebe -- run examples/hello.phoebe
 buck2 build //crates/core:phoebe_core
+buck2 test //crates/core:unit_tests //crates/runtime:unit_tests //crates/native:unit_tests
+buck2 test //:source_traffic_tests
 ```
 
 The root `BUCK` and each `crates/*/BUCK` explicitly declare first-party
@@ -68,5 +70,6 @@ cargo build --lib
 ```
 
 The CLI's standalone executable path links a Cargo-produced `libphoebe.a`
-runtime archive. Buck2 builds the compiler itself; packaging the runtime
-archive as a Buck2 target is future work.
+runtime archive. A local Buck-built compiler can build that archive from a
+repository checkout. Packaging the runtime archive as a Buck2 target is
+future work.
