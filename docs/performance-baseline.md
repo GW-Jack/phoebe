@@ -42,3 +42,38 @@ include source reads, manifest parsing, AST qualification, Core checking,
 and cache bookkeeping. They exclude native code generation and linking.
 The difference is too small to establish a useful speedup on this fixture;
 larger projects and edited-module rebuilds need measurement.
+
+## Native object cache experiment
+
+On 2026-11-07, a macOS ARM64 debug build with Rust 1.95.0 tested a proposed
+disk cache for `NativeBuildSession`. It saved exact per-function Core keys and
+Cranelift objects, then loaded them in a separate CLI invocation. The prototype
+was discarded: object reuse was slower than one-shot emission on these inputs.
+
+| Program | One-shot build | Warm cached build | Cold cache fill |
+| --- | ---: | ---: | ---: |
+| Seven-function package graph | 41.5 ms median of 5 | 80.5 ms median of 5 | not timed after tuning |
+| 100-function direct call chain | 69.0 ms median of 3 | 102.5 ms median of 3 | not timed |
+| 1,000-function direct call chain | 164.2 ms, one run | 247.3 ms, one run | 5,187.2 ms, one run |
+
+The source was parsed and checked on every invocation in both paths. The
+cached path linked one object per direct function; the one-shot path emitted
+one object for all direct functions. A SHA-256 digest of the compiler binary
+added about 35 ms in the optimized-hash prototype on this debug build, but
+the many-object link and cache bookkeeping also mattered. The 1,000-function
+chain was generated in a temporary file and is not a representative user
+program. These are local observations, not cross-platform benchmarks. The
+in-process object reuse API remains as an experimental witness; the CLI uses
+the faster one-shot path until an incremental design wins on representative
+edited projects.
+
+## Reachable native emission
+
+On the same 2026-11-07 debug build, a generated chain of 1,000 functions was
+built with all functions reachable from `main`, then with `main` returning a
+constant so the chain was unreachable. Both builds still parsed and verified
+the entire source. The median of five separate CLI invocations was 159.2 ms
+when reachable and 52.0 ms when unreachable. This measures two different
+programs and does not isolate the effect of the code change against an old
+compiler binary. It shows the current standalone path avoids native emission
+and linking work for the dead chain on this fixture.

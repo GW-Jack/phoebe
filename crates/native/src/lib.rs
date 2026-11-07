@@ -26,7 +26,9 @@ use phoebe_runtime::{self as runtime, Context, NativeCallContext, Scheduler, Sco
 use phoebe_syntax::syntax::ParamMode;
 
 mod poll;
+mod reachability;
 pub use poll::{PollExecutable, PollLeafExecutable, compile_poll_jit, compile_poll_leaf_jit};
+use reachability::{spawned_poll_children, spawned_poll_children_in, standalone_direct_functions};
 
 pub struct JitExecutable {
     module: JITModule,
@@ -272,25 +274,6 @@ struct ObjectEmission {
     children: Vec<Vec<u8>>,
 }
 
-fn spawned_poll_children(program: &Program) -> Result<Vec<core::FunctionId>, String> {
-    let suspendable = frame_layout::suspendable_functions(program)?;
-    let mut children = vec![false; program.functions.len()];
-    for function in &program.functions {
-        for block in &function.blocks {
-            if let Terminator::Spawn { child, .. } = block.terminator
-                && suspendable[child.0]
-            {
-                children[child.0] = true;
-            }
-        }
-    }
-    Ok(children
-        .iter()
-        .enumerate()
-        .filter_map(|(index, found)| found.then_some(core::FunctionId(index)))
-        .collect())
-}
-
 #[derive(Clone, Default)]
 pub struct NativeBuildSession {
     global_key: Option<String>,
@@ -329,7 +312,8 @@ fn emit_object_with_poll_layout(
     if entry.return_type != Type::I64 {
         return Err("standalone `main` must return I64".into());
     }
-    if frame_layout::suspendable_functions(program)?[main.0] {
+    let suspendable = frame_layout::suspendable_functions(program)?;
+    if suspendable[main.0] {
         let (object, words) = poll::emit_poll_object(program, "main", "phoebe_main_poll")?;
         return Ok((
             ObjectEmission {
@@ -341,7 +325,8 @@ fn emit_object_with_poll_layout(
         ));
     }
     let mut poll_objects = Vec::new();
-    for child in spawned_poll_children(program)? {
+    let direct = standalone_direct_functions(program, main, &suspendable);
+    for child in spawned_poll_children_in(program, &direct)? {
         let (object, _) = poll::emit_poll_object(
             program,
             &program.functions[child.0].name,
@@ -362,7 +347,14 @@ fn emit_object_with_poll_layout(
         let builder = ObjectBuilder::new(isa, "phoebe", default_libcall_names())
             .map_err(|e| e.to_string())?;
         let mut module = ObjectModule::new(builder);
-        compile_functions(&mut module, program, &context_functions, true, None, None)?;
+        compile_functions(
+            &mut module,
+            program,
+            &context_functions,
+            true,
+            None,
+            Some(&direct),
+        )?;
         return Ok((
             ObjectEmission {
                 root: module.finish().emit().map_err(|e| e.to_string())?,
@@ -372,7 +364,6 @@ fn emit_object_with_poll_layout(
             0,
         ));
     }
-    let suspendable = frame_layout::suspendable_functions(program)?;
     let global_key = format!(
         "{:?}{:?}{:?}{:?}{:?}",
         program.data,
@@ -410,7 +401,7 @@ fn emit_object_with_poll_layout(
         session.objects.truncate(program.functions.len());
     }
     for index in 0..program.functions.len() {
-        if suspendable[index] {
+        if !direct[index] {
             continue;
         }
         let mut function_key = program.functions[index].clone();
@@ -522,11 +513,9 @@ fn link_executable(
     output: &Path,
 ) -> Result<(), String> {
     let runtime_archive = if emitted.poll_words.is_some()
-        || !emitted.children.is_empty()
         || program
-            .runtime_context_functions()
-            .iter()
-            .any(|needed| *needed)
+            .function("main")
+            .is_some_and(|(main, _)| program.runtime_context_functions()[main.0])
     {
         Some(find_runtime_archive()?)
     } else {

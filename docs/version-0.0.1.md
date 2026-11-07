@@ -101,6 +101,9 @@ persistent command-line build cache. Registry dependencies and cached typed
 interfaces remain open. The
 `examples/cost/` files other than scalar `identity` remain
 design fixtures, not executable acceptance tests.
+Standalone emission starts at `main` and omits unreachable direct functions
+and their spawned poll children. A dead runtime-using function cannot change
+the entry wrapper ABI.
 
 `crates/runtime` implements a cooperative scheduler
 kernel for one scope, bounded `I64` and request channels, and a one-shot

@@ -68,7 +68,9 @@ instructions for one event or eliminate instructions when semantics allow it.
    visible; it does not require an SMT solver on the normal compile path.
 6. Ordinary functions use direct native calls. Only functions that may block
    or explicitly yield need retained task state. An empty scope requires no
-   scheduler operation.
+   scheduler operation. A standalone build emits only functions reachable
+   from `main`; dead source functions are still checked but do not bring
+   runtime objects or a runtime entry wrapper into the binary.
 7. No universal bookkeeping is inserted on every function entry, object
    access, or task-local assignment. Runtime work belongs at the operation
    that needs it.
@@ -89,6 +91,8 @@ The source programs and pseudo IR in `examples/cost/` are design fixtures.
 Only `identity.phoebe` is executable today: `tests/cost_acceptance.rs` checks
 its Core IR and the pre-legalization Cranelift IR exposed by
 `phoebe clif <file>`. The remaining fixtures are **not executable tests yet**.
+That test file also checks that unreachable channel and spawn code does not
+change a standalone `main` build's runtime ABI.
 A future compiler test will compare
 checked-IR events and selected Cranelift IR shapes, then use runtime counters
 and disassembly for representative programs. Counts are per executed path,

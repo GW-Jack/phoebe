@@ -1,12 +1,9 @@
-use std::path::Path;
-
 use phoebe::{core, native, syntax};
 
 #[test]
 fn nested_user_variants_agree_between_interpreter_and_native() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/nested_variant.phoebe");
-    let source = std::fs::read_to_string(path).unwrap();
-    let ast = syntax::parse(&source).unwrap();
+    let source = include_str!("../examples/nested_variant.phoebe");
+    let ast = syntax::parse(source).unwrap();
     let program = core::lower(&ast).unwrap();
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);

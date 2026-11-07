@@ -139,3 +139,103 @@ rust_test(
     deps = [":phoebe_lib"],
     resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
 )
+
+# Keep every Cargo integration suite as an independent Buck2 target.
+rust_test(
+    name = "capability_flow_tests",
+    crate_root = "tests/capability_flow.rs",
+    srcs = ["tests/capability_flow.rs"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
+    name = "core_channels_tests",
+    crate_root = "tests/core_channels.rs",
+    srcs = ["tests/core_channels.rs"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
+    name = "core_spawn_tests",
+    crate_root = "tests/core_spawn.rs",
+    srcs = ["tests/core_spawn.rs"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
+    name = "cost_acceptance_tests",
+    crate_root = "tests/cost_acceptance.rs",
+    srcs = ["tests/cost_acceptance.rs", "examples/cost/identity.phoebe", "examples/spawn_pair.phoebe"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
+    name = "frame_layout_tests",
+    crate_root = "tests/frame_layout.rs",
+    srcs = ["tests/frame_layout.rs", "examples/channel_exchange.phoebe", "examples/spawn_close.phoebe"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
+    name = "nested_variant_tests",
+    crate_root = "tests/nested_variant.rs",
+    srcs = ["tests/nested_variant.rs", "examples/nested_variant.phoebe"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
+    name = "qualified_calls_tests",
+    crate_root = "tests/qualified_calls.rs",
+    srcs = ["tests/qualified_calls.rs"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
+    name = "reply_runtime_tests",
+    crate_root = "tests/reply_runtime.rs",
+    srcs = ["tests/reply_runtime.rs"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
+    name = "runtime_tests",
+    crate_root = "tests/runtime.rs",
+    srcs = ["tests/runtime.rs"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
+    name = "runtime_owned_errors_tests",
+    crate_root = "tests/runtime_owned_errors.rs",
+    srcs = ["tests/runtime_owned_errors.rs"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
+    name = "source_channels_tests",
+    crate_root = "tests/source_channels.rs",
+    srcs = ["tests/source_channels.rs"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)

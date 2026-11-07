@@ -120,7 +120,10 @@ pub(super) fn compile_functions<M: Module>(
     // define every non-suspendable function.
     selected: Option<&[bool]>,
 ) -> Result<Vec<(FuncId, Signature)>, String> {
-    let uses_runtime = context_functions.iter().any(|needed| *needed);
+    let uses_runtime = context_functions
+        .iter()
+        .enumerate()
+        .any(|(index, needed)| *needed && selected.is_none_or(|set| set[index]));
     let suspendable = frame_layout::suspendable_functions(program)?;
     let mut poll_layouts = vec![None; program.functions.len()];
     if program.functions.iter().any(|function| {

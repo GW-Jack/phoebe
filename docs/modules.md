@@ -3,7 +3,8 @@
 Status: executable local modules with in-process parsed-module and checked-Core
 function reuse sessions. Content-pinned local path dependencies compile into
 the same program. Declarations are private by default and `pub` exports a
-function or data type. Incremental native object rebuilds remain open.
+function or data type. An in-process native build session can reuse direct
+function objects; the ordinary CLI build uses one-shot emission.
 
 `phoebe.toml` uses this form:
 
@@ -68,8 +69,9 @@ the edited module. Core reruns its program-wide verifiers before publishing the 
 failed compilation preserves the old state. `CompileReport` counts reused
 functions. Cached spans are rebased to the new combined source positions.
 
-The current CLI starts a fresh session for each command. This API does not
-provide incremental type checking, persistent caches, or native object reuse.
+The current CLI starts a fresh session for each command. The in-process
+`NativeBuildSession` can reuse direct function objects, but the CLI does not
+persist those objects or provide incremental type checking.
 Cached ASTs are cloned and qualified again when a project is loaded. The
 small warm-session baseline in `docs/performance-baseline.md` shows only a
 marginal difference on a six-function project.
