@@ -1,9 +1,11 @@
 use phoebe::Span;
 use phoebe::core::{
-    self, Block, BlockId, Function, Instruction, Operation, Program, Terminator, Type, ValueId,
+    self, Block, BlockId, CallArg, Function, FunctionId, Instruction, Operation, Program,
+    Terminator, Type, ValueId,
 };
 use phoebe::native;
 use phoebe::runtime::ScopeLimits;
+use phoebe::syntax::ParamMode;
 
 fn span() -> Span {
     Span { start: 0, end: 0 }
@@ -69,6 +71,7 @@ fn checked_channel_creation_has_two_success_rights_and_a_typed_failure() {
     let printed = program.to_string();
     assert!(printed.contains("channel.new.i64 v0 success block1 failure block2"));
     assert!(printed.contains("close.handle v1"));
+    assert!(native::clif(&program).unwrap().contains("call"));
     assert_eq!(program.interpret("main", &[]).unwrap(), 7);
     assert_eq!(
         program
@@ -87,11 +90,25 @@ fn checked_channel_creation_has_two_success_rights_and_a_typed_failure() {
     let mut zero_capacity = program.clone();
     zero_capacity.functions[0].blocks[0].instructions[0].operation = Operation::Const(0);
     assert_eq!(zero_capacity.interpret("main", &[]).unwrap(), 0);
+    let jit = native::compile_jit(&program, "main").unwrap();
+    assert_eq!(jit.run(&[]).unwrap(), 7);
+    assert_eq!(
+        jit.run_with_limits(
+            &[],
+            ScopeLimits {
+                tasks: 1,
+                channels: 0,
+                replies: 0,
+            },
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(native::run(&zero_capacity, "main", &[]).unwrap(), 0);
     assert!(
-        native::compile_jit(&program, "main")
-            .err()
-            .unwrap()
-            .contains("runtime ABI")
+        native::emit_object(&program)
+            .unwrap_err()
+            .contains("linking")
     );
 }
 
@@ -132,6 +149,7 @@ fn channel_rights_move_through_typed_block_arguments() {
     });
     core::verify(&program).unwrap();
     assert_eq!(program.interpret("main", &[]).unwrap(), 9);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 9);
     program.functions[0].blocks[3].instructions.remove(1);
     assert!(
         core::verify(&program)
@@ -168,4 +186,62 @@ fn channel_creation_checks_edge_signatures_and_distinctness() {
             .unwrap_err()
             .contains("capacity must be I64")
     );
+}
+
+#[test]
+fn nested_call_receives_the_native_runtime_context() {
+    let mut program = channel_program();
+    let main = &mut program.functions[0];
+    main.value_types.push(Type::I64);
+    main.blocks[1].instructions.push(instruction(
+        Some(6),
+        Operation::Call(FunctionId(1), vec![CallArg::Value(ValueId(4))]),
+    ));
+    main.blocks[1].terminator = Terminator::Return(ValueId(6));
+    program.functions.push(Function {
+        name: "bump".into(),
+        param_modes: vec![ParamMode::Own],
+        return_type: Type::I64,
+        value_types: vec![Type::I64, Type::I64, Type::I64],
+        place_types: vec![],
+        blocks: vec![Block {
+            params: vec![ValueId(0)],
+            instructions: vec![
+                instruction(Some(1), Operation::Const(1)),
+                instruction(Some(2), Operation::Add(ValueId(0), ValueId(1))),
+            ],
+            terminator: Terminator::Return(ValueId(2)),
+        }],
+    });
+    core::verify(&program).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 8);
+    let main = native::compile_jit(&program, "main").unwrap();
+    assert!(main.uses_runtime_context());
+    assert_eq!(main.run(&[]).unwrap(), 8);
+    let bump = native::compile_jit(&program, "bump").unwrap();
+    assert!(!bump.uses_runtime_context());
+    assert_eq!(bump.run(&[41]).unwrap(), 42);
+}
+
+#[test]
+fn runtime_context_propagates_to_callers_only() {
+    let mut program = channel_program();
+    program.functions[0].name = "make_and_close".into();
+    program.functions.push(Function {
+        name: "main".into(),
+        param_modes: vec![],
+        return_type: Type::I64,
+        value_types: vec![Type::I64],
+        place_types: vec![],
+        blocks: vec![Block {
+            params: vec![],
+            instructions: vec![instruction(Some(0), Operation::Call(FunctionId(0), vec![]))],
+            terminator: Terminator::Return(ValueId(0)),
+        }],
+    });
+    core::verify(&program).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 7);
+    let jit = native::compile_jit(&program, "main").unwrap();
+    assert!(jit.uses_runtime_context());
+    assert_eq!(jit.run(&[]).unwrap(), 7);
 }

@@ -2,6 +2,7 @@
 //! Compiler-generated continuations and typed message layouts are future work.
 
 use std::collections::VecDeque;
+use std::ffi::c_void;
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::task::Poll;
@@ -72,6 +73,104 @@ impl fmt::Display for ResourceError {
 }
 
 impl std::error::Error for ResourceError {}
+
+/// A synchronous native call borrows the current task context for its duration.
+#[repr(C)]
+pub struct NativeCallContext {
+    pub context: *mut c_void,
+    pub fault: *mut bool,
+}
+
+fn resource_code(error: ResourceError) -> i64 {
+    match error {
+        ResourceError::InvalidChannelCapacity => 1,
+        ResourceError::ChannelLimit => 2,
+        ResourceError::ReplyLimit => 3,
+        ResourceError::Allocation => 4,
+    }
+}
+
+/// Returns 0 and writes both handles on success, or a nonzero resource code
+/// without writing either handle. The caller keeps `bridge` live until return.
+///
+/// # Safety
+///
+/// `bridge` must point to a live `NativeCallContext` with a uniquely borrowed
+/// task `Context` and a live fault flag. Both output pointers must be distinct,
+/// aligned, and writable for the duration of the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn phoebe_channel_new_i64(
+    bridge: *mut NativeCallContext,
+    capacity: i64,
+    sender_out: *mut i64,
+    receiver_out: *mut i64,
+) -> i64 {
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: generated code passes a live bridge and unique output slots
+        // for the duration of this synchronous call.
+        let bridge = unsafe { &mut *bridge };
+        let context = unsafe { &mut *(bridge.context as *mut Context<'_>) };
+        let capacity = match usize::try_from(capacity) {
+            Ok(capacity) => capacity,
+            Err(_) => return resource_code(ResourceError::InvalidChannelCapacity),
+        };
+        match context.channel_typed(capacity) {
+            Ok((sender, receiver)) => {
+                unsafe {
+                    *sender_out = sender.token.0 as i64;
+                    *receiver_out = receiver.token.0 as i64;
+                }
+                0
+            }
+            Err(error) => resource_code(error),
+        }
+    }));
+    match outcome {
+        Ok(code) => code,
+        Err(_) => {
+            if !bridge.is_null() {
+                unsafe { *(*bridge).fault = true };
+            }
+            255
+        }
+    }
+}
+
+/// Close kind: 0 sender, 1 receiver. A fault is reported after native return.
+///
+/// # Safety
+///
+/// `bridge` must satisfy the same lifetime and exclusive-borrow contract as
+/// `phoebe_channel_new_i64`; `token` and `kind` must come from checked Core IR.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn phoebe_close_handle_i64(
+    bridge: *mut NativeCallContext,
+    token: i64,
+    kind: i64,
+) -> i64 {
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let bridge = unsafe { &mut *bridge };
+        let context = unsafe { &mut *(bridge.context as *mut Context<'_>) };
+        let token = usize::try_from(token)
+            .map(Token)
+            .map_err(|_| "negative handle token")?;
+        match kind {
+            0 => context.close_sender(Sender { token })?,
+            1 => context.close_receiver(Receiver { token })?,
+            _ => return Err("invalid handle kind".into()),
+        }
+        Ok::<_, String>(())
+    }));
+    match outcome {
+        Ok(Ok(())) => 0,
+        _ => {
+            if !bridge.is_null() {
+                unsafe { *(*bridge).fault = true };
+            }
+            255
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum RequestReceiveResult {

@@ -2,9 +2,10 @@
 
 Status: executable Rust kernel for one scope, bounded `I64` and request
 channels, and one-shot `ReplyTo<I64>`. Hand-built Core programs can interpret
-channel creation and endpoint close through it. Source syntax,
-compiler-generated continuations, native linking, and general typed messages
-are not implemented here yet.
+channel creation and endpoint close through it. Cranelift JIT now calls the
+same kernel for those operations through a C ABI shim. Source syntax,
+compiler-generated continuations, standalone native linking, and general
+typed messages are not implemented here yet.
 
 `Scheduler` owns bounded tables of task records, channels, and reply slots.
 The caller supplies all three limits. Each task has
@@ -86,6 +87,13 @@ suspension; its capability slots are included in failure cleanup metadata.
 Typed channel slots need a compiler-provided layout and structural cleanup
 table before arbitrary source-language messages can carry `ReplyTo` or other
 capabilities. The current request layout is hard-coded to an `I64` payload and
-an `I64` reply. A native runtime ABI must then connect Cranelift JIT and
-standalone builds to this kernel. None of those steps is established by the
-current runtime tests.
+an `I64` reply. The JIT ABI currently covers only scalar channel creation and
+endpoint close. The C ABI creation call publishes both output tokens only on
+success; native generated code loads them only on that edge. The standalone
+linker does not yet include this runtime ABI.
+
+The creation status is `0` on success, `1` for invalid capacity, `2` for the
+channel limit, and `4` for allocation failure (`3` is reserved for the reply
+limit). `255` marks an internal ABI fault; the JIT task reports that fault
+after the generated function returns. These codes are an internal bridge,
+not a stable source-language error representation.

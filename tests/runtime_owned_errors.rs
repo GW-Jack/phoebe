@@ -1,8 +1,9 @@
+use std::ffi::c_void;
 use std::task::Poll;
 
 use phoebe::runtime::{
-    CompleteResult, Context, Receiver, ReplyReceiveResult, Request, ResourceError, Scheduler,
-    Sender, Task,
+    CompleteResult, Context, NativeCallContext, Receiver, ReplyReceiveResult, Request,
+    ResourceError, Scheduler, Sender, Task, phoebe_channel_new_i64, phoebe_close_handle_i64,
 };
 
 struct UnstartedChild {
@@ -117,6 +118,49 @@ impl Task for CreationFailureRoot {
 #[test]
 fn typed_creation_errors_preserve_resource_tables() {
     let mut scheduler = Scheduler::new(CreationFailureRoot, 1, 1, 0).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
+    assert_eq!(scheduler.open_handles(), 0);
+    scheduler.verify().unwrap();
+}
+
+struct NativeAbiRoot;
+
+impl Task for NativeAbiRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        let mut fault = false;
+        let mut bridge = NativeCallContext {
+            context: context as *mut _ as *mut c_void,
+            fault: &mut fault,
+        };
+        let mut sender = 111;
+        let mut receiver = 222;
+        let rejected =
+            unsafe { phoebe_channel_new_i64(&mut bridge, 0, &mut sender, &mut receiver) };
+        assert_eq!(rejected, 1);
+        assert_eq!((sender, receiver), (111, 222));
+        let allocation =
+            unsafe { phoebe_channel_new_i64(&mut bridge, i64::MAX, &mut sender, &mut receiver) };
+        assert_eq!(allocation, 4);
+        assert_eq!((sender, receiver), (111, 222));
+        let accepted =
+            unsafe { phoebe_channel_new_i64(&mut bridge, 1, &mut sender, &mut receiver) };
+        assert_eq!(accepted, 0);
+        assert_eq!(
+            unsafe { phoebe_close_handle_i64(&mut bridge, sender, 0) },
+            0
+        );
+        assert_eq!(
+            unsafe { phoebe_close_handle_i64(&mut bridge, receiver, 1) },
+            0
+        );
+        assert!(!fault);
+        Ok(Poll::Ready(42))
+    }
+}
+
+#[test]
+fn native_abi_publishes_both_handles_only_on_success() {
+    let mut scheduler = Scheduler::new(NativeAbiRoot, 1, 1, 0).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.open_handles(), 0);
     scheduler.verify().unwrap();

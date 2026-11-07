@@ -5,6 +5,7 @@ use std::io::Write;
 use std::mem;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::task::Poll;
 
 use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::ir::condcodes::IntCC;
@@ -20,6 +21,7 @@ use cranelift_native::builder as native_builder;
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use crate::core::{self, CallArg, MatchBinding, Operation, Program, Terminator, Type};
+use crate::runtime::{self, Context, NativeCallContext, Scheduler, ScopeLimits, Task};
 use crate::syntax::ParamMode;
 
 pub struct JitExecutable {
@@ -27,6 +29,40 @@ pub struct JitExecutable {
     entry: FuncId,
     arity: usize,
     name: String,
+    uses_runtime: bool,
+}
+
+fn runtime_context_functions(program: &Program) -> Vec<bool> {
+    let mut callers = vec![Vec::new(); program.functions.len()];
+    let mut needed = vec![false; program.functions.len()];
+    let mut ready = VecDeque::new();
+    for (caller, function) in program.functions.iter().enumerate() {
+        if function.value_types.iter().any(|ty| {
+            matches!(
+                ty,
+                Type::SenderI64 | Type::ReceiverI64 | Type::ResourceError
+            )
+        }) {
+            needed[caller] = true;
+            ready.push_back(caller);
+        }
+        for block in &function.blocks {
+            for instruction in &block.instructions {
+                if let Operation::Call(target, _) = instruction.operation {
+                    callers[target.0].push(caller);
+                }
+            }
+        }
+    }
+    while let Some(callee) = ready.pop_front() {
+        for &caller in &callers[callee] {
+            if !needed[caller] {
+                needed[caller] = true;
+                ready.push_back(caller);
+            }
+        }
+    }
+    needed
 }
 
 pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, String> {
@@ -55,8 +91,20 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
         .map_err(|e| format!("unsupported native host: {e}"))?
         .finish(settings::Flags::new(flags))
         .map_err(|e| e.to_string())?;
-    let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
-    let ids = compile_functions(&mut module, program, false, None)?;
+    let mut jit = JITBuilder::with_isa(isa, default_libcall_names());
+    let context_functions = runtime_context_functions(program);
+    if context_functions.iter().any(|needed| *needed) {
+        jit.symbol(
+            "phoebe_channel_new_i64",
+            runtime::phoebe_channel_new_i64 as *const u8,
+        );
+        jit.symbol(
+            "phoebe_close_handle_i64",
+            runtime::phoebe_close_handle_i64 as *const u8,
+        );
+    }
+    let mut module = JITModule::new(jit);
+    let ids = compile_functions(&mut module, program, &context_functions, false, None)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
     let (entry_id, _) = program.function(name).expect("checked above");
     Ok(JitExecutable {
@@ -64,11 +112,20 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
         entry: ids[entry_id.0].0,
         arity,
         name: name.to_owned(),
+        uses_runtime: context_functions[entry_id.0],
     })
 }
 
 impl JitExecutable {
+    pub fn uses_runtime_context(&self) -> bool {
+        self.uses_runtime
+    }
+
     pub fn run(&self, args: &[i64]) -> Result<i64, String> {
+        self.run_with_limits(args, ScopeLimits::default())
+    }
+
+    pub fn run_with_limits(&self, args: &[i64], limits: ScopeLimits) -> Result<i64, String> {
         if args.len() != self.arity {
             return Err(format!(
                 "`{}` expects {} arguments, got {}",
@@ -78,6 +135,15 @@ impl JitExecutable {
             ));
         }
         let pointer = self.module.get_finalized_function(self.entry);
+        if self.uses_runtime {
+            let root = NativeRootTask {
+                entry: pointer,
+                args: args.to_vec(),
+            };
+            let mut scheduler =
+                Scheduler::new(root, limits.tasks, limits.channels, limits.replies)?;
+            return scheduler.run();
+        }
         // The checked I64 signature and owning module make this invocation valid.
         let result = unsafe {
             match args {
@@ -101,12 +167,64 @@ impl JitExecutable {
     }
 }
 
+struct NativeRootTask {
+    entry: *const u8,
+    args: Vec<i64>,
+}
+
+impl Task for NativeRootTask {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        let mut fault = false;
+        let mut bridge = NativeCallContext {
+            context: context as *mut _ as *mut std::ffi::c_void,
+            fault: &mut fault,
+        };
+        let pointer = &mut bridge as *mut NativeCallContext;
+        // SAFETY: the JIT module outlives this synchronous poll; signatures
+        // include the hidden runtime pointer when uses_runtime is true.
+        let result = unsafe {
+            match self.args.as_slice() {
+                [] => mem::transmute::<*const u8, extern "C" fn(*mut NativeCallContext) -> i64>(
+                    self.entry,
+                )(pointer),
+                [a] => {
+                    mem::transmute::<*const u8, extern "C" fn(*mut NativeCallContext, i64) -> i64>(
+                        self.entry,
+                    )(pointer, *a)
+                }
+                [a, b] => mem::transmute::<
+                    *const u8,
+                    extern "C" fn(*mut NativeCallContext, i64, i64) -> i64,
+                >(self.entry)(pointer, *a, *b),
+                [a, b, c] => mem::transmute::<
+                    *const u8,
+                    extern "C" fn(*mut NativeCallContext, i64, i64, i64) -> i64,
+                >(self.entry)(pointer, *a, *b, *c),
+                [a, b, c, d] => mem::transmute::<
+                    *const u8,
+                    extern "C" fn(*mut NativeCallContext, i64, i64, i64, i64) -> i64,
+                >(self.entry)(pointer, *a, *b, *c, *d),
+                _ => unreachable!("verifier permits at most four parameters"),
+            }
+        };
+        if fault {
+            Err("native runtime ABI fault".into())
+        } else {
+            Ok(Poll::Ready(result))
+        }
+    }
+}
+
 pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
     compile_jit(program, name)?.run(args)
 }
 
 pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
     core::verify(program)?;
+    let context_functions = runtime_context_functions(program);
+    if context_functions.iter().any(|needed| *needed) {
+        return Err("standalone channel runtime linking is not implemented".into());
+    }
     let (_, entry) = program
         .function("main")
         .ok_or("standalone executable requires `fn main() -> I64`")?;
@@ -128,7 +246,7 @@ pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
     let builder =
         ObjectBuilder::new(isa, "phoebe", default_libcall_names()).map_err(|e| e.to_string())?;
     let mut module = ObjectModule::new(builder);
-    compile_functions(&mut module, program, true, None)?;
+    compile_functions(&mut module, program, &context_functions, true, None)?;
     module.finish().emit().map_err(|e| e.to_string())
 }
 
@@ -146,7 +264,14 @@ pub fn clif(program: &Program) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
     let mut output = String::new();
-    compile_functions(&mut module, program, false, Some(&mut output))?;
+    let context_functions = runtime_context_functions(program);
+    compile_functions(
+        &mut module,
+        program,
+        &context_functions,
+        false,
+        Some(&mut output),
+    )?;
     Ok(output)
 }
 
@@ -223,9 +348,7 @@ impl AbiShapes {
             Type::Bool => vec![types::I8],
             Type::Data(id) => self.data[id.0].clone(),
             Type::RefI64 | Type::RefMutI64 => vec![self.pointer_type],
-            Type::SenderI64 | Type::ReceiverI64 | Type::ResourceError => {
-                unreachable!("capability functions are rejected before native lowering")
-            }
+            Type::SenderI64 | Type::ReceiverI64 | Type::ResourceError => vec![types::I64],
         }
     }
 }
@@ -233,24 +356,45 @@ impl AbiShapes {
 fn compile_functions<M: Module>(
     module: &mut M,
     program: &Program,
+    context_functions: &[bool],
     export_main: bool,
     mut clif: Option<&mut String>,
 ) -> Result<Vec<(FuncId, Signature)>, String> {
-    if program.functions.iter().any(|function| {
-        function.value_types.iter().any(|ty| {
-            matches!(
-                ty,
-                Type::SenderI64 | Type::ReceiverI64 | Type::ResourceError
-            )
-        })
-    }) {
-        return Err("native channel creation requires the runtime ABI".into());
-    }
+    let uses_runtime = context_functions.iter().any(|needed| *needed);
     let pointer_type = module.target_config().pointer_type();
     let shapes = AbiShapes::new(program, pointer_type);
+    let runtime_imports = if uses_runtime {
+        let mut create_signature = module.make_signature();
+        create_signature.params.extend([
+            AbiParam::new(pointer_type),
+            AbiParam::new(types::I64),
+            AbiParam::new(pointer_type),
+            AbiParam::new(pointer_type),
+        ]);
+        create_signature.returns.push(AbiParam::new(types::I64));
+        let create = module
+            .declare_function("phoebe_channel_new_i64", Linkage::Import, &create_signature)
+            .map_err(|error| error.to_string())?;
+        let mut close_signature = module.make_signature();
+        close_signature.params.extend([
+            AbiParam::new(pointer_type),
+            AbiParam::new(types::I64),
+            AbiParam::new(types::I64),
+        ]);
+        close_signature.returns.push(AbiParam::new(types::I64));
+        let close = module
+            .declare_function("phoebe_close_handle_i64", Linkage::Import, &close_signature)
+            .map_err(|error| error.to_string())?;
+        Some((create, close))
+    } else {
+        None
+    };
     let mut ids = Vec::with_capacity(program.functions.len());
     for (index, function) in program.functions.iter().enumerate() {
         let mut signature = module.make_signature();
+        if context_functions[index] {
+            signature.params.push(AbiParam::new(pointer_type));
+        }
         for (index, mode) in function.param_modes.iter().enumerate() {
             let components = if *mode == ParamMode::Own {
                 shapes.types(function.value_types[function.blocks[0].params[index].0])
@@ -326,8 +470,10 @@ fn compile_functions<M: Module>(
                 }
             }
             let mut values: Vec<Option<Vec<ClValue>>> = vec![None; function.value_types.len()];
+            let runtime_context =
+                context_functions[index].then(|| builder.block_params(blocks[0])[0]);
             for (block_id, block) in function.blocks.iter().enumerate() {
-                let mut offset = 0;
+                let mut offset = usize::from(context_functions[index] && block_id == 0);
                 let raw = builder.block_params(blocks[block_id]);
                 for param in &block.params {
                     let count = shapes.types(function.value_types[param.0]).len();
@@ -350,7 +496,9 @@ fn compile_functions<M: Module>(
                         ..
                     } => vec![then_block.0, else_block.0],
                     Terminator::Match { arms, .. } => arms.iter().map(|arm| arm.target.0).collect(),
-                    Terminator::ChannelNew { .. } => unreachable!("runtime ABI guard"),
+                    Terminator::ChannelNew {
+                        success, failure, ..
+                    } => vec![success.0, failure.0],
                 };
                 for target in successors {
                     if !seen[target] {
@@ -440,7 +588,7 @@ fn compile_functions<M: Module>(
                         )]),
                         Operation::Call(target, args) => {
                             let callee = module.declare_func_in_func(ids[target.0].0, builder.func);
-                            let args = args
+                            let mut args = args
                                 .iter()
                                 .flat_map(|arg| match arg {
                                     CallArg::Value(value) | CallArg::Ref(value, _) => get(*value),
@@ -453,6 +601,10 @@ fn compile_functions<M: Module>(
                                     }
                                 })
                                 .collect::<Vec<_>>();
+                            if context_functions[target.0] {
+                                let context = runtime_context.expect("caller context propagation");
+                                args.insert(0, context);
+                            }
                             let call = builder.ins().call(callee, &args);
                             Some(builder.inst_results(call).to_vec())
                         }
@@ -471,7 +623,21 @@ fn compile_functions<M: Module>(
                             );
                             None
                         }
-                        Operation::CloseHandle(_) => unreachable!("runtime ABI guard"),
+                        Operation::CloseHandle(value) => {
+                            let (_, close) = runtime_imports.expect("channel runtime imports");
+                            let callee = module.declare_func_in_func(close, builder.func);
+                            let kind = match function.value_types[value.0] {
+                                Type::SenderI64 => 0,
+                                Type::ReceiverI64 => 1,
+                                _ => unreachable!("verified handle kind"),
+                            };
+                            let kind = builder.ins().iconst(types::I64, kind);
+                            builder.ins().call(
+                                callee,
+                                &[runtime_context.expect("runtime context"), one(*value), kind],
+                            );
+                            None
+                        }
                         Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                             for (component, slot) in get(*value).into_iter().zip(&places[place.0]) {
                                 builder.ins().stack_store(pointer_type, component, *slot, 0);
@@ -565,7 +731,59 @@ fn compile_functions<M: Module>(
                             }
                         }
                     }
-                    Terminator::ChannelNew { .. } => unreachable!("runtime ABI guard"),
+                    Terminator::ChannelNew {
+                        capacity,
+                        success,
+                        failure,
+                    } => {
+                        let (create, _) = runtime_imports.expect("channel runtime imports");
+                        let callee = module.declare_func_in_func(create, builder.func);
+                        let sender_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let receiver_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let sender_address = builder.ins().stack_addr(pointer_type, sender_slot, 0);
+                        let receiver_address =
+                            builder.ins().stack_addr(pointer_type, receiver_slot, 0);
+                        let call = builder.ins().call(
+                            callee,
+                            &[
+                                runtime_context.expect("runtime context"),
+                                get(*capacity)[0],
+                                sender_address,
+                                receiver_address,
+                            ],
+                        );
+                        let status = builder.inst_results(call)[0];
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        let succeeded = builder.ins().icmp(IntCC::Equal, status, zero);
+                        let success_load = builder.create_block();
+                        builder.ins().brif(
+                            succeeded,
+                            success_load,
+                            &[],
+                            blocks[failure.0],
+                            &[status.into()],
+                        );
+                        builder.switch_to_block(success_load);
+                        let sender =
+                            builder
+                                .ins()
+                                .stack_load(pointer_type, types::I64, sender_slot, 0);
+                        let receiver =
+                            builder
+                                .ins()
+                                .stack_load(pointer_type, types::I64, receiver_slot, 0);
+                        builder
+                            .ins()
+                            .jump(blocks[success.0], &[sender.into(), receiver.into()]);
+                    }
                 }
             }
             builder.seal_all_blocks();
