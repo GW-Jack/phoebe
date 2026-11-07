@@ -319,7 +319,7 @@ fn qualify_type(
     modules: &HashSet<String>,
 ) -> Result<(), String> {
     match ty {
-        TypeName::I64 | TypeName::Bool => {}
+        TypeName::I64 | TypeName::Bool | TypeName::SenderI64 | TypeName::ReceiverI64 => {}
         TypeName::Named(name) if local_data.contains(name) => {
             *name = format!("{module}.{name}");
         }
@@ -365,6 +365,16 @@ fn rewrite_body(
     for statement in &mut body.statements {
         match statement {
             Statement::ChannelVal { capacity, .. } => rewrite(capacity)?,
+            Statement::Spawn { child, args, .. } => {
+                if local_functions.contains(child) {
+                    *child = symbol(module, child, root);
+                }
+                for arg in args {
+                    if let CallArgument::Value(expr) = arg {
+                        rewrite(expr)?;
+                    }
+                }
+            }
             Statement::Val(_, _, expr)
             | Statement::Var(_, _, expr)
             | Statement::Assign(_, _, expr)
@@ -550,6 +560,15 @@ fn shift_body(body: &mut Body, offset: usize) {
                 shift_span(&mut receiver.1, offset);
                 shift_span(span, offset);
                 shift_expr(capacity, offset);
+            }
+            Statement::Spawn { args, span, .. } => {
+                shift_span(span, offset);
+                for arg in args {
+                    match arg {
+                        CallArgument::Value(expr) => shift_expr(expr, offset),
+                        CallArgument::Borrow { span, .. } => shift_span(span, offset),
+                    }
+                }
             }
             Statement::Val(_, span, value)
             | Statement::Var(_, span, value)

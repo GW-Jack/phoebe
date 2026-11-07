@@ -3,15 +3,16 @@
 Phoebe is an early language design for native programs with task-local memory,
 lightweight tasks, and value-passing channels. The repository has draft
 specifications, bounded formal models, and a first executable compiler slice.
-It does not yet have an integrated language runtime or all features required
-for 0.0.1.
+It does not yet have all features required for 0.0.1.
 
-An isolated cooperative runtime kernel now exercises scope-owned task frames,
+The cooperative runtime kernel exercises scope-owned task frames,
 bounded `I64` and request channels, and one-shot `ReplyTo<I64>` rights;
 `docs/runtime-kernel.md` states its boundary.
-Hand-built checked Core programs can create and close scalar channels in the
-interpreter, Cranelift JIT, and standalone executables. Source syntax for
-those operations is still under development. Standalone channel builds link
+Checked Core and source programs can create and close scalar channels in the
+interpreter, Cranelift JIT, and standalone executables. The interpreter also
+runs checked Core channel traffic and source `spawn` with owned arguments;
+native retained task frames and source traffic syntax remain open.
+Standalone channel builds link
 the `libphoebe.a` runtime archive produced by `cargo build --lib`; a packaged
 compiler must ship the archive beside its executable.
 

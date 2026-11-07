@@ -1,11 +1,11 @@
 # Cooperative runtime kernel
 
 Status: executable Rust kernel for one scope, bounded `I64` and request
-channels, and one-shot `ReplyTo<I64>`. Hand-built Core programs interpret
+channels, and one-shot `ReplyTo<I64>`. Checked Core programs interpret
 channel creation, traffic, endpoint close, and task spawn through it. Cranelift JIT and standalone
-object code call the same kernel for those operations through a C ABI shim.
-Source syntax covers fallible `I64` channel creation and explicit endpoint
-close. Compiler-generated continuations and general typed messages are not
+object code call the same kernel for channel creation and close through a C ABI shim.
+Source syntax covers fallible `I64` channel creation, explicit endpoint
+close, and interpreter task spawn. Compiler-generated native continuations and general typed messages are not
 implemented yet.
 
 `Scheduler` owns bounded tables of task records, channels, and reply slots.
@@ -18,6 +18,10 @@ one-slot channel never holds more than one message, and no task needs an OS
 thread while parked. `yield_now` requeues a runnable task without treating it
 as a blocked channel operation. Compiler-generated backedge checkpoints are
 still needed to make CPU-heavy Phoebe loops fair.
+The default source-run scope permits 64 tasks and 64 channels, with no reply
+slots; callers can set tighter limits through the Rust API. Task creation
+therefore succeeds in the ordinary interpreter CLI example, while a one-task
+limit exercises the typed failure edge.
 
 `Sender` and `Receiver` wrap opaque tokens. The handle table records each
 token's one task owner. `fork` creates another handle explicitly; `spawn`
@@ -51,7 +55,7 @@ code generation use this bridge for creation and close. The Core interpreter
 now retains call frames and places across pending scalar sends and receives.
 Core `spawn` now creates a child task and transfers its checked arguments on
 success. A test runs a Core producer and parent receiver through the scheduler.
-Source and native task creation remain open.
+Source task creation runs in the interpreter; native task creation remains open.
 
 `reply()` creates a one-shot right and receiver. A `Request` holds an `I64`
 value and that right. `send_request` on a full or closed queue returns the

@@ -109,7 +109,11 @@ returning `Result<_, ResourceError>`, with explicit endpoint `close()`.
 `phoebe check` runs the exact capability verifier and rejects leaked or
 twice-closed endpoints. Source `?` now closes exactly the live bare endpoints
 on its early error return; ordinary returns still require explicit
-disposition. General source capability safety, send/receive, lexical scope
+disposition. Source accepts owned `Sender<I64>` and `Receiver<I64>` function
+parameters and `spawn worker(sender)?;` as a fallible statement. On success
+the child owns its argument; on task-limit failure the parent retains it and
+the `?` cleanup closes it. This path currently runs in the interpreter only.
+General source capability safety, send/receive, lexical scope
 cleanup, and cancellation cleanup remain open. `docs/capability-ir.md` specifies
 the integration boundary.
 The versioned runtime ABI now has send and receive calls with explicit
@@ -122,7 +126,7 @@ pending operation, and executes buffered scalar traffic. Core `spawn` now
 transfers endpoint and closed nominal arguments only on success. A two-task
 Core program parks a parent receiver, wakes it from a child send, and handles
 a task-limit failure without losing the parent's rights. Native retained
-frames and source task/channel traffic remain open. A Rust host test also spawns a
+frames and source channel traffic remain open. A Rust host test also spawns a
 checked Core receiver that parks, wakes on a send, and returns its value.
 Internal Core calls can transfer an endpoint to a callee that closes it;
 interpreter and JIT executions agree on that synchronous path.
@@ -143,6 +147,7 @@ cargo run -- run examples/nested_variant.phoebe
 cargo run -- run examples/copy.phoebe
 cargo run -- run examples/channel_create.phoebe
 cargo run -- run examples/channel_cleanup.phoebe
+cargo run -- run examples/spawn_close.phoebe --interp
 cargo run -- cost examples/copy.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe

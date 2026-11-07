@@ -108,4 +108,8 @@ with separate success and resource-failure successors. Its child accepts
 owned scalar, closed nominal, or bare endpoint arguments. Success transfers
 those owners to a new task; failure retains them with the parent. The Core
 interpreter runs a parent and child exchanging an `I64` over a bounded channel.
-Native spawn, source send/receive and spawn, and structural cleanup remain open.
+Source `spawn worker(sender)?;` now lowers to this terminator and uses the
+exact failure-edge live-slot map for parent cleanup. It accepts only owned
+arguments and an `I64`-returning child; capability or nominal arguments must
+currently be named `val`s so their ownership is retained on failure. Native
+spawn, source send/receive, and structural cleanup remain open.

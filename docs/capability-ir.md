@@ -138,6 +138,11 @@ Core `spawn` now uses `spawn_owned`. Task-limit and reservation failures have
 typed resource causes; an invalid transfer is an internal runtime fault.
 The verifier transfers endpoint slots only on the success edge. Its affine
 check similarly moves closed nominal arguments only on success.
+Source `spawn worker(sender)?;` uses these same edges. The child parameter
+is an owned `Sender<I64>` or another supported owned type. Source lowering
+requires a named `val` for non-scalar arguments so pre-commit failure can
+retain the original owner; arbitrary owned temporaries need a later retained
+argument representation. The task-limit failure edge runs source `?` cleanup.
 
 Source `?` exits now use the same exact flow graph as the verifier. The
 lowerer marks an implicit error return as a cleanup exit, reads its live

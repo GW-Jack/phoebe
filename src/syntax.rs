@@ -11,6 +11,7 @@ enum TokenKind {
     Mut,
     Copy,
     While,
+    Spawn,
     If,
     Else,
     True,
@@ -77,6 +78,7 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     "mut" => TokenKind::Mut,
                     "copy" => TokenKind::Copy,
                     "while" => TokenKind::While,
+                    "spawn" => TokenKind::Spawn,
                     "if" => TokenKind::If,
                     "else" => TokenKind::Else,
                     "true" => TokenKind::True,
@@ -237,6 +239,8 @@ pub struct Function {
 pub enum TypeName {
     I64,
     Bool,
+    SenderI64,
+    ReceiverI64,
     Named(String),
     Result(Box<TypeName>, Box<TypeName>),
 }
@@ -246,6 +250,8 @@ impl TypeName {
         match self {
             Self::I64 => "I64".into(),
             Self::Bool => "Bool".into(),
+            Self::SenderI64 => "Sender<I64>".into(),
+            Self::ReceiverI64 => "Receiver<I64>".into(),
             Self::Named(name) => name.clone(),
             Self::Result(ok, err) => format!("Result<{},{}>", ok.key(), err.key()),
         }
@@ -290,6 +296,11 @@ pub enum Statement {
         sender: (String, Span),
         receiver: (String, Span),
         capacity: Expr,
+        span: Span,
+    },
+    Spawn {
+        child: String,
+        args: Vec<CallArgument>,
         span: Span,
     },
     Var(String, Span, Expr),
@@ -343,6 +354,28 @@ struct Parser {
 impl Parser {
     fn type_name(&mut self, borrowed: bool) -> Result<TypeName, Diagnostic> {
         let (name, span) = self.name()?;
+        if matches!(name.as_str(), "Sender" | "Receiver") {
+            self.expect(&TokenKind::Less, "< after channel endpoint type")?;
+            let (element, element_span) = self.name()?;
+            if element != "I64" {
+                return Err(Diagnostic::new(
+                    element_span,
+                    "only I64 channels are implemented",
+                ));
+            }
+            let end = self.expect(&TokenKind::Greater, ">")?.span;
+            if borrowed {
+                return Err(Diagnostic::new(
+                    span.join(end),
+                    "endpoint borrows are not implemented",
+                ));
+            }
+            return Ok(if name == "Sender" {
+                TypeName::SenderI64
+            } else {
+                TypeName::ReceiverI64
+            });
+        }
         if name == "Result" && self.eat(&TokenKind::Less).is_some() {
             let ok = self.type_name(false)?;
             self.expect(&TokenKind::Comma, ",")?;
@@ -625,6 +658,19 @@ impl Parser {
                 self.expect(&TokenKind::RParen, ")")?;
                 let body = self.block(false)?;
                 statements.push(Statement::While(condition, body));
+                continue;
+            }
+            if let Some(start) = self.eat(&TokenKind::Spawn) {
+                let (child, _) = self.name()?;
+                self.expect(&TokenKind::LParen, "(")?;
+                let (args, _) = self.call_arguments()?;
+                let end = self.expect(&TokenKind::Question, "? after fallible spawn")?;
+                self.expect(&TokenKind::Semicolon, "; after spawn")?;
+                statements.push(Statement::Spawn {
+                    child,
+                    args,
+                    span: start.span.join(end.span),
+                });
                 continue;
             }
             let assignment = matches!(self.current().kind, TokenKind::Ident(_))

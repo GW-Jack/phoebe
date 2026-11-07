@@ -82,3 +82,36 @@ fn project_rejects_import_cycle() {
     assert!(error.contains("module import cycle"), "{error}");
     std::fs::remove_dir_all(path).unwrap();
 }
+
+#[test]
+fn project_qualifies_local_spawn_target_and_endpoint_type() {
+    let path = temp_project();
+    std::fs::write(
+        path.join("app.phoebe"),
+        r#"
+fn worker(sender: Sender<I64>) -> I64 {
+  sender.close();
+  0
+}
+
+fn start() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  spawn worker(sender)?;
+  receiver.close();
+  Result<I64, ResourceError>.Ok(7)
+}
+
+fn main() -> I64 {
+  when (start()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let loaded = project::load(&path).unwrap();
+    let program = core::lower(&loaded.ast).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 7);
+    std::fs::remove_dir_all(path).unwrap();
+}

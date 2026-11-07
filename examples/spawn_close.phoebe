@@ -1,0 +1,18 @@
+fn worker(sender: Sender<I64>) -> I64 {
+  sender.close();
+  0
+}
+
+fn start() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  spawn worker(sender)?;
+  receiver.close();
+  Result<I64, ResourceError>.Ok(7)
+}
+
+fn main() -> I64 {
+  when (start()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

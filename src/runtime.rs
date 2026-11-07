@@ -383,7 +383,7 @@ pub struct ScopeLimits {
 impl Default for ScopeLimits {
     fn default() -> Self {
         Self {
-            tasks: 1,
+            tasks: 64,
             channels: 64,
             replies: 0,
         }

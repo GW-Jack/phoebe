@@ -329,6 +329,26 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    fn resource_result_id(&self, span: Span) -> Result<DataId, Diagnostic> {
+        let Type::Data(result_id) = self.return_type else {
+            return Err(Diagnostic::new(
+                span,
+                "? requires Result<_, ResourceError> return type",
+            ));
+        };
+        let result = &self.data[result_id.0];
+        if !result.name.starts_with("Result<")
+            || result.variants.as_slice() != ["Ok", "Err"]
+            || result.payloads[1] != Some(Type::ResourceError)
+        {
+            return Err(Diagnostic::new(
+                span,
+                "? requires Result<_, ResourceError> return type",
+            ));
+        }
+        Ok(result_id)
+    }
+
     fn body(
         &mut self,
         body: &Body,
@@ -350,22 +370,12 @@ impl<'a> Lowerer<'a> {
                             ));
                         }
                     }
-                    let Type::Data(result_id) = self.return_type else {
-                        return Err(Diagnostic::new(
+                    let result_id = self.resource_result_id(*span).map_err(|_| {
+                        Diagnostic::new(
                             *span,
                             "channel creation with ? requires Result<_, ResourceError> return type",
-                        ));
-                    };
-                    let result = &self.data[result_id.0];
-                    if !result.name.starts_with("Result<")
-                        || result.variants.as_slice() != ["Ok", "Err"]
-                        || result.payloads[1] != Some(Type::ResourceError)
-                    {
-                        return Err(Diagnostic::new(
-                            *span,
-                            "channel creation with ? requires Result<_, ResourceError> return type",
-                        ));
-                    }
+                        )
+                    })?;
                     let (value, ty) = self.expr(capacity, locals)?;
                     self.require(ty, Type::I64, capacity.span)?;
                     let success = self.block();
@@ -389,6 +399,77 @@ impl<'a> Lowerer<'a> {
                     self.current = success;
                     locals.insert(sender.0.clone(), Binding::Val(send_value));
                     locals.insert(receiver.0.clone(), Binding::Val(receive_value));
+                }
+                Statement::Spawn { child, args, span } => {
+                    let result_id = self.resource_result_id(*span)?;
+                    let signature = self.functions.get(child).cloned().ok_or_else(|| {
+                        Diagnostic::new(*span, format!("unknown function {child}"))
+                    })?;
+                    if signature.return_type != Type::I64
+                        || signature.params.len() != args.len()
+                        || signature
+                            .params
+                            .iter()
+                            .any(|(mode, _)| *mode != ParamMode::Own)
+                    {
+                        return Err(Diagnostic::new(
+                            *span,
+                            "spawn requires an I64-returning function with owned arguments",
+                        ));
+                    }
+                    let mut values = Vec::with_capacity(args.len());
+                    for (arg, (_, expected)) in args.iter().zip(&signature.params) {
+                        let CallArgument::Value(expr) = arg else {
+                            return Err(Diagnostic::new(*span, "spawn arguments must be owned"));
+                        };
+                        let (value, ty) = if let ExprKind::Name(name) = &expr.kind {
+                            match locals.get(name).copied() {
+                                Some(Binding::Val(value)) => (value, self.value_types[value.0]),
+                                Some(Binding::Var(place))
+                                    if matches!(
+                                        self.place_types[place.0],
+                                        Type::Data(_) | Type::SenderI64 | Type::ReceiverI64
+                                    ) =>
+                                {
+                                    return Err(Diagnostic::new(
+                                        expr.span,
+                                        "owned spawn arguments must be named vals until retained cleanup supports places",
+                                    ));
+                                }
+                                _ => self.expr(expr, locals)?,
+                            }
+                        } else {
+                            self.expr(expr, locals)?
+                        };
+                        self.require(ty, *expected, expr.span)?;
+                        if matches!(ty, Type::Data(_) | Type::SenderI64 | Type::ReceiverI64)
+                            && !matches!(expr.kind, ExprKind::Name(_))
+                        {
+                            return Err(Diagnostic::new(
+                                expr.span,
+                                "owned spawn arguments must be named vals until retained cleanup supports temporaries",
+                            ));
+                        }
+                        values.push(value);
+                    }
+                    let success = self.block();
+                    let failure = self.block();
+                    let error = self.block_param(failure, Type::ResourceError);
+                    self.terminate(Terminator::Spawn {
+                        child: signature.id,
+                        args: values,
+                        success,
+                        failure,
+                    });
+                    self.current = failure;
+                    let failed = self.emit(
+                        Operation::Variant(result_id, 1, Some(error)),
+                        self.return_type,
+                        *span,
+                    );
+                    self.terminate(Terminator::Return(failed));
+                    self.implicit_cleanup_returns.push((self.current, *span));
+                    self.current = success;
                 }
                 Statement::Val(name, span, expr) | Statement::Var(name, span, expr) => {
                     if locals.contains_key(name) {
@@ -1035,7 +1116,7 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     for declaration in &ast.data {
         if matches!(
             declaration.name.as_str(),
-            "I64" | "Bool" | "Result" | "ResourceError"
+            "I64" | "Bool" | "Result" | "ResourceError" | "Sender" | "Receiver"
         ) || data_names.contains_key(&declaration.name)
         {
             return Err(Diagnostic::new(declaration.span, "duplicate data type"));
@@ -1050,6 +1131,12 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
                 None => None,
                 Some(TypeName::I64) => Some(Type::I64),
                 Some(TypeName::Bool) => Some(Type::Bool),
+                Some(TypeName::SenderI64 | TypeName::ReceiverI64) => {
+                    return Err(Diagnostic::new(
+                        variant.span,
+                        "channel endpoints cannot be stored in data yet",
+                    ));
+                }
                 Some(TypeName::Named(name)) if name == "ResourceError" => Some(Type::ResourceError),
                 Some(TypeName::Named(name)) => Some(
                     data_names
@@ -1082,6 +1169,12 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
                 match &field.ty {
                     TypeName::I64 => Type::I64,
                     TypeName::Bool => Type::Bool,
+                    TypeName::SenderI64 | TypeName::ReceiverI64 => {
+                        return Err(Diagnostic::new(
+                            field.span,
+                            "channel endpoints cannot be stored in data yet",
+                        ));
+                    }
                     TypeName::Named(name) if name == "ResourceError" => Type::ResourceError,
                     TypeName::Named(name) => data_names
                         .get(name)
@@ -1121,6 +1214,10 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         let concrete = |ty: &TypeName| match ty {
             TypeName::I64 => Ok(Type::I64),
             TypeName::Bool => Ok(Type::Bool),
+            TypeName::SenderI64 | TypeName::ReceiverI64 => Err(Diagnostic::new(
+                *span,
+                "Result cannot carry channel endpoints yet",
+            )),
             TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
             TypeName::Named(name) => data_names
                 .get(name)
@@ -1146,6 +1243,8 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
         match name {
             TypeName::I64 => Ok(Type::I64),
             TypeName::Bool => Ok(Type::Bool),
+            TypeName::SenderI64 => Ok(Type::SenderI64),
+            TypeName::ReceiverI64 => Ok(Type::ReceiverI64),
             TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
             TypeName::Named(name) => data_names
                 .get(name)
