@@ -100,9 +100,9 @@ with the parent.
 The Core verifier now generates the paired `CreatePair` action exclusively for
 the typed success edge and no creation action for the failure edge. It checks
 their parameter types and exact capability disposition on return. This
-integration currently covers scalar `I64` channels and explicit endpoint
-closes; request/reply creation, nested capability slots, suspension, and
-cleanup metadata are still separate work.
+integration covers scalar `I64` channels, endpoint closes, scalar traffic,
+retry suspension, and Core task spawn. Request/reply creation, nested
+capability slots, native frames, and cleanup metadata remain separate work.
 
 | Operation | Required task ownership | Success transition | Other edge |
 | --- | --- | --- | --- |
@@ -134,6 +134,10 @@ child frame or request on pre-commit failure. A Core lowering must use these
 recoverable paths so its failure edge can retain or explicitly close the
 returned capability slots. The Rust convenience wrappers that reduce an
 error to a string are suitable only for immediate task failure and cleanup.
+Core `spawn` now uses `spawn_owned`. Task-limit and reservation failures have
+typed resource causes; an invalid transfer is an internal runtime fault.
+The verifier transfers endpoint slots only on the success edge. Its affine
+check similarly moves closed nominal arguments only on success.
 
 The scheduler owns a pending task's frame, so suspension does not release any
 of its rights. The generated frame has a fixed layout and a compiler-derived
@@ -171,8 +175,8 @@ slots but does not re-enter the block or replay its instructions. Source lowerin
 the exact checker so `phoebe check` rejects a forgotten right. It does not yet handle
 capability-bearing aggregates, place replacement, or match discard. Next,
 extend that integration and lower `with` and structural cleanup. Scalar
-send/receive terminators and interpreter frames now exist; reply operations,
-child tasks, and native retained frames remain. Interpreter and Cranelift
+send/receive and spawn terminators and interpreter frames now exist; reply
+operations and native retained frames remain. Interpreter and Cranelift
 executions must agree on the same IR, including failed and canceled paths.
 Source syntax currently exposes only creation and explicit close.
 
@@ -183,7 +187,8 @@ same task throughout that call. The verifier rejects a second caller-side
 use after transfer. A retry edge may check a slot with `Require`, but it must
 leave the exact slot set unchanged so a later poll can safely repeat the
 terminator. The interpreter retains values, places, and call frames across
-that retry. Native retained frames and task spawn remain future work.
+that retry. Core task spawn now executes in the interpreter; native and source
+task spawn remain future work.
 
 The verifier establishes a property of the checked IR, conditional on its
 implementation and runtime ABI. It does not prove that Rust cleanup, Cranelift

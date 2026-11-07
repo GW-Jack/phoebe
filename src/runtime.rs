@@ -49,6 +49,7 @@ pub enum RequestSendResult {
 /// A pre-commit runtime error that returns ownership of its input unchanged.
 pub struct OwnedError<T> {
     pub message: String,
+    pub resource_error: Option<ResourceError>,
     pub value: T,
 }
 
@@ -57,6 +58,7 @@ pub enum ResourceError {
     InvalidChannelCapacity,
     ChannelLimit,
     ReplyLimit,
+    TaskLimit,
     Allocation,
 }
 
@@ -67,6 +69,7 @@ impl fmt::Display for ResourceError {
                 f.write_str("channel capacity or scope channel limit exceeded")
             }
             Self::ReplyLimit => f.write_str("scope reply limit exceeded"),
+            Self::TaskLimit => f.write_str("scope task limit exceeded"),
             Self::Allocation => f.write_str("scope allocation failed"),
         }
     }
@@ -87,6 +90,7 @@ fn resource_code(error: ResourceError) -> i64 {
         ResourceError::ChannelLimit => 2,
         ResourceError::ReplyLimit => 3,
         ResourceError::Allocation => 4,
+        ResourceError::TaskLimit => 5,
     }
 }
 
@@ -1046,6 +1050,7 @@ impl Context<'_> {
             Err(message) => {
                 return Err(OwnedError {
                     message,
+                    resource_error: None,
                     value: request,
                 });
             }
@@ -1053,6 +1058,7 @@ impl Context<'_> {
         if self.scheduler.channels[channel].kind != ChannelKind::Request {
             return Err(OwnedError {
                 message: "request send requires a request channel".into(),
+                resource_error: None,
                 value: request,
             });
         }
@@ -1061,6 +1067,7 @@ impl Context<'_> {
             None => {
                 return Err(OwnedError {
                     message: "invalid reply token".into(),
+                    resource_error: None,
                     value: request,
                 });
             }
@@ -1068,6 +1075,7 @@ impl Context<'_> {
         if right.owner != ReplyOwner::Task(self.task) {
             return Err(OwnedError {
                 message: "reply right is closed or owned elsewhere".into(),
+                resource_error: None,
                 value: request,
             });
         }
@@ -1079,12 +1087,14 @@ impl Context<'_> {
             if self.wait.is_some() {
                 return Err(OwnedError {
                     message: "task already registered a wait in this poll".into(),
+                    resource_error: None,
                     value: request,
                 });
             }
             if let Err(error) = self.scheduler.channels[channel].send_waiters.try_reserve(1) {
                 return Err(OwnedError {
                     message: error.to_string(),
+                    resource_error: Some(ResourceError::Allocation),
                     value: request,
                 });
             }
@@ -1296,6 +1306,7 @@ impl Context<'_> {
         if self.scheduler.tasks.len() >= self.scheduler.max_tasks {
             return Err(OwnedError {
                 message: "scope task limit exceeded".into(),
+                resource_error: Some(ResourceError::TaskLimit),
                 value: child,
             });
         }
@@ -1303,18 +1314,21 @@ impl Context<'_> {
             if transfers[..index].contains(token) {
                 return Err(OwnedError {
                     message: "duplicate capability transfer".into(),
+                    resource_error: None,
                     value: child,
                 });
             }
             let Some(handle) = self.scheduler.handles.get(token.0) else {
                 return Err(OwnedError {
                     message: "invalid capability token".into(),
+                    resource_error: None,
                     value: child,
                 });
             };
             if handle.owner != Some(self.task) {
                 return Err(OwnedError {
                     message: "capability is closed or owned by another task".into(),
+                    resource_error: None,
                     value: child,
                 });
             }
@@ -1322,12 +1336,14 @@ impl Context<'_> {
         if let Err(error) = self.scheduler.tasks.try_reserve(1) {
             return Err(OwnedError {
                 message: error.to_string(),
+                resource_error: Some(ResourceError::Allocation),
                 value: child,
             });
         }
         if let Err(error) = self.scheduler.ready.try_reserve(1) {
             return Err(OwnedError {
                 message: error.to_string(),
+                resource_error: Some(ResourceError::Allocation),
                 value: child,
             });
         }

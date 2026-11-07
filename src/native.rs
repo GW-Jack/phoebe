@@ -551,6 +551,9 @@ fn compile_functions<M: Module>(
                     } => vec![success.0, failure.0],
                     Terminator::ChannelSend { sent, closed, .. } => vec![sent.0, closed.0],
                     Terminator::ChannelReceive { value, end, .. } => vec![value.0, end.0],
+                    Terminator::Spawn {
+                        success, failure, ..
+                    } => vec![success.0, failure.0],
                 };
                 for target in successors {
                     if !seen[target] {
@@ -836,9 +839,11 @@ fn compile_functions<M: Module>(
                             .ins()
                             .jump(blocks[success.0], &[sender.into(), receiver.into()]);
                     }
-                    Terminator::ChannelSend { .. } | Terminator::ChannelReceive { .. } => {
+                    Terminator::ChannelSend { .. }
+                    | Terminator::ChannelReceive { .. }
+                    | Terminator::Spawn { .. } => {
                         return Err(
-                            "native channel send/receive requires retained task frames".into()
+                            "native channel traffic and spawn require retained task frames".into(),
                         );
                     }
                 }

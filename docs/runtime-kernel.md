@@ -1,8 +1,8 @@
 # Cooperative runtime kernel
 
 Status: executable Rust kernel for one scope, bounded `I64` and request
-channels, and one-shot `ReplyTo<I64>`. Hand-built Core programs can interpret
-channel creation and endpoint close through it. Cranelift JIT and standalone
+channels, and one-shot `ReplyTo<I64>`. Hand-built Core programs interpret
+channel creation, traffic, endpoint close, and task spawn through it. Cranelift JIT and standalone
 object code call the same kernel for those operations through a C ABI shim.
 Source syntax covers fallible `I64` channel creation and explicit endpoint
 close. Compiler-generated continuations and general typed messages are not
@@ -49,8 +49,9 @@ right, so an error creates no partial endpoint pair. Core lowers hand-built
 verifier checks the success/failure ownership graph. Source syntax and native
 code generation use this bridge for creation and close. The Core interpreter
 now retains call frames and places across pending scalar sends and receives.
-It still runs one Core root task; child task creation is not yet executable
-through Core.
+Core `spawn` now creates a child task and transfers its checked arguments on
+success. A test runs a Core producer and parent receiver through the scheduler.
+Source and native task creation remain open.
 
 `reply()` creates a one-shot right and receiver. A `Request` holds an `I64`
 value and that right. `send_request` on a full or closed queue returns the
@@ -106,6 +107,6 @@ different ABI version fails at link time.
 
 The creation status is `0` on success, `1` for invalid capacity, `2` for the
 channel limit, and `4` for allocation failure (`3` is reserved for the reply
-limit). `255` marks an internal ABI fault; the native task reports that fault
+limit and `5` for the task limit). `255` marks an internal ABI fault; the native task reports that fault
 after the generated function returns. These codes are an internal bridge,
 not a stable source-language error representation.

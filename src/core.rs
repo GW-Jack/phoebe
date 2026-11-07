@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::sync::Arc;
 use std::task::Poll;
 
 use crate::capability_flow::{self, Action as CapAction, Target as CapTarget};
@@ -153,6 +154,12 @@ pub enum Terminator {
         receiver: ValueId,
         value: BlockId,
         end: BlockId,
+    },
+    Spawn {
+        child: FunctionId,
+        args: Vec<ValueId>,
+        success: BlockId,
+        failure: BlockId,
     },
 }
 
@@ -1607,6 +1614,7 @@ fn verify_ownership(program: &Program) -> Result<(), OwnershipError> {
                 .last()
                 .map(|item| item.span)
                 .unwrap_or(Span { start: 0, end: 0 });
+            let mut spawn_success = None;
             let successors = match &block.terminator {
                 Terminator::Return(value) => {
                     value_use(&mut state, *value, true, span)?;
@@ -1634,15 +1642,33 @@ fn verify_ownership(program: &Program) -> Result<(), OwnershipError> {
                 } => vec![success.0, failure.0],
                 Terminator::ChannelSend { sent, closed, .. } => vec![sent.0, closed.0],
                 Terminator::ChannelReceive { value, end, .. } => vec![value.0, end.0],
+                Terminator::Spawn {
+                    args,
+                    success,
+                    failure,
+                    ..
+                } => {
+                    let mut moved = state.clone();
+                    for value in args {
+                        value_use(&mut moved, *value, true, span)?;
+                    }
+                    spawn_success = Some(moved);
+                    vec![success.0, failure.0]
+                }
             };
-            for target in successors {
+            for (edge, target) in successors.into_iter().enumerate() {
+                let outgoing = if edge == 0 {
+                    spawn_success.as_ref().unwrap_or(&state)
+                } else {
+                    &state
+                };
                 match &mut incoming[target] {
                     None => {
-                        incoming[target] = Some(state.clone());
+                        incoming[target] = Some(outgoing.clone());
                         ready.push_back(target);
                     }
                     Some(prior) => {
-                        if prior.intersect(&state) {
+                        if prior.intersect(outgoing) {
                             ready.push_back(target);
                         }
                     }
@@ -1760,6 +1786,7 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                                     | Type::Data(_)
                                     | Type::SenderI64
                                     | Type::ReceiverI64
+                                    | Type::ResourceError
                             ))
                     {
                         return Err(format!("{}: invalid function parameter", function.name));
@@ -1833,6 +1860,14 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                         return Err(format!("{}: receive edges must be distinct", function.name));
                     }
                     vec![*value, *end]
+                }
+                Terminator::Spawn {
+                    success, failure, ..
+                } => {
+                    if success == failure {
+                        return Err(format!("{}: spawn edges must be distinct", function.name));
+                    }
+                    vec![*success, *failure]
                 }
             };
             for target in targets {
@@ -2077,6 +2112,42 @@ fn verify_structure(program: &Program) -> Result<(), String> {
                         ));
                     }
                 }
+                Terminator::Spawn {
+                    child,
+                    args,
+                    success,
+                    failure,
+                } => {
+                    let callee = program
+                        .functions
+                        .get(child.0)
+                        .ok_or_else(|| format!("{}: invalid spawn target", function.name))?;
+                    let params = callee
+                        .blocks
+                        .first()
+                        .ok_or_else(|| format!("{}: spawn target has no entry", function.name))?
+                        .params
+                        .as_slice();
+                    if callee.return_type != Type::I64
+                        || callee
+                            .param_modes
+                            .iter()
+                            .any(|mode| *mode != ParamMode::Own)
+                        || args.len() != params.len()
+                        || !function.blocks[success.0].params.is_empty()
+                        || function.blocks[failure.0].params.len() != 1
+                        || function.value_types[function.blocks[failure.0].params[0].0]
+                            != Type::ResourceError
+                    {
+                        return Err(format!("{}: spawn edge signature mismatch", function.name));
+                    }
+                    for (arg, param) in args.iter().zip(params) {
+                        check_use(*arg, block_id, end)?;
+                        if function.value_types[arg.0] != callee.value_types[param.0] {
+                            return Err(format!("{}: spawn argument type mismatch", function.name));
+                        }
+                    }
+                }
             }
         }
     }
@@ -2237,6 +2308,22 @@ fn verify_capability_edges(program: &Program) -> Result<(), String> {
                             edge(CapTarget::Retry, require),
                         ]
                     }
+                    Terminator::Spawn {
+                        args,
+                        success,
+                        failure,
+                        ..
+                    } => {
+                        let transfers = args
+                            .iter()
+                            .filter(|value| is_channel_handle(function.value_types[value.0]))
+                            .map(|value| CapAction::Transfer(slot(*value)))
+                            .collect();
+                        vec![
+                            edge(CapTarget::Block(success.0), transfers),
+                            edge(CapTarget::Block(failure.0), vec![]),
+                        ]
+                    }
                 };
                 capability_flow::Block { actions, exits }
             })
@@ -2303,6 +2390,7 @@ impl Program {
                         Terminator::ChannelNew { .. }
                             | Terminator::ChannelSend { .. }
                             | Terminator::ChannelReceive { .. }
+                            | Terminator::Spawn { .. }
                     ) || block.instructions.iter().any(|instruction| {
                         matches!(instruction.operation, Operation::CloseHandle(_))
                     }))
@@ -2361,7 +2449,7 @@ impl Program {
             .iter()
             .map(|value| Value::I64(*value))
             .collect::<Vec<_>>();
-        let root = CoreTask::new(self.clone(), id, args);
+        let root = CoreTask::new(Arc::new(self.clone()), id, args);
         if self.runtime_context_functions()[id.0] {
             let mut scheduler =
                 Scheduler::new(root, limits.tasks, limits.channels, limits.replies)?;
@@ -2377,7 +2465,7 @@ impl Program {
 }
 
 struct CoreTask {
-    program: Program,
+    program: Arc<Program>,
     frames: Vec<InterpreterFrame>,
     stores: Vec<Option<Value>>,
 }
@@ -2392,7 +2480,7 @@ struct InterpreterFrame {
 }
 
 impl CoreTask {
-    fn new(program: Program, entry: FunctionId, args: Vec<Value>) -> Self {
+    fn new(program: Arc<Program>, entry: FunctionId, args: Vec<Value>) -> Self {
         let mut task = Self {
             program,
             frames: Vec::new(),
@@ -2661,6 +2749,43 @@ impl CoreTask {
                         runtime::ReceiveResult::Pending => return Ok(Poll::Pending),
                     }
                 }
+                Terminator::Spawn {
+                    child,
+                    args,
+                    success,
+                    failure,
+                } => {
+                    let child_values = args
+                        .into_iter()
+                        .map(|arg| self.value(arg))
+                        .collect::<Vec<_>>();
+                    let transfers = child_values
+                        .iter()
+                        .filter_map(|value| match value {
+                            Value::Sender(token) | Value::Receiver(token) => Some(*token),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    let child_task = CoreTask::new(Arc::clone(&self.program), child, child_values);
+                    match context
+                        .as_deref_mut()
+                        .expect("runtime context")
+                        .spawn_owned(child_task, &transfers)
+                    {
+                        Ok(_) => self.enter(success, Vec::new()),
+                        Err(error) => match error.resource_error {
+                            Some(resource) => {
+                                self.enter(failure, vec![Value::ResourceError(resource)])
+                            }
+                            None => {
+                                return Err(format!(
+                                    "runtime spawn invariant failed: {}",
+                                    error.message
+                                ));
+                            }
+                        },
+                    }
+                }
             }
         }
     }
@@ -2859,6 +2984,21 @@ impl fmt::Display for Program {
                         "    channel.receive.i64 v{} value block{} end block{} pending retry",
                         receiver.0, value.0, end.0
                     )?,
+                    Terminator::Spawn {
+                        child,
+                        args,
+                        success,
+                        failure,
+                    } => {
+                        write!(f, "    spawn {}(", self.functions[child.0].name)?;
+                        for (index, arg) in args.iter().enumerate() {
+                            if index > 0 {
+                                write!(f, ", ")?;
+                            }
+                            write!(f, "v{}", arg.0)?;
+                        }
+                        writeln!(f, ") success block{} failure block{}", success.0, failure.0)?;
+                    }
                 }
             }
             writeln!(f, "}}")?;
@@ -2918,7 +3058,7 @@ mod interpreter_frame_tests {
     }
 
     struct Root {
-        program: Program,
+        program: Arc<Program>,
         sender: Option<Sender>,
         child: Option<TaskId>,
         phase: u8,
@@ -2930,7 +3070,7 @@ mod interpreter_frame_tests {
                 let (sender, receiver) = context.channel(1)?;
                 let token = receiver.token();
                 let child = CoreTask::new(
-                    self.program.clone(),
+                    Arc::clone(&self.program),
                     FunctionId(0),
                     vec![Value::Receiver(token)],
                 );
@@ -2965,7 +3105,7 @@ mod interpreter_frame_tests {
         verify(&program).unwrap();
         let mut scheduler = Scheduler::new(
             Root {
-                program,
+                program: Arc::new(program),
                 sender: None,
                 child: None,
                 phase: 0,

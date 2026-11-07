@@ -32,6 +32,7 @@ impl Task for SpawnFailureRoot {
             )
             .expect_err("task budget rejects spawn");
         assert_eq!(error.message, "scope task limit exceeded");
+        assert_eq!(error.resource_error, Some(ResourceError::TaskLimit));
         let mut child = error.value;
         context.close_sender(child.sender.take().expect("sender returned in frame"))?;
         context.close_receiver(receiver)?;

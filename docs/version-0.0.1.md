@@ -115,8 +115,11 @@ retry across both operations. Cranelift still needs generated task frames
 before source send/receive can use those calls in both execution engines.
 Core now checks scalar send/receive terminators and derives live-right maps
 for retry suspension. Its interpreter retains frames and places across a
-pending operation, and executes buffered scalar traffic. Core child task
-creation and native retained frames remain open. A Rust host test spawns a
+pending operation, and executes buffered scalar traffic. Core `spawn` now
+transfers endpoint and closed nominal arguments only on success. A two-task
+Core program parks a parent receiver, wakes it from a child send, and handles
+a task-limit failure without losing the parent's rights. Native retained
+frames and source task/channel traffic remain open. A Rust host test also spawns a
 checked Core receiver that parks, wakes on a send, and returns its value.
 Internal Core calls can transfer an endpoint to a callee that closes it;
 interpreter and JIT executions agree on that synchronous path.

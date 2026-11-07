@@ -6,7 +6,8 @@ IR is not yet Phoebe's complete checked IR or a proven semantics.
 A function contains typed SSA values, numbered basic blocks, and numbered
 mutable places. Each block has zero or more typed parameters, an instruction
 sequence, and exactly one `return`, `jump`, `branch`, `match`,
-`channel.new.i64`, `channel.send.i64`, or `channel.receive.i64` terminator. A `jump`
+`channel.new.i64`, `channel.send.i64`, `channel.receive.i64`, or `spawn`
+terminator. A `jump`
 supplies one typed value per destination parameter. An `if` expression lowers
 to a conditional branch and a join block whose parameter carries the chosen
 arm's result. A `while` statement lowers to a loop head, body, exit, and
@@ -102,5 +103,9 @@ owned channel endpoint parameters; a synchronous call transfers that right
 to the callee, which must close it before returning. The interpreter and JIT
 agree on an endpoint-owning call. The interpreter has also resumed a Core
 child receiver after a scheduler wake; child creation in that test is still
-performed by the Rust host, not generated from Core. Source send/receive,
-structural cleanup, and Core child task creation remain open.
+performed by the Rust host. Core now also has a fallible `spawn` terminator
+with separate success and resource-failure successors. Its child accepts
+owned scalar, closed nominal, or bare endpoint arguments. Success transfers
+those owners to a new task; failure retains them with the parent. The Core
+interpreter runs a parent and child exchanging an `I64` over a bounded channel.
+Native spawn, source send/receive and spawn, and structural cleanup remain open.
