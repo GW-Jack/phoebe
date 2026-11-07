@@ -1987,11 +1987,23 @@ fn verify_capability_edges(program: &Program) -> Result<(), String> {
         if !function.value_types.iter().copied().any(is_channel_handle) {
             continue;
         }
+        // Capability flow only needs ownership state for rights, not for every
+        // scalar SSA value in the function. Keep this numbering separate from
+        // ValueId so adding ordinary computations does not enlarge each state.
+        let mut slots = vec![None; function.value_types.len()];
+        let mut slot_count = 0;
+        for (value, ty) in function.value_types.iter().enumerate() {
+            if is_channel_handle(*ty) {
+                slots[value] = Some(capability_flow::Slot(slot_count));
+                slot_count += 1;
+            }
+        }
+        let slot = |value: ValueId| slots[value.0].expect("channel handle has a capability slot");
         let entry_live = function.blocks[0]
             .params
             .iter()
             .filter(|value| is_channel_handle(function.value_types[value.0]))
-            .map(|value| capability_flow::Slot(value.0))
+            .map(|value| slot(*value))
             .collect();
         let blocks = function
             .blocks
@@ -2002,7 +2014,7 @@ fn verify_capability_edges(program: &Program) -> Result<(), String> {
                     .iter()
                     .filter_map(|instruction| match instruction.operation {
                         Operation::CloseHandle(value) => {
-                            Some(CapAction::Close(capability_flow::Slot(value.0)))
+                            Some(CapAction::Close(slot(value)))
                         }
                         _ => None,
                     })
@@ -2016,8 +2028,8 @@ fn verify_capability_edges(program: &Program) -> Result<(), String> {
                             .zip(&function.blocks[target.0].params)
                             .filter(|(arg, _)| is_channel_handle(function.value_types[arg.0]))
                             .map(|(arg, param)| CapAction::Move {
-                                from: capability_flow::Slot(arg.0),
-                                to: capability_flow::Slot(param.0),
+                                from: slot(*arg),
+                                to: slot(*param),
                             })
                             .collect();
                         vec![edge(CapTarget::Block(target.0), moves)]
@@ -2042,8 +2054,8 @@ fn verify_capability_edges(program: &Program) -> Result<(), String> {
                             edge(
                                 CapTarget::Block(success.0),
                                 vec![CapAction::CreatePair {
-                                    first: capability_flow::Slot(params[0].0),
-                                    second: capability_flow::Slot(params[1].0),
+                                    first: slot(params[0]),
+                                    second: slot(params[1]),
                                 }],
                             ),
                             edge(CapTarget::Block(failure.0), vec![]),
@@ -2054,7 +2066,7 @@ fn verify_capability_edges(program: &Program) -> Result<(), String> {
             })
             .collect();
         capability_flow::verify(&capability_flow::Graph {
-            slots: function.value_types.len(),
+            slots: slot_count,
             entry_live,
             blocks,
         })

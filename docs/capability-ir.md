@@ -4,9 +4,9 @@ Status: design contract with an initial checked Core creation edge. The checker
 in `src/capability_flow.rs` verifies exact capability-slot states at joins and
 normal returns, and derives live-slot maps for failure and suspension edges.
 Core now derives a graph for `channel.new.i64`, endpoint closes, and jumps
-between capability-bearing block parameters. Its interpreter runs those edges
-through the bounded runtime kernel. Source lowering and native execution do
-not yet connect to this path.
+between capability-bearing block parameters. The interpreter, Cranelift JIT,
+and standalone executable run creation and close through the bounded runtime
+kernel. Source lowering does not yet connect to this path.
 
 ## Why the current affine rule is insufficient
 
@@ -52,6 +52,19 @@ checks the finite IR once per changed function. Its worklist propagates
 compact bitsets of capability slots; ordinary generated code executes only
 the explicit transitions. Maude explores bounded abstract machines during
 development and CI; it is not invoked for each compilation.
+
+Core assigns a dense flow slot only to each capability-bearing SSA value.
+The slot number is separate from `ValueId`: adding scalar calculations cannot
+grow the ownership state. A future aggregate value needs one slot per leaf
+capability path, not one slot for its entire product or sum. For a product,
+the paths are field names followed recursively by child paths. For a sum,
+the active variant determines which paths exist, so the verifier must either
+split on its tag or carry a tagged slot state. A blind union of variant slots
+would report nonexistent rights; a blind intersection would lose live ones.
+Projection moves the selected leaf paths from the aggregate owner to the
+result and must account for all unselected live paths through an explicit
+residual owner, close, or transfer. These rules are prerequisites for lowering
+`val (sender, receiver) = channel<T>(n)` and capability-bearing `Result`.
 
 ## Operations and edges
 

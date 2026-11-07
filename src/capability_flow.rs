@@ -1,5 +1,5 @@
 //! Exact ownership flow for capability slots.
-//! This is a preparatory verifier; Core IR does not yet produce these graphs.
+//! Core IR derives these graphs for channel creation, close, and block edges.
 
 use std::collections::VecDeque;
 
