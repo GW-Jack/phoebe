@@ -134,6 +134,12 @@ returns `Complete<I64>.Delivered | Closed(value)`; receive returns
 `Reply<I64>.Value(value) | End`. Source tests compare interpreter, JIT, and
 standalone execution for delivery, cancellation, and lexical close. General
 request messages containing reply rights remain open.
+Hand-built checked Core now models the runtime's concrete `Request<I64>`
+shape with explicit pack, unpack, request-channel, send, receive, and
+structural close operations. Its verifier tracks the nested reply right as
+one owned slot across each move and queue boundary; interpreter tests cover
+delivery and rejected-send recovery. Native lowering and source syntax for
+request messages remain open, as do general capability-bearing aggregates.
 Runtime task failure now cancels remaining scope tasks immediately after
 closing the failing task's rights. A host regression catches the case where
 the parent retained another sender and would otherwise report a deadlock

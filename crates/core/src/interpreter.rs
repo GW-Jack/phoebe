@@ -62,6 +62,9 @@ impl Program {
                         block.terminator,
                         Terminator::ChannelNew { .. }
                             | Terminator::ReplyNew { .. }
+                            | Terminator::RequestChannelNew { .. }
+                            | Terminator::RequestSend { .. }
+                            | Terminator::RequestReceive { .. }
                             | Terminator::Fork { .. }
                             | Terminator::Yield { .. }
                             | Terminator::ChannelSend { .. }
@@ -72,7 +75,9 @@ impl Program {
                     ) || block.instructions.iter().any(|instruction| {
                         matches!(
                             instruction.operation,
-                            Operation::CloseHandle(_) | Operation::CloseReply(_)
+                            Operation::CloseHandle(_)
+                                | Operation::CloseReply(_)
+                                | Operation::CloseRequest(_)
                         )
                     }))
                 {
@@ -300,6 +305,21 @@ impl CoreTask {
                 }
                 None
             }
+            Operation::PackRequest { value, right } => {
+                let Value::ReplyTo(token) = get(*right) else {
+                    unreachable!("verified reply right")
+                };
+                Some(Value::Request(as_i64(get(*value)), token))
+            }
+            Operation::CloseRequest(value) => {
+                let Value::Request(_, token) = get(*value) else {
+                    unreachable!("verified request")
+                };
+                context
+                    .expect("runtime operation has a context")
+                    .close_reply_to(runtime::ReplyTo::from_token(token))?;
+                None
+            }
         })
     }
 }
@@ -426,6 +446,90 @@ impl CoreTask {
                         Err(error) => self.enter(failure, vec![Value::ResourceError(error)]),
                     }
                 }
+                Terminator::RequestChannelNew {
+                    capacity,
+                    success,
+                    failure,
+                } => {
+                    let result = usize::try_from(as_i64(self.value(capacity)))
+                        .map_err(|_| ResourceError::InvalidChannelCapacity)
+                        .and_then(|capacity| {
+                            context
+                                .as_deref_mut()
+                                .expect("runtime context")
+                                .request_channel_typed(capacity)
+                        });
+                    match result {
+                        Ok((sender, receiver)) => self.enter(
+                            success,
+                            vec![
+                                Value::Sender(sender.token()),
+                                Value::Receiver(receiver.token()),
+                            ],
+                        ),
+                        Err(error) => self.enter(failure, vec![Value::ResourceError(error)]),
+                    }
+                }
+                Terminator::RequestUnpack { request, next } => {
+                    let Value::Request(value, right) = self.value(request) else {
+                        unreachable!("verified request")
+                    };
+                    self.enter(next, vec![Value::I64(value), Value::ReplyTo(right)]);
+                }
+                Terminator::RequestSend {
+                    sender,
+                    request,
+                    sent,
+                    closed,
+                } => {
+                    let Value::Sender(sender_token) = self.value(sender) else {
+                        unreachable!("verified sender")
+                    };
+                    let Value::Request(value, right_token) = self.value(request) else {
+                        unreachable!("verified request")
+                    };
+                    let request_value = runtime::Request {
+                        value,
+                        reply: runtime::ReplyTo::from_token(right_token),
+                    };
+                    match context
+                        .as_deref_mut()
+                        .expect("runtime context")
+                        .send_request_owned(
+                            &runtime::Sender::from_token(sender_token),
+                            request_value,
+                        )
+                        .map_err(|error| error.message)?
+                    {
+                        runtime::RequestSendResult::Sent => self.enter(sent, Vec::new()),
+                        runtime::RequestSendResult::Closed(request) => self.enter(
+                            closed,
+                            vec![Value::Request(request.value, request.reply.token())],
+                        ),
+                        runtime::RequestSendResult::Pending(_) => return Ok(Poll::Pending),
+                    }
+                }
+                Terminator::RequestReceive {
+                    receiver,
+                    value,
+                    end,
+                } => {
+                    let Value::Receiver(token) = self.value(receiver) else {
+                        unreachable!("verified receiver")
+                    };
+                    match context
+                        .as_deref_mut()
+                        .expect("runtime context")
+                        .receive_request(&runtime::Receiver::from_token(token))?
+                    {
+                        runtime::RequestReceiveResult::Value(request) => self.enter(
+                            value,
+                            vec![Value::Request(request.value, request.reply.token())],
+                        ),
+                        runtime::RequestReceiveResult::End => self.enter(end, Vec::new()),
+                        runtime::RequestReceiveResult::Pending => return Ok(Poll::Pending),
+                    }
+                }
                 Terminator::Fork {
                     source,
                     success,
@@ -550,6 +654,9 @@ impl CoreTask {
                             Value::ReplyReceiver(token) => {
                                 Some(runtime::CapabilityTransfer::ReplyReceiver(*token))
                             }
+                            Value::Request(_, token) => {
+                                Some(runtime::CapabilityTransfer::ReplyRight(*token))
+                            }
                             _ => None,
                         })
                         .collect::<Vec<_>>();
@@ -595,6 +702,7 @@ fn as_i64(value: Value) -> i64 {
         | Value::Receiver(_)
         | Value::ReplyTo(_)
         | Value::ReplyReceiver(_)
+        | Value::Request(_, _)
         | Value::ResourceError(_) => {
             unreachable!("verified I64 operand")
         }
@@ -612,6 +720,7 @@ fn as_bool(value: Value) -> bool {
         | Value::Receiver(_)
         | Value::ReplyTo(_)
         | Value::ReplyReceiver(_)
+        | Value::Request(_, _)
         | Value::ResourceError(_) => {
             unreachable!("verified Bool operand")
         }
@@ -715,6 +824,10 @@ impl fmt::Display for Program {
                         }
                         Operation::CloseHandle(value) => write!(f, "close.handle v{}", value.0)?,
                         Operation::CloseReply(value) => write!(f, "close.reply v{}", value.0)?,
+                        Operation::PackRequest { value, right } => {
+                            write!(f, "request.pack v{}, v{}", value.0, right.0)?
+                        }
+                        Operation::CloseRequest(value) => write!(f, "close.request v{}", value.0)?,
                     }
                     writeln!(f, "  @{}..{}", instruction.span.start, instruction.span.end)?;
                 }
@@ -764,6 +877,37 @@ impl fmt::Display for Program {
                         f,
                         "    reply.new.i64 success block{} failure block{}",
                         success.0, failure.0
+                    )?,
+                    Terminator::RequestChannelNew {
+                        capacity,
+                        success,
+                        failure,
+                    } => writeln!(
+                        f,
+                        "    channel.new.request.i64 v{} success block{} failure block{}",
+                        capacity.0, success.0, failure.0
+                    )?,
+                    Terminator::RequestUnpack { request, next } => {
+                        writeln!(f, "    request.unpack v{} next block{}", request.0, next.0)?
+                    }
+                    Terminator::RequestSend {
+                        sender,
+                        request,
+                        sent,
+                        closed,
+                    } => writeln!(
+                        f,
+                        "    channel.send.request.i64 v{}, v{} sent block{} closed block{} pending retry",
+                        sender.0, request.0, sent.0, closed.0
+                    )?,
+                    Terminator::RequestReceive {
+                        receiver,
+                        value,
+                        end,
+                    } => writeln!(
+                        f,
+                        "    channel.receive.request.i64 v{} value block{} end block{} pending retry",
+                        receiver.0, value.0, end.0
                     )?,
                     Terminator::Fork {
                         source,

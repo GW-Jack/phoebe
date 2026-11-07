@@ -137,3 +137,18 @@ capability descriptors for both channels and replies. Source lowering now
 emits these operations for `reply<I64>()?`, `complete`, `receive`, `close`, and
 owned spawn arguments. Lexical and early-error cleanup select `close.reply`
 for reply capabilities. Source request messages carrying rights remain open.
+
+Checked Core now also has a concrete `RequestI64` value containing one `I64`
+and one `ReplyToI64`. `request.pack` moves the right into the request slot;
+`request.unpack` moves it out. A request channel creates distinct sender and
+receiver types. `channel.send.request.i64` transfers the request to the queue
+only on `Sent`, retains it on `Pending`, and passes the intact owned request
+to the `Closed` successor. Receive creates a request slot on `Value` and
+retains the receiver on `Pending`; `close.request` closes the nested right.
+The exact capability verifier checks these transitions with one dense slot
+for the request's known single right. Hand-built Core interpreter tests cover
+queue transfer, unpack and completion, closed-send recovery, a child service
+that waits for a request and completes its parent's reply, and rejected
+implicit loss. Native request code generation and source syntax are still
+open. This concrete layout does not establish the general nested aggregate
+capability rule.

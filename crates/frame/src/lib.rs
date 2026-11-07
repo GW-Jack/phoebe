@@ -257,6 +257,8 @@ pub fn suspendable_functions(program: &Program) -> Result<Vec<bool>, String> {
                     block.terminator,
                     Terminator::ChannelSend { .. }
                         | Terminator::ChannelReceive { .. }
+                        | Terminator::RequestSend { .. }
+                        | Terminator::RequestReceive { .. }
                         | Terminator::ReplyReceive { .. }
                         | Terminator::Yield { .. }
                 )
@@ -316,6 +318,8 @@ pub fn analyze(program: &Program) -> Result<Vec<FunctionFrame>, String> {
                 block.terminator,
                 Terminator::ChannelSend { .. }
                     | Terminator::ChannelReceive { .. }
+                    | Terminator::RequestSend { .. }
+                    | Terminator::RequestReceive { .. }
                     | Terminator::ReplyReceive { .. }
                     | Terminator::Yield { .. }
             ) {
@@ -489,6 +493,39 @@ fn terminator_live(function: &Function, block_id: usize, incoming: &[Live]) -> L
         Terminator::ReplyNew { success, failure } => {
             edge(*success, None);
             edge(*failure, None);
+        }
+        Terminator::RequestChannelNew {
+            capacity,
+            success,
+            failure,
+        } => {
+            edge(*success, None);
+            edge(*failure, None);
+            live.values[capacity.0] = true;
+        }
+        Terminator::RequestUnpack { request, next } => {
+            edge(*next, None);
+            live.values[request.0] = true;
+        }
+        Terminator::RequestSend {
+            sender,
+            request,
+            sent,
+            closed,
+        } => {
+            edge(*sent, None);
+            edge(*closed, None);
+            live.values[sender.0] = true;
+            live.values[request.0] = true;
+        }
+        Terminator::RequestReceive {
+            receiver,
+            value,
+            end,
+        } => {
+            edge(*value, None);
+            edge(*end, None);
+            live.values[receiver.0] = true;
         }
         Terminator::Fork {
             source,

@@ -39,6 +39,9 @@ pub enum Type {
     ReceiverI64,
     ReplyToI64,
     ReplyReceiverI64,
+    RequestI64,
+    RequestSenderI64,
+    RequestReceiverI64,
     ResourceError,
 }
 
@@ -53,6 +56,7 @@ pub enum Value {
     Receiver(Token),
     ReplyTo(ReplyToken),
     ReplyReceiver(ReplyReceiverToken),
+    Request(i64, ReplyToken),
     ResourceError(ResourceError),
 }
 
@@ -114,6 +118,8 @@ pub enum Operation {
     Store(PlaceId, ValueId),
     CloseHandle(ValueId),
     CloseReply(ValueId),
+    PackRequest { value: ValueId, right: ValueId },
+    CloseRequest(ValueId),
 }
 
 #[derive(Clone, Debug)]
@@ -161,6 +167,26 @@ pub enum Terminator {
     ReplyNew {
         success: BlockId,
         failure: BlockId,
+    },
+    RequestChannelNew {
+        capacity: ValueId,
+        success: BlockId,
+        failure: BlockId,
+    },
+    RequestUnpack {
+        request: ValueId,
+        next: BlockId,
+    },
+    RequestSend {
+        sender: ValueId,
+        request: ValueId,
+        sent: BlockId,
+        closed: BlockId,
+    },
+    RequestReceive {
+        receiver: ValueId,
+        value: BlockId,
+        end: BlockId,
     },
     Fork {
         source: ValueId,

@@ -138,6 +138,9 @@ fn compile_poll_module<M: Module>(
     export_symbol: Option<&str>,
 ) -> Result<(FuncId, FrameWords, String), String> {
     core::verify(program)?;
+    if codegen::contains_request_ir(program) {
+        return Err("native request-message lowering is not implemented".into());
+    }
     let (root, entry_function) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
@@ -1243,6 +1246,12 @@ fn compile_poll_module<M: Module>(
                             .position(|slot| slot.block.0 == block_id)
                             .expect("verified retry point");
                         builder.ins().jump(retry_blocks[index], &[]);
+                    }
+                    Terminator::RequestChannelNew { .. }
+                    | Terminator::RequestUnpack { .. }
+                    | Terminator::RequestSend { .. }
+                    | Terminator::RequestReceive { .. } => {
+                        return Err("native request-message lowering is not implemented".into());
                     }
                 }
             }

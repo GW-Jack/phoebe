@@ -106,8 +106,13 @@ handle fork's success edge. Both fork edges require the source right; a failed
 fork leaves it live. It checks
 their parameter types and exact capability disposition on return. This
 integration covers scalar `I64` channels, endpoint closes, scalar traffic,
-retry suspension, and Core task spawn. Request/reply creation, nested
-capability slots, native frames, and cleanup metadata remain separate work.
+retry suspension, Core task spawn, and one-shot reply creation and transfer.
+Checked Core also has a concrete `RequestI64` value containing one reply
+right. Pack and unpack move its one capability slot, request send transfers
+it only on `Sent`, and receive creates it only on `Value`. A closed send
+passes an intact request slot to its successor. This layout is a first
+executable nested-capability case; general aggregate slot paths, native
+request code generation, and source request syntax remain separate work.
 
 | Operation | Required task ownership | Success transition | Other edge |
 | --- | --- | --- | --- |

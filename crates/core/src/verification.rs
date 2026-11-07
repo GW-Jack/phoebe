@@ -160,7 +160,13 @@ fn op_type(
             Ok(None)
         }
         Operation::CloseHandle(value) => {
-            if !matches!(ty(*value), Type::SenderI64 | Type::ReceiverI64) {
+            if !matches!(
+                ty(*value),
+                Type::SenderI64
+                    | Type::ReceiverI64
+                    | Type::RequestSenderI64
+                    | Type::RequestReceiverI64
+            ) {
                 return Err("close.handle requires a channel endpoint".into());
             }
             Ok(None)
@@ -168,6 +174,18 @@ fn op_type(
         Operation::CloseReply(value) => {
             if !matches!(ty(*value), Type::ReplyToI64 | Type::ReplyReceiverI64) {
                 return Err("close.reply requires a reply capability".into());
+            }
+            Ok(None)
+        }
+        Operation::PackRequest { value, right } => {
+            if ty(*value) != Type::I64 || ty(*right) != Type::ReplyToI64 {
+                return Err("request pack requires I64 and ReplyTo<I64>".into());
+            }
+            Ok(Some(Type::RequestI64))
+        }
+        Operation::CloseRequest(value) => {
+            if ty(*value) != Type::RequestI64 {
+                return Err("close.request requires Request<I64>".into());
             }
             Ok(None)
         }
@@ -208,8 +226,10 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         Operation::Variant(_, _, payload) => payload.iter().copied().collect(),
         Operation::Product(_, fields) => fields.clone(),
         Operation::Field(value, _) => vec![*value],
+        Operation::PackRequest { value, right } => vec![*value, *right],
         Operation::CloseHandle(a)
         | Operation::CloseReply(a)
+        | Operation::CloseRequest(a)
         | Operation::Neg(a)
         | Operation::PlaceInit(_, a)
         | Operation::Store(_, a)
@@ -408,6 +428,15 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                     success, failure, ..
                 } => vec![success.0, failure.0],
                 Terminator::ReplyNew { success, failure } => vec![success.0, failure.0],
+                Terminator::RequestChannelNew {
+                    success, failure, ..
+                } => vec![success.0, failure.0],
+                Terminator::RequestUnpack { request, next } => {
+                    value_use(&mut state, *request, true, span)?;
+                    vec![next.0]
+                }
+                Terminator::RequestSend { sent, closed, .. } => vec![sent.0, closed.0],
+                Terminator::RequestReceive { value, end, .. } => vec![value.0, end.0],
                 Terminator::Fork {
                     success, failure, ..
                 } => vec![success.0, failure.0],
@@ -497,6 +526,7 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
             | Type::ReceiverI64
             | Type::ReplyToI64
             | Type::ReplyReceiverI64 => true,
+            Type::RequestI64 | Type::RequestSenderI64 | Type::RequestReceiverI64 => true,
         }) {
             return Err("invalid variant payload type".into());
         }
@@ -512,7 +542,10 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                     | Type::SenderI64
                     | Type::ReceiverI64
                     | Type::ReplyToI64
-                    | Type::ReplyReceiverI64 => true,
+                    | Type::ReplyReceiverI64
+                    | Type::RequestI64
+                    | Type::RequestSenderI64
+                    | Type::RequestReceiverI64 => true,
                 }
             {
                 return Err("invalid product field".into());
@@ -586,6 +619,9 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                                     | Type::ReceiverI64
                                     | Type::ReplyToI64
                                     | Type::ReplyReceiverI64
+                                    | Type::RequestI64
+                                    | Type::RequestSenderI64
+                                    | Type::RequestReceiverI64
                                     | Type::ResourceError
                             ))
                     {
@@ -658,6 +694,36 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                         ));
                     }
                     vec![*success, *failure]
+                }
+                Terminator::RequestChannelNew {
+                    success, failure, ..
+                } => {
+                    if success == failure {
+                        return Err(format!(
+                            "{}: request creation edges must be distinct",
+                            function.name
+                        ));
+                    }
+                    vec![*success, *failure]
+                }
+                Terminator::RequestUnpack { next, .. } => vec![*next],
+                Terminator::RequestSend { sent, closed, .. } => {
+                    if sent == closed {
+                        return Err(format!(
+                            "{}: request send edges must be distinct",
+                            function.name
+                        ));
+                    }
+                    vec![*sent, *closed]
+                }
+                Terminator::RequestReceive { value, end, .. } => {
+                    if value == end {
+                        return Err(format!(
+                            "{}: request receive edges must be distinct",
+                            function.name
+                        ));
+                    }
+                    vec![*value, *end]
                 }
                 Terminator::Fork {
                     success, failure, ..
@@ -936,6 +1002,80 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                         ));
                     }
                 }
+                Terminator::RequestChannelNew {
+                    capacity,
+                    success,
+                    failure,
+                } => {
+                    check_use(*capacity, block_id, end)?;
+                    let params = &function.blocks[success.0].params;
+                    let errors = &function.blocks[failure.0].params;
+                    if function.value_types[capacity.0] != Type::I64
+                        || params.len() != 2
+                        || function.value_types[params[0].0] != Type::RequestSenderI64
+                        || function.value_types[params[1].0] != Type::RequestReceiverI64
+                        || errors.len() != 1
+                        || function.value_types[errors[0].0] != Type::ResourceError
+                    {
+                        return Err(format!(
+                            "{}: request channel creation edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
+                Terminator::RequestUnpack { request, next } => {
+                    check_use(*request, block_id, end)?;
+                    let params = &function.blocks[next.0].params;
+                    if function.value_types[request.0] != Type::RequestI64
+                        || params.len() != 2
+                        || function.value_types[params[0].0] != Type::I64
+                        || function.value_types[params[1].0] != Type::ReplyToI64
+                    {
+                        return Err(format!(
+                            "{}: request unpack edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
+                Terminator::RequestSend {
+                    sender,
+                    request,
+                    sent,
+                    closed,
+                } => {
+                    check_use(*sender, block_id, end)?;
+                    check_use(*request, block_id, end)?;
+                    let returned = &function.blocks[closed.0].params;
+                    if function.value_types[sender.0] != Type::RequestSenderI64
+                        || function.value_types[request.0] != Type::RequestI64
+                        || !function.blocks[sent.0].params.is_empty()
+                        || returned.len() != 1
+                        || function.value_types[returned[0].0] != Type::RequestI64
+                    {
+                        return Err(format!(
+                            "{}: request send edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
+                Terminator::RequestReceive {
+                    receiver,
+                    value,
+                    end: end_block,
+                } => {
+                    check_use(*receiver, block_id, end)?;
+                    let params = &function.blocks[value.0].params;
+                    if function.value_types[receiver.0] != Type::RequestReceiverI64
+                        || params.len() != 1
+                        || function.value_types[params[0].0] != Type::RequestI64
+                        || !function.blocks[end_block.0].params.is_empty()
+                    {
+                        return Err(format!(
+                            "{}: request receive edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
                 Terminator::Fork {
                     source,
                     success,
@@ -943,8 +1083,13 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                 } => {
                     check_use(*source, block_id, end)?;
                     let ty = function.value_types[source.0];
-                    if !matches!(ty, Type::SenderI64 | Type::ReceiverI64)
-                        || function.blocks[success.0].params.len() != 1
+                    if !matches!(
+                        ty,
+                        Type::SenderI64
+                            | Type::ReceiverI64
+                            | Type::RequestSenderI64
+                            | Type::RequestReceiverI64
+                    ) || function.blocks[success.0].params.len() != 1
                         || function.value_types[function.blocks[success.0].params[0].0] != ty
                         || function.blocks[failure.0].params.len() != 1
                         || function.value_types[function.blocks[failure.0].params[0].0]
@@ -1110,7 +1255,13 @@ pub fn verify(program: &Program) -> Result<(), String> {
 fn is_capability(ty: Type) -> bool {
     matches!(
         ty,
-        Type::SenderI64 | Type::ReceiverI64 | Type::ReplyToI64 | Type::ReplyReceiverI64
+        Type::SenderI64
+            | Type::ReceiverI64
+            | Type::ReplyToI64
+            | Type::ReplyReceiverI64
+            | Type::RequestI64
+            | Type::RequestSenderI64
+            | Type::RequestReceiverI64
     )
 }
 
@@ -1168,8 +1319,19 @@ pub(super) fn capability_graph(
             let mut actions = Vec::new();
             for instruction in &block.instructions {
                 match &instruction.operation {
-                    Operation::CloseHandle(value) | Operation::CloseReply(value) => {
+                    Operation::CloseHandle(value)
+                    | Operation::CloseReply(value)
+                    | Operation::CloseRequest(value) => {
                         actions.push(CapAction::Close(slot(*value)))
+                    }
+                    Operation::PackRequest { right, .. } => {
+                        let packed = instruction
+                            .result
+                            .expect("verified request pack has result");
+                        actions.push(CapAction::Move {
+                            from: slot(*right),
+                            to: slot(packed),
+                        });
                     }
                     Operation::Call(_, args) => {
                         for arg in args {
@@ -1249,6 +1411,86 @@ pub(super) fn capability_graph(
                             }],
                         ),
                         edge(CapTarget::Block(failure.0), vec![]),
+                    ]
+                }
+                Terminator::RequestChannelNew {
+                    success, failure, ..
+                } => {
+                    let params = &function.blocks[success.0].params;
+                    vec![
+                        edge(
+                            CapTarget::Block(success.0),
+                            vec![CapAction::CreatePair {
+                                first: slot(params[0]),
+                                second: slot(params[1]),
+                            }],
+                        ),
+                        edge(CapTarget::Block(failure.0), vec![]),
+                    ]
+                }
+                Terminator::RequestUnpack { request, next } => {
+                    let params = &function.blocks[next.0].params;
+                    vec![edge(
+                        CapTarget::Block(next.0),
+                        vec![CapAction::Move {
+                            from: slot(*request),
+                            to: slot(params[1]),
+                        }],
+                    )]
+                }
+                Terminator::RequestSend {
+                    sender,
+                    request,
+                    sent,
+                    closed,
+                } => {
+                    let returned = function.blocks[closed.0].params[0];
+                    vec![
+                        edge(
+                            CapTarget::Block(sent.0),
+                            vec![
+                                CapAction::Require(slot(*sender)),
+                                CapAction::Transfer(slot(*request)),
+                            ],
+                        ),
+                        edge(
+                            CapTarget::Block(closed.0),
+                            vec![
+                                CapAction::Require(slot(*sender)),
+                                CapAction::Move {
+                                    from: slot(*request),
+                                    to: slot(returned),
+                                },
+                            ],
+                        ),
+                        edge(
+                            CapTarget::Retry,
+                            vec![
+                                CapAction::Require(slot(*sender)),
+                                CapAction::Require(slot(*request)),
+                            ],
+                        ),
+                    ]
+                }
+                Terminator::RequestReceive {
+                    receiver,
+                    value,
+                    end,
+                } => {
+                    let received = function.blocks[value.0].params[0];
+                    vec![
+                        edge(
+                            CapTarget::Block(value.0),
+                            vec![
+                                CapAction::Require(slot(*receiver)),
+                                CapAction::Create(slot(received)),
+                            ],
+                        ),
+                        edge(
+                            CapTarget::Block(end.0),
+                            vec![CapAction::Require(slot(*receiver))],
+                        ),
+                        edge(CapTarget::Retry, vec![CapAction::Require(slot(*receiver))]),
                     ]
                 }
                 Terminator::Fork {

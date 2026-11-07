@@ -136,7 +136,10 @@ success and task-limit rejection. Checked Core and source lowering use the
 Rust kernel operations through the interpreter and generated Cranelift code.
 Source tests cover reply delivery across a spawned task, cancellation,
 lexical close, and resource failure in the interpreter, JIT, and standalone
-executable. Arbitrary source messages carrying `ReplyTo` remain open.
+executable. Hand-built checked Core now interprets the runtime's concrete
+request channel and request value, transferring the nested `ReplyTo` through
+enqueue, dequeue, and unpack. Native request lowering and arbitrary source
+messages carrying `ReplyTo` remain open.
 The C ABI creation call publishes both output tokens only on
 success; native generated code loads them only on that edge. Standalone builds
 link `libphoebe_runtime.a`. Buck2 supplies it through the CLI's resource map;

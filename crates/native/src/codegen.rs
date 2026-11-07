@@ -2,6 +2,17 @@ use super::*;
 
 use super::runtime_imports::declare_reply_imports;
 
+pub(super) fn contains_request_ir(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function.value_types.iter().any(|ty| {
+            matches!(
+                ty,
+                Type::RequestI64 | Type::RequestSenderI64 | Type::RequestReceiverI64
+            )
+        })
+    })
+}
+
 /// Phoebe currently flattens only integer and pointer-shaped return parts.
 /// Cranelift's supported host conventions allow eight such return registers
 /// on AArch64 and two on x86-64. Other hosts conservatively use two.
@@ -93,7 +104,10 @@ impl AbiShapes {
             | Type::ReceiverI64
             | Type::ReplyToI64
             | Type::ReplyReceiverI64
+            | Type::RequestSenderI64
+            | Type::RequestReceiverI64
             | Type::ResourceError => vec![types::I64],
+            Type::RequestI64 => vec![types::I64, types::I64],
         }
     }
 }
@@ -126,6 +140,9 @@ pub(super) fn compile_functions<M: Module>(
     // define every non-suspendable function.
     selected: Option<&[bool]>,
 ) -> Result<Vec<(FuncId, Signature)>, String> {
+    if contains_request_ir(program) {
+        return Err("native request-message lowering is not implemented".into());
+    }
     let uses_runtime = context_functions
         .iter()
         .enumerate()
@@ -412,6 +429,12 @@ pub(super) fn compile_functions<M: Module>(
                         success, failure, ..
                     } => vec![success.0, failure.0],
                     Terminator::ReplyNew { success, failure } => vec![success.0, failure.0],
+                    Terminator::RequestChannelNew {
+                        success, failure, ..
+                    } => vec![success.0, failure.0],
+                    Terminator::RequestUnpack { next, .. } => vec![next.0],
+                    Terminator::RequestSend { sent, closed, .. } => vec![sent.0, closed.0],
+                    Terminator::RequestReceive { value, end, .. } => vec![value.0, end.0],
                     Terminator::Fork {
                         success, failure, ..
                     } => vec![success.0, failure.0],
@@ -602,6 +625,9 @@ pub(super) fn compile_functions<M: Module>(
                                 })
                                 .collect(),
                         ),
+                        Operation::PackRequest { .. } | Operation::CloseRequest(_) => {
+                            return Err("native request-message lowering is not implemented".into());
+                        }
                     };
                     if let Some(result) = instruction.result {
                         values[result.0] = value;
@@ -1021,6 +1047,12 @@ pub(super) fn compile_functions<M: Module>(
                     }
                     Terminator::ReplyReceive { .. } => {
                         return Err("native reply receive requires retained task frames".into());
+                    }
+                    Terminator::RequestChannelNew { .. }
+                    | Terminator::RequestUnpack { .. }
+                    | Terminator::RequestSend { .. }
+                    | Terminator::RequestReceive { .. } => {
+                        return Err("native request-message lowering is not implemented".into());
                     }
                 }
             }

@@ -236,6 +236,15 @@ rust_test(
 )
 
 rust_test(
+    name = "core_requests_tests",
+    crate_root = "tests/core_requests.rs",
+    srcs = ["tests/core_requests.rs"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
     name = "source_replies_tests",
     crate_root = "tests/source_replies.rs",
     srcs = ["tests/source_replies.rs", "examples/reply_exchange.phoebe"],
