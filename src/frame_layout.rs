@@ -7,6 +7,7 @@ use crate::core::{
     self, BlockId, CallArg, Function, FunctionId, Operation, PlaceId, Program, Terminator, ValueId,
 };
 use std::fmt::Write;
+use std::ops::Range;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SuspensionPoint {
@@ -25,6 +26,92 @@ pub struct FunctionFrame {
     /// Union of all point-local spill sets. An empty set needs no value area.
     pub value_slots: Vec<ValueId>,
     pub place_slots: Vec<PlaceId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WordSlot<T> {
+    pub id: T,
+    pub words: Range<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameWords {
+    pub function: FunctionId,
+    /// Word 0 is the program counter; this range starts at word 1.
+    pub result: Range<usize>,
+    pub values: Vec<WordSlot<ValueId>>,
+    pub places: Vec<WordSlot<PlaceId>>,
+    pub total_words: usize,
+}
+
+/// Assign physical word ranges using one backend-supplied ABI shape width.
+/// Every component occupies one stable word, including a widened Bool.
+pub fn word_layout(
+    program: &Program,
+    frame: &FunctionFrame,
+    width: impl Fn(core::Type) -> usize,
+) -> Result<FrameWords, String> {
+    let function = program
+        .functions
+        .get(frame.function.0)
+        .ok_or("invalid frame function")?;
+    let mut next = 1usize;
+    let mut reserve = |ty| -> Result<Range<usize>, String> {
+        let count = width(ty);
+        if count == 0 {
+            return Err("zero-width native frame value".into());
+        }
+        let end = next
+            .checked_add(count)
+            .ok_or("native frame size overflow")?;
+        let words = next..end;
+        next = end;
+        Ok(words)
+    };
+    let result = reserve(function.return_type)?;
+    let values = frame
+        .value_slots
+        .iter()
+        .map(|id| {
+            Ok(WordSlot {
+                id: *id,
+                words: reserve(
+                    *function
+                        .value_types
+                        .get(id.0)
+                        .ok_or("invalid frame value slot")?,
+                )?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let places = frame
+        .place_slots
+        .iter()
+        .map(|id| {
+            Ok(WordSlot {
+                id: *id,
+                words: reserve(
+                    *function
+                        .place_types
+                        .get(id.0)
+                        .ok_or("invalid frame place slot")?,
+                )?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if next
+        .checked_mul(std::mem::size_of::<i64>())
+        .is_none_or(|bytes| bytes > i32::MAX as usize)
+    {
+        return Err("native frame exceeds addressable fixed offsets".into());
+    }
+    Ok(FrameWords {
+        function: frame.function,
+        result,
+        values,
+        places,
+        total_words: next,
+    })
 }
 
 #[derive(Clone, PartialEq, Eq)]

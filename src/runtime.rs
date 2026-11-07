@@ -253,8 +253,9 @@ struct StandaloneRootTask {
     entry: extern "C" fn(*mut NativeCallContext) -> i64,
 }
 
-/// Poll status: 0 ready, 1 pending, 255 fault. A poll function writes its
-/// result to frame word 1 only on Ready. Word 0 is its program counter.
+/// Poll status: 0 ready, 1 pending, 255 fault. This scheduler task runs an
+/// I64-returning poll function, which writes word 1 only on Ready. Word 0 is
+/// its program counter; internal functions may reserve wider result areas.
 pub type NativePollEntry = extern "C" fn(*mut NativeCallContext, *mut i64) -> i64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -282,7 +283,7 @@ impl NativePollTask {
     ///
     /// # Safety
     ///
-    /// `entry` must be verified generated code using the v1 poll ABI and must
+    /// `entry` must be verified I64-returning generated code using the v1 poll ABI and must
     /// access only the `frame_words` allocated words. It must preserve the
     /// frame's ownership invariants when returning Pending or Ready.
     pub unsafe fn new(

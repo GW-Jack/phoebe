@@ -21,6 +21,7 @@ use cranelift_native::builder as native_builder;
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use crate::core::{self, CallArg, MatchBinding, Operation, Program, Terminator, Type};
+use crate::frame_layout::{self, FrameWords};
 use crate::runtime::{self, Context, NativeCallContext, Scheduler, ScopeLimits, Task};
 use crate::syntax::ParamMode;
 
@@ -393,6 +394,17 @@ impl AbiShapes {
             Type::SenderI64 | Type::ReceiverI64 | Type::ResourceError => vec![types::I64],
         }
     }
+}
+
+/// Physical word ranges for the retained functions, derived from the same
+/// flattened shapes used by direct Cranelift calls and block arguments.
+pub fn frame_word_layouts(program: &Program) -> Result<Vec<FrameWords>, String> {
+    let frames = frame_layout::analyze(program)?;
+    let shapes = AbiShapes::new(program, types::I64);
+    frames
+        .iter()
+        .map(|frame| frame_layout::word_layout(program, frame, |ty| shapes.types(ty).len()))
+        .collect()
 }
 
 fn compile_functions<M: Module>(

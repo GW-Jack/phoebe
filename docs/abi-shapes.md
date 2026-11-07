@@ -32,6 +32,11 @@ pending receive leaves its receiver with the caller and does not write the
 output value. Generated code must retain those operands in a task frame and
 return to the scheduler before it can use the shims. The current Cranelift
 lowering does not emit these calls.
+The retained-frame plan now assigns one `I64` word per flattened component
+using these same shapes. A suspendable function's frame reserves word 0 for
+its program counter, enough words for its return shape, then only its live
+value and place components. `docs/native-frames.md` records the poll ABI and
+the remaining code-generation work.
 
 For a product, `product` gathers existing SSA components and `field` selects
 the complete component range of one field. Neither operation creates a native

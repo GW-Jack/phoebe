@@ -143,6 +143,10 @@ The runtime now owns a stable word-array frame for a versioned native poll
 entry. Synthetic poll functions exercise yield/resume and receive park/wake
 through the real scheduler and ABI. Cranelift has not generated a poll
 function yet, so native source channel traffic remains unsupported.
+The compiler now assigns physical word ranges from the existing flattened
+ABI shapes. A suspendable function reserves as many result words as its
+return type needs, followed only by values and places live across a pending
+operation. The native backend does not consume those ranges yet.
 
 ## Commands
 

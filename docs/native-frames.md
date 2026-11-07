@@ -50,8 +50,13 @@ layout, not yet native code generation.
 
 The v1 poll ABI uses status `0` for Ready, `1` for Pending, and `255` for fault.
 The frame is a stable array of `I64` words: word 0 is the program counter,
-word 1 is the result written only on Ready, and later words are the generated
-payload layout. The runtime allocates and zeroes it before execution and
+words starting at 1 hold the flattened result, and later words hold the
+generated payload. A root task returns `I64`, so its result is word 1.
+The compiler's physical layout uses the existing ABI shape widths for each
+live value and place, and rejects a layout beyond fixed address offsets.
+For the source exchange, `exchange` reserves two result words for
+`Result<I64, ResourceError>`; the root `main` reserves one.
+The runtime allocates and zeroes the root frame before execution and
 keeps it in the task record across Pending. The standalone entry point
 `phoebe_rt_v1_main_poll` runs a zero-argument poll function under a bounded
 scope. A synthetic poll test yields and resumes at the same frame address;
