@@ -151,11 +151,7 @@ fn checked_core_spawn_transfers_sender_and_wakes_parent_receiver() {
             .unwrap(),
         42
     );
-    assert!(
-        native::run(&program, "main", &[])
-            .unwrap_err()
-            .contains("retained task frames")
-    );
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
 }
 
 #[test]

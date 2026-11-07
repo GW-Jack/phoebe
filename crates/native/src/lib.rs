@@ -26,7 +26,7 @@ use phoebe_runtime::{self as runtime, Context, NativeCallContext, Scheduler, Sco
 use phoebe_syntax::syntax::ParamMode;
 
 mod poll;
-pub use poll::compile_poll_leaf_jit;
+pub use poll::{PollExecutable, PollLeafExecutable, compile_poll_jit, compile_poll_leaf_jit};
 
 pub struct JitExecutable {
     module: JITModule,
@@ -192,7 +192,51 @@ impl Task for NativeRootTask {
 }
 
 pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
-    compile_jit(program, name)?.run(args)
+    run_with_limits(program, name, args, ScopeLimits::default())
+}
+
+pub fn run_with_limits(
+    program: &Program,
+    name: &str,
+    args: &[i64],
+    limits: ScopeLimits,
+) -> Result<i64, String> {
+    let (id, function) = program
+        .function(name)
+        .ok_or_else(|| format!("unknown function `{name}`"))?;
+    if !frame_layout::suspendable_functions(program)?[id.0] {
+        return compile_jit(program, name)?.run_with_limits(args, limits);
+    }
+    if function.return_type != Type::I64
+        || function
+            .param_modes
+            .iter()
+            .any(|mode| *mode != ParamMode::Own)
+        || function.blocks[0]
+            .params
+            .iter()
+            .any(|param| function.value_types[param.0] != Type::I64)
+    {
+        return Err("external native entry requires an owned I64 signature".into());
+    }
+    if args.len() != function.blocks[0].params.len() {
+        return Err(format!(
+            "`{name}` expects {} arguments, got {}",
+            function.blocks[0].params.len(),
+            args.len()
+        ));
+    }
+    let executable = compile_poll_jit(program, name)?;
+    // The executable owns the code until the scheduler and all child tasks exit.
+    let mut root = unsafe {
+        runtime::NativePollTask::new(executable.entry(), executable.layout().total_words)
+    }
+    .map_err(|error| error.to_string())?;
+    for (arg, slot) in args.iter().zip(&executable.layout().entry_params) {
+        root.frame_mut()[slot.words.start] = *arg;
+    }
+    let mut scheduler = Scheduler::new(root, limits.tasks, limits.channels, limits.replies)?;
+    scheduler.run()
 }
 
 pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
@@ -226,6 +270,11 @@ pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
 /// Print the pre-legalization Cranelift IR that Phoebe submits for each function.
 pub fn clif(program: &Program) -> Result<String, String> {
     core::verify(program)?;
+    if let Some((main, _)) = program.function("main")
+        && frame_layout::suspendable_functions(program)?[main.0]
+    {
+        return Ok(compile_poll_jit(program, "main")?.clif().to_owned());
+    }
     let mut flags = settings::builder();
     flags
         .set("use_colocated_libcalls", "false")

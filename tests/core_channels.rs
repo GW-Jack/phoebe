@@ -117,11 +117,7 @@ fn checked_core_send_and_receive_preserve_rights_and_value() {
     let printed = program.to_string();
     assert!(printed.contains("channel.send.i64"));
     assert!(printed.contains("channel.receive.i64"));
-    assert!(
-        native::run(&program, "main", &[])
-            .unwrap_err()
-            .contains("retained task frames")
-    );
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
 }
 
 #[test]

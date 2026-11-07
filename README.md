@@ -9,9 +9,9 @@ The cooperative runtime kernel exercises scope-owned task frames,
 bounded `I64` and request channels, and one-shot `ReplyTo<I64>` rights;
 `docs/runtime-kernel.md` states its boundary.
 Checked Core and source programs can create and close scalar channels in the
-interpreter, Cranelift JIT, and standalone executables. The interpreter also
-runs checked Core channel traffic and source `spawn`, `send`, and `receive`;
-native retained task frames remain open.
+interpreter, Cranelift JIT, and standalone executables. The interpreter and
+Cranelift JIT run the source `spawn`, `send`, and `receive` exchange with
+retained frames and bounded channels. Standalone retained code remains open.
 Standalone channel builds link
 the `libphoebe.a` runtime archive produced by `cargo build --lib`; a packaged
 compiler must ship the archive beside its executable.
@@ -51,6 +51,7 @@ cargo run -- run examples/try.phoebe
 cargo run -- run examples/nested_result.phoebe
 cargo run -- run examples/nested_variant.phoebe
 cargo run -- run examples/copy.phoebe
+cargo run -- run examples/channel_exchange.phoebe
 cargo run -- run examples/multi_module
 cargo run -- cost examples/copy.phoebe
 cargo run -- clif examples/cost/identity.phoebe

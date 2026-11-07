@@ -1,18 +1,19 @@
-//! Retained native code path for verified leaves with channel retries.
-//! The accepted Core subset is deliberately explicit until call continuations
-//! and task spawn have frame protocols of their own.
+//! Retained native code path for checked scalar channel traffic, same-task
+//! calls, and spawned poll children.
 
 use super::*;
 use cranelift_frontend::Variable;
 
-pub struct PollLeafExecutable {
+pub struct PollExecutable {
     module: JITModule,
     entry: FuncId,
     layout: FrameWords,
     clif: String,
 }
 
-impl PollLeafExecutable {
+pub type PollLeafExecutable = PollExecutable;
+
+impl PollExecutable {
     pub fn layout(&self) -> &FrameWords {
         &self.layout
     }
@@ -30,73 +31,58 @@ impl PollLeafExecutable {
     }
 }
 
-/// Compile a checked channel leaf, including exact per-point retry spills.
-/// This is an executable stepping stone for the general retained backend.
+/// Compatibility entry for callers that previously compiled a channel leaf.
 pub fn compile_poll_leaf_jit(program: &Program, name: &str) -> Result<PollLeafExecutable, String> {
+    compile_poll_jit(program, name)
+}
+
+/// Compile the reachable retained-call graph from an I64 task entry.
+/// Unsupported operations are rejected before any JIT definition is published.
+pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable, String> {
     core::verify(program)?;
-    let (id, function) = program
+    let (root, entry_function) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
-    if function.return_type != Type::I64
-        || function
-            .param_modes
-            .iter()
-            .any(|mode| *mode != ParamMode::Own)
-        || !function.place_types.is_empty()
-    {
-        return Err(
-            "channel poll leaf requires an I64 result, owned parameters, and no places".into(),
-        );
+    if entry_function.return_type != Type::I64 {
+        return Err("external poll entry requires an I64 result".into());
     }
-    let frames = frame_word_layouts(program)?;
-    let layout = frames
-        .into_iter()
-        .find(|layout| layout.function == id)
-        .ok_or("channel poll leaf has no suspension frame")?;
-    if layout.resumes.is_empty() || layout.resumes.iter().any(|slot| slot.instruction.is_some()) {
-        return Err("channel poll leaf requires only channel retry points".into());
-    }
-    for slot in &layout.resumes {
-        if !matches!(
-            function.blocks[slot.block.0].terminator,
-            Terminator::ChannelReceive { .. } | Terminator::ChannelSend { .. }
-        ) {
-            return Err("channel poll leaf has a non-channel suspension".into());
+    let mut reachable = Vec::new();
+    let mut seen = vec![false; program.functions.len()];
+    let mut pending = vec![root];
+    while let Some(id) = pending.pop() {
+        if seen[id.0] {
+            continue;
         }
-    }
-    for (block_id, block) in function.blocks.iter().enumerate() {
-        for instruction in &block.instructions {
-            if !matches!(
-                instruction.operation,
-                Operation::Const(_)
-                    | Operation::Bool(_)
-                    | Operation::Move(_)
-                    | Operation::Copy(_)
-                    | Operation::Variant(_, _, _)
-                    | Operation::Add(_, _)
-                    | Operation::Sub(_, _)
-                    | Operation::CloseHandle(_)
-            ) {
-                return Err("operation is not yet supported by channel poll leaf".into());
+        seen[id.0] = true;
+        reachable.push(id);
+        for instruction in program.functions[id.0]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+        {
+            if let Operation::Call(child, _) = &instruction.operation {
+                pending.push(*child);
             }
         }
-        if !matches!(
-            block.terminator,
-            Terminator::Return(_)
-                | Terminator::Jump(_, _)
-                | Terminator::Branch { .. }
-                | Terminator::Match { .. }
-                | Terminator::ChannelReceive { .. }
-                | Terminator::ChannelSend { .. }
-        ) || matches!(
-            block.terminator,
-            Terminator::ChannelReceive { .. } | Terminator::ChannelSend { .. }
-        ) && !layout.resumes.iter().any(|slot| slot.block.0 == block_id)
-        {
-            return Err("terminator is not yet supported by channel poll leaf".into());
+        for block in &program.functions[id.0].blocks {
+            if let Terminator::Spawn { child, .. } = block.terminator {
+                pending.push(child);
+            }
         }
     }
-
+    reachable.sort_by_key(|id| id.0);
+    let mut layouts = vec![None; program.functions.len()];
+    for layout in frame_word_layouts(program)? {
+        let index = layout.function.0;
+        layouts[index] = Some(layout);
+    }
+    for id in &reachable {
+        let layout = layouts[id.0]
+            .as_ref()
+            .ok_or("retained poll graph contains a direct-only callee")?;
+        validate_poll_function(&program.functions[id.0], layout, &layouts)?;
+    }
+    let root_layout = layouts[root.0].clone().expect("validated root frame");
     let mut flags = settings::builder();
     flags
         .set("use_colocated_libcalls", "false")
@@ -118,6 +104,18 @@ pub fn compile_poll_leaf_jit(program: &Program, name: &str) -> Result<PollLeafEx
     jit.symbol(
         "phoebe_rt_v1_close_handle_i64",
         runtime::phoebe_close_handle_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_call_poll",
+        runtime::phoebe_call_poll as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_channel_new_i64",
+        runtime::phoebe_channel_new_i64 as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_spawn_poll",
+        runtime::phoebe_spawn_poll as *const u8,
     );
     let mut module = JITModule::new(jit);
     let pointer = module.target_config().pointer_type();
@@ -161,391 +159,879 @@ pub fn compile_poll_leaf_jit(program: &Program, name: &str) -> Result<PollLeafEx
             &close_signature,
         )
         .map_err(|e| e.to_string())?;
+    let mut call_signature = module.make_signature();
+    call_signature.params.extend([
+        AbiParam::new(pointer),
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+        AbiParam::new(types::I64),
+        AbiParam::new(types::I64),
+    ]);
+    call_signature.returns.push(AbiParam::new(types::I64));
+    let call = module
+        .declare_function("phoebe_rt_v1_call_poll", Linkage::Import, &call_signature)
+        .map_err(|e| e.to_string())?;
+    let mut create_signature = module.make_signature();
+    create_signature.params.extend([
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+        AbiParam::new(pointer),
+        AbiParam::new(pointer),
+    ]);
+    create_signature.returns.push(AbiParam::new(types::I64));
+    let create = module
+        .declare_function(
+            "phoebe_rt_v1_channel_new_i64",
+            Linkage::Import,
+            &create_signature,
+        )
+        .map_err(|e| e.to_string())?;
+    let mut spawn_signature = module.make_signature();
+    spawn_signature.params.extend([
+        AbiParam::new(pointer),
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+    ]);
+    spawn_signature.returns.push(AbiParam::new(types::I64));
+    let spawn = module
+        .declare_function("phoebe_rt_v1_spawn_poll", Linkage::Import, &spawn_signature)
+        .map_err(|e| e.to_string())?;
     let mut signature = module.make_signature();
     signature
         .params
         .extend([AbiParam::new(pointer), AbiParam::new(pointer)]);
     signature.returns.push(AbiParam::new(types::I64));
-    let entry = module
-        .declare_function("phoebe_channel_poll_leaf", Linkage::Local, &signature)
-        .map_err(|e| e.to_string())?;
-    let mut ctx = module.make_context();
-    ctx.func.signature = signature;
-    ctx.func.name = UserFuncName::user(0, entry.as_u32());
-    let mut builder_context = FunctionBuilderContext::new();
-    {
-        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_context);
-        let dispatch = builder.create_block();
-        let first = builder.create_block();
-        let fault = builder.create_block();
-        let blocks = function
-            .blocks
-            .iter()
-            .map(|_| builder.create_block())
-            .collect::<Vec<_>>();
-        let resume_blocks = layout
-            .resumes
-            .iter()
-            .map(|_| builder.create_block())
-            .collect::<Vec<_>>();
-        let retry_blocks = layout
-            .resumes
-            .iter()
-            .map(|_| builder.create_block())
-            .collect::<Vec<_>>();
-        builder.append_block_params_for_function_params(dispatch);
-        let bridge = builder.block_params(dispatch)[0];
-        let frame = builder.block_params(dispatch)[1];
-        let variables = function
-            .value_types
-            .iter()
-            .map(|ty| {
-                shapes
-                    .types(*ty)
-                    .into_iter()
-                    .map(|component| builder.declare_var(component))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
+    let mut ids = vec![None; program.functions.len()];
+    for id in &reachable {
+        ids[id.0] = Some(
+            module
+                .declare_function(&format!("phoebe_poll_{}", id.0), Linkage::Local, &signature)
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    let entry = ids[root.0].expect("declared root poll");
+    let mut clif = String::new();
+    for id in reachable {
+        let function = &program.functions[id.0];
+        let layout = layouts[id.0].as_ref().expect("validated poll frame");
+        let function_id = ids[id.0].expect("declared poll function");
+        let mut ctx = module.make_context();
+        ctx.func.signature = signature.clone();
+        ctx.func.name = UserFuncName::user(0, function_id.as_u32());
+        let mut builder_context = FunctionBuilderContext::new();
+        {
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_context);
+            let dispatch = builder.create_block();
+            let first = builder.create_block();
+            let fault = builder.create_block();
+            let blocks = function
+                .blocks
+                .iter()
+                .map(|_| builder.create_block())
+                .collect::<Vec<_>>();
+            let resume_blocks = layout
+                .resumes
+                .iter()
+                .map(|_| builder.create_block())
+                .collect::<Vec<_>>();
+            let retry_blocks = layout
+                .resumes
+                .iter()
+                .map(|_| builder.create_block())
+                .collect::<Vec<_>>();
+            builder.append_block_params_for_function_params(dispatch);
+            let bridge = builder.block_params(dispatch)[0];
+            let frame = builder.block_params(dispatch)[1];
+            let variables = function
+                .value_types
+                .iter()
+                .map(|ty| {
+                    shapes
+                        .types(*ty)
+                        .into_iter()
+                        .map(|component| builder.declare_var(component))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
 
-        builder.switch_to_block(dispatch);
-        let pc = builder
-            .ins()
-            .load(types::I64, MemFlagsData::new(), frame, 0);
-        let initial = builder.ins().icmp_imm_s(IntCC::Equal, pc, 0);
-        let mut check = builder.create_block();
-        builder.ins().brif(initial, first, &[], check, &[]);
-        for (index, slot) in layout.resumes.iter().enumerate() {
-            builder.switch_to_block(check);
-            let valid = builder.ins().icmp_imm_s(IntCC::Equal, pc, slot.pc);
-            let next = if index + 1 == layout.resumes.len() {
-                fault
-            } else {
-                builder.create_block()
-            };
-            builder
+            builder.switch_to_block(dispatch);
+            let pc = builder
                 .ins()
-                .brif(valid, resume_blocks[index], &[], next, &[]);
-            check = next;
-        }
+                .load(types::I64, MemFlagsData::new(), frame, 0);
+            let initial = builder.ins().icmp_imm_s(IntCC::Equal, pc, 0);
+            let mut check = builder.create_block();
+            builder.ins().brif(initial, first, &[], check, &[]);
+            for (index, slot) in layout.resumes.iter().enumerate() {
+                builder.switch_to_block(check);
+                let valid = builder.ins().icmp_imm_s(IntCC::Equal, pc, slot.pc);
+                let next = if index + 1 == layout.resumes.len() {
+                    fault
+                } else {
+                    builder.create_block()
+                };
+                builder
+                    .ins()
+                    .brif(valid, resume_blocks[index], &[], next, &[]);
+                check = next;
+            }
 
-        builder.switch_to_block(first);
-        for slot in &layout.entry_params {
-            load_slot(&mut builder, frame, slot, &variables, &shapes, function);
-        }
-        builder.ins().jump(blocks[0], &[]);
-
-        for (index, point) in layout.resumes.iter().enumerate() {
-            builder.switch_to_block(resume_blocks[index]);
-            for value in &point.values {
-                let slot = layout
-                    .values
-                    .iter()
-                    .find(|slot| slot.id == *value)
-                    .expect("spill slot");
+            builder.switch_to_block(first);
+            for slot in &layout.entry_params {
                 load_slot(&mut builder, frame, slot, &variables, &shapes, function);
             }
-            builder.ins().jump(retry_blocks[index], &[]);
-        }
+            builder.ins().jump(blocks[0], &[]);
 
-        builder.switch_to_block(fault);
-        let fault_code = builder.ins().iconst(types::I64, 255);
-        builder.ins().return_(&[fault_code]);
-
-        let receive_ref = module.declare_func_in_func(receive, builder.func);
-        let send_ref = module.declare_func_in_func(send, builder.func);
-        let close_ref = module.declare_func_in_func(close, builder.func);
-        for (block_id, block) in function.blocks.iter().enumerate() {
-            builder.switch_to_block(blocks[block_id]);
-            for instruction in &block.instructions {
-                let get = |id: core::ValueId, builder: &mut FunctionBuilder| {
-                    variables[id.0]
+            for (index, point) in layout.resumes.iter().enumerate() {
+                builder.switch_to_block(resume_blocks[index]);
+                for value in &point.values {
+                    let slot = layout
+                        .values
                         .iter()
-                        .map(|var| builder.use_var(*var))
-                        .collect::<Vec<_>>()
-                };
-                let result = match &instruction.operation {
-                    Operation::Const(value) => Some(vec![builder.ins().iconst(types::I64, *value)]),
-                    Operation::Bool(value) => {
-                        Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
-                    }
-                    Operation::Move(value) | Operation::Copy(value) => {
-                        Some(get(*value, &mut builder))
-                    }
-                    Operation::Variant(id, tag, payload) => {
-                        let mut parts = vec![builder.ins().iconst(types::I64, *tag as i64)];
-                        if let Some(value) = payload {
-                            for (part, ty) in get(*value, &mut builder)
-                                .into_iter()
-                                .zip(shapes.types(function.value_types[value.0]))
-                            {
-                                parts.push(if ty == types::I8 {
-                                    builder.ins().uextend(types::I64, part)
-                                } else {
-                                    part
-                                });
-                            }
-                        }
-                        while parts.len() < shapes.data[id.0].len() {
-                            parts.push(builder.ins().iconst(types::I64, 0));
-                        }
-                        Some(parts)
-                    }
-                    Operation::Add(a, b) | Operation::Sub(a, b) => {
-                        let a = get(*a, &mut builder)[0];
-                        let b = get(*b, &mut builder)[0];
-                        Some(vec![
-                            if matches!(instruction.operation, Operation::Add(_, _)) {
-                                builder.ins().iadd(a, b)
-                            } else {
-                                builder.ins().isub(a, b)
-                            },
-                        ])
-                    }
-                    Operation::CloseHandle(value) => {
-                        let token = get(*value, &mut builder)[0];
-                        let kind = match function.value_types[value.0] {
-                            Type::SenderI64 => 0,
-                            Type::ReceiverI64 => 1,
-                            _ => unreachable!(),
+                        .find(|slot| slot.id == *value)
+                        .expect("spill slot");
+                    load_slot(&mut builder, frame, slot, &variables, &shapes, function);
+                }
+                if let Some(instruction_id) = point.instruction {
+                    let result = function.blocks[point.block.0].instructions[instruction_id]
+                        .result
+                        .expect("verified call result");
+                    let scratch = layout.call_result.as_ref().expect("call result buffer");
+                    for (part, (var, ty)) in variables[result.0]
+                        .iter()
+                        .zip(shapes.types(function.value_types[result.0]))
+                        .enumerate()
+                    {
+                        let raw = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::new(),
+                            frame,
+                            word_offset(scratch.start + part),
+                        );
+                        let value = if ty == types::I8 {
+                            builder.ins().ireduce(types::I8, raw)
+                        } else {
+                            raw
                         };
-                        let kind = builder.ins().iconst(types::I64, kind);
-                        builder.ins().call(close_ref, &[bridge, token, kind]);
-                        None
-                    }
-                    _ => unreachable!("validated poll operation"),
-                };
-                if let Some(id) = instruction.result {
-                    for (var, value) in variables[id.0].iter().zip(result.expect("result shape")) {
                         builder.def_var(*var, value);
                     }
                 }
+                builder.ins().jump(retry_blocks[index], &[]);
             }
-            match &block.terminator {
-                Terminator::Return(value) => {
-                    let value = builder.use_var(variables[value.0][0]);
-                    builder.ins().store(
-                        MemFlagsData::new(),
-                        value,
-                        frame,
-                        word_offset(layout.result.start),
-                    );
-                    let ready = builder.ins().iconst(types::I64, 0);
-                    builder.ins().return_(&[ready]);
-                }
-                Terminator::Jump(target, args) => {
-                    let values = args
-                        .iter()
-                        .map(|id| {
-                            variables[id.0]
+
+            builder.switch_to_block(fault);
+            let fault_code = builder.ins().iconst(types::I64, 255);
+            builder.ins().return_(&[fault_code]);
+
+            let receive_ref = module.declare_func_in_func(receive, builder.func);
+            let send_ref = module.declare_func_in_func(send, builder.func);
+            let close_ref = module.declare_func_in_func(close, builder.func);
+            let call_ref = module.declare_func_in_func(call, builder.func);
+            let create_ref = module.declare_func_in_func(create, builder.func);
+            let spawn_ref = module.declare_func_in_func(spawn, builder.func);
+            for (block_id, block) in function.blocks.iter().enumerate() {
+                builder.switch_to_block(blocks[block_id]);
+                for (instruction_id, instruction) in block.instructions.iter().enumerate() {
+                    let get = |id: core::ValueId, builder: &mut FunctionBuilder| {
+                        variables[id.0]
+                            .iter()
+                            .map(|var| builder.use_var(*var))
+                            .collect::<Vec<_>>()
+                    };
+                    if let Operation::Call(target, args) = &instruction.operation {
+                        let point_index = layout
+                            .resumes
+                            .iter()
+                            .position(|point| {
+                                point.block.0 == block_id
+                                    && point.instruction == Some(instruction_id)
+                            })
+                            .expect("validated retained call point");
+                        let point = &layout.resumes[point_index];
+                        let child_layout = layouts[target.0].as_ref().expect("poll callee frame");
+                        let child_function = &program.functions[target.0];
+                        let child_id = ids[target.0].expect("declared poll callee");
+                        let child_ref = module.declare_func_in_func(child_id, builder.func);
+                        let child_entry = builder.ins().func_addr(pointer, child_ref);
+                        let owned_args = args
+                            .iter()
+                            .map(|arg| match arg {
+                                CallArg::Value(id) => *id,
+                                _ => unreachable!("validated owned call argument"),
+                            })
+                            .collect::<Vec<_>>();
+                        let (initial_ptr, initial_count) = emit_frame_initial(
+                            &mut builder,
+                            &owned_args,
+                            child_layout,
+                            function,
+                            &variables,
+                            &shapes,
+                            pointer,
+                        )?;
+                        for value in &point.values {
+                            let slot = layout
+                                .values
                                 .iter()
-                                .map(|var| builder.use_var(*var))
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>();
-                    for (param, values) in function.blocks[target.0].params.iter().zip(values) {
-                        for (var, value) in variables[param.0].iter().zip(values) {
+                                .find(|slot| slot.id == *value)
+                                .expect("call spill slot");
+                            for (part, var) in variables[value.0].iter().enumerate() {
+                                let raw = builder.use_var(*var);
+                                let raw = if shapes.types(function.value_types[value.0])[part]
+                                    == types::I8
+                                {
+                                    builder.ins().uextend(types::I64, raw)
+                                } else {
+                                    raw
+                                };
+                                builder.ins().store(
+                                    MemFlagsData::new(),
+                                    raw,
+                                    frame,
+                                    word_offset(slot.words.start + part),
+                                );
+                            }
+                        }
+                        let pc = builder.ins().iconst(types::I64, point.pc);
+                        builder.ins().store(MemFlagsData::new(), pc, frame, 0);
+                        let scratch = layout.call_result.as_ref().expect("call result buffer");
+                        let frame_words = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(child_layout.total_words)
+                                .map_err(|_| "child frame size overflow")?,
+                        );
+                        let initial_count = builder.ins().iconst(types::I64, initial_count);
+                        let result_start = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(scratch.start)
+                                .map_err(|_| "call result offset overflow")?,
+                        );
+                        let result_words = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(shapes.types(child_function.return_type).len())
+                                .map_err(|_| "call result width overflow")?,
+                        );
+                        let call_inst = builder.ins().call(
+                            call_ref,
+                            &[
+                                bridge,
+                                child_entry,
+                                frame_words,
+                                initial_ptr,
+                                initial_count,
+                                result_start,
+                                result_words,
+                            ],
+                        );
+                        let status = builder.inst_results(call_inst)[0];
+                        let accepted = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                        let queued = builder.create_block();
+                        builder.ins().brif(accepted, queued, &[], fault, &[]);
+                        builder.switch_to_block(queued);
+                        let call_code = builder.ins().iconst(types::I64, 3);
+                        builder.ins().return_(&[call_code]);
+                        builder.switch_to_block(retry_blocks[point_index]);
+                        continue;
+                    }
+                    let result = match &instruction.operation {
+                        Operation::Const(value) => {
+                            Some(vec![builder.ins().iconst(types::I64, *value)])
+                        }
+                        Operation::Bool(value) => {
+                            Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
+                        }
+                        Operation::Move(value) | Operation::Copy(value) => {
+                            Some(get(*value, &mut builder))
+                        }
+                        Operation::Variant(id, tag, payload) => {
+                            let mut parts = vec![builder.ins().iconst(types::I64, *tag as i64)];
+                            if let Some(value) = payload {
+                                for (part, ty) in get(*value, &mut builder)
+                                    .into_iter()
+                                    .zip(shapes.types(function.value_types[value.0]))
+                                {
+                                    parts.push(if ty == types::I8 {
+                                        builder.ins().uextend(types::I64, part)
+                                    } else {
+                                        part
+                                    });
+                                }
+                            }
+                            while parts.len() < shapes.data[id.0].len() {
+                                parts.push(builder.ins().iconst(types::I64, 0));
+                            }
+                            Some(parts)
+                        }
+                        Operation::Add(a, b) | Operation::Sub(a, b) => {
+                            let a = get(*a, &mut builder)[0];
+                            let b = get(*b, &mut builder)[0];
+                            Some(vec![
+                                if matches!(instruction.operation, Operation::Add(_, _)) {
+                                    builder.ins().iadd(a, b)
+                                } else {
+                                    builder.ins().isub(a, b)
+                                },
+                            ])
+                        }
+                        Operation::CloseHandle(value) => {
+                            let token = get(*value, &mut builder)[0];
+                            let kind = match function.value_types[value.0] {
+                                Type::SenderI64 => 0,
+                                Type::ReceiverI64 => 1,
+                                _ => unreachable!(),
+                            };
+                            let kind = builder.ins().iconst(types::I64, kind);
+                            builder.ins().call(close_ref, &[bridge, token, kind]);
+                            None
+                        }
+                        _ => unreachable!("validated poll operation"),
+                    };
+                    if let Some(id) = instruction.result {
+                        for (var, value) in
+                            variables[id.0].iter().zip(result.expect("result shape"))
+                        {
                             builder.def_var(*var, value);
                         }
                     }
-                    builder.ins().jump(blocks[target.0], &[]);
                 }
-                Terminator::Branch {
-                    condition,
-                    then_block,
-                    else_block,
-                } => {
-                    let condition = builder.use_var(variables[condition.0][0]);
-                    builder.ins().brif(
-                        condition,
-                        blocks[then_block.0],
-                        &[],
-                        blocks[else_block.0],
-                        &[],
-                    );
-                }
-                Terminator::Match { subject, arms } => {
-                    let Type::Data(data_id) = function.value_types[subject.0] else {
-                        unreachable!()
-                    };
-                    let tag_var = variables[subject.0][0];
-                    let parts = variables[subject.0]
-                        .iter()
-                        .map(|var| builder.use_var(*var))
-                        .collect::<Vec<_>>();
-                    for (tag, arm) in arms.iter().enumerate() {
-                        let adapter = builder.create_block();
-                        let next = if tag + 1 == arms.len() {
-                            builder.ins().jump(adapter, &[]);
-                            None
-                        } else {
-                            let subject_tag = builder.use_var(tag_var);
-                            let equal =
-                                builder
-                                    .ins()
-                                    .icmp_imm_s(IntCC::Equal, subject_tag, tag as i64);
-                            let next = builder.create_block();
-                            builder.ins().brif(equal, adapter, &[], next, &[]);
-                            Some(next)
-                        };
-                        builder.switch_to_block(adapter);
-                        if let Some(param) = function.blocks[arm.target.0].params.first() {
-                            let payload = match arm.binding {
-                                MatchBinding::Discard => unreachable!(),
-                                MatchBinding::Whole => parts.clone(),
-                                MatchBinding::Payload => {
-                                    let ty = program.data[data_id.0].payloads[tag]
-                                        .expect("verified payload");
-                                    shapes
-                                        .types(ty)
-                                        .into_iter()
-                                        .enumerate()
-                                        .map(|(index, ty)| {
-                                            if ty == types::I8 {
-                                                builder.ins().ireduce(types::I8, parts[index + 1])
-                                            } else {
-                                                parts[index + 1]
-                                            }
-                                        })
-                                        .collect()
-                                }
+                match &block.terminator {
+                    Terminator::Return(value) => {
+                        for (part, (var, ty)) in variables[value.0]
+                            .iter()
+                            .zip(shapes.types(function.return_type))
+                            .enumerate()
+                        {
+                            let value = builder.use_var(*var);
+                            let raw = if ty == types::I8 {
+                                builder.ins().uextend(types::I64, value)
+                            } else {
+                                value
                             };
-                            for (var, value) in variables[param.0].iter().zip(payload) {
+                            builder.ins().store(
+                                MemFlagsData::new(),
+                                raw,
+                                frame,
+                                word_offset(layout.result.start + part),
+                            );
+                        }
+                        let ready = builder.ins().iconst(types::I64, 0);
+                        builder.ins().return_(&[ready]);
+                    }
+                    Terminator::Jump(target, args) => {
+                        let values = args
+                            .iter()
+                            .map(|id| {
+                                variables[id.0]
+                                    .iter()
+                                    .map(|var| builder.use_var(*var))
+                                    .collect::<Vec<_>>()
+                            })
+                            .collect::<Vec<_>>();
+                        for (param, values) in function.blocks[target.0].params.iter().zip(values) {
+                            for (var, value) in variables[param.0].iter().zip(values) {
                                 builder.def_var(*var, value);
                             }
                         }
-                        builder.ins().jump(blocks[arm.target.0], &[]);
-                        if let Some(next) = next {
-                            builder.switch_to_block(next);
+                        builder.ins().jump(blocks[target.0], &[]);
+                    }
+                    Terminator::Branch {
+                        condition,
+                        then_block,
+                        else_block,
+                    } => {
+                        let condition = builder.use_var(variables[condition.0][0]);
+                        builder.ins().brif(
+                            condition,
+                            blocks[then_block.0],
+                            &[],
+                            blocks[else_block.0],
+                            &[],
+                        );
+                    }
+                    Terminator::Match { subject, arms } => {
+                        let Type::Data(data_id) = function.value_types[subject.0] else {
+                            unreachable!()
+                        };
+                        let tag_var = variables[subject.0][0];
+                        let parts = variables[subject.0]
+                            .iter()
+                            .map(|var| builder.use_var(*var))
+                            .collect::<Vec<_>>();
+                        for (tag, arm) in arms.iter().enumerate() {
+                            let adapter = builder.create_block();
+                            let next = if tag + 1 == arms.len() {
+                                builder.ins().jump(adapter, &[]);
+                                None
+                            } else {
+                                let subject_tag = builder.use_var(tag_var);
+                                let equal =
+                                    builder
+                                        .ins()
+                                        .icmp_imm_s(IntCC::Equal, subject_tag, tag as i64);
+                                let next = builder.create_block();
+                                builder.ins().brif(equal, adapter, &[], next, &[]);
+                                Some(next)
+                            };
+                            builder.switch_to_block(adapter);
+                            if let Some(param) = function.blocks[arm.target.0].params.first() {
+                                let payload = match arm.binding {
+                                    MatchBinding::Discard => unreachable!(),
+                                    MatchBinding::Whole => parts.clone(),
+                                    MatchBinding::Payload => {
+                                        let ty = program.data[data_id.0].payloads[tag]
+                                            .expect("verified payload");
+                                        shapes
+                                            .types(ty)
+                                            .into_iter()
+                                            .enumerate()
+                                            .map(|(index, ty)| {
+                                                if ty == types::I8 {
+                                                    builder
+                                                        .ins()
+                                                        .ireduce(types::I8, parts[index + 1])
+                                                } else {
+                                                    parts[index + 1]
+                                                }
+                                            })
+                                            .collect()
+                                    }
+                                };
+                                for (var, value) in variables[param.0].iter().zip(payload) {
+                                    builder.def_var(*var, value);
+                                }
+                            }
+                            builder.ins().jump(blocks[arm.target.0], &[]);
+                            if let Some(next) = next {
+                                builder.switch_to_block(next);
+                            }
                         }
                     }
-                }
-                Terminator::ChannelReceive { .. } | Terminator::ChannelSend { .. } => {
-                    let index = layout
-                        .resumes
-                        .iter()
-                        .position(|slot| slot.block.0 == block_id)
-                        .expect("verified retry point");
-                    builder.ins().jump(retry_blocks[index], &[]);
-                }
-                _ => unreachable!("validated poll terminator"),
-            }
-        }
-
-        for (index, point) in layout.resumes.iter().enumerate() {
-            builder.switch_to_block(retry_blocks[index]);
-            let terminator = &function.blocks[point.block.0].terminator;
-            let status = match terminator {
-                Terminator::ChannelReceive { receiver, .. } => {
-                    let token = builder.use_var(variables[receiver.0][0]);
-                    let out = builder
-                        .ins()
-                        .iadd_imm_s(frame, word_offset(layout.result.start) as i64);
-                    let call = builder.ins().call(receive_ref, &[bridge, token, out]);
-                    builder.inst_results(call)[0]
-                }
-                Terminator::ChannelSend {
-                    sender, message, ..
-                } => {
-                    let token = builder.use_var(variables[sender.0][0]);
-                    let message = builder.use_var(variables[message.0][0]);
-                    let call = builder.ins().call(send_ref, &[bridge, token, message]);
-                    builder.inst_results(call)[0]
-                }
-                _ => unreachable!("verified channel retry"),
-            };
-            let pending = builder.create_block();
-            let completed = builder.create_block();
-            let is_pending = builder.ins().icmp_imm_s(IntCC::Equal, status, 1);
-            builder.ins().brif(is_pending, pending, &[], completed, &[]);
-            builder.switch_to_block(pending);
-            for value in &point.values {
-                let slot = layout
-                    .values
-                    .iter()
-                    .find(|slot| slot.id == *value)
-                    .expect("spill slot");
-                for (part, var) in variables[value.0].iter().enumerate() {
-                    let component = builder.use_var(*var);
-                    builder.ins().store(
-                        MemFlagsData::new(),
-                        component,
-                        frame,
-                        word_offset(slot.words.start + part),
-                    );
-                }
-            }
-            let pc = builder.ins().iconst(types::I64, point.pc);
-            builder.ins().store(MemFlagsData::new(), pc, frame, 0);
-            let pending_code = builder.ins().iconst(types::I64, 1);
-            builder.ins().return_(&[pending_code]);
-
-            builder.switch_to_block(completed);
-            let is_success = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
-            let success = builder.create_block();
-            let check_other = builder.create_block();
-            builder
-                .ins()
-                .brif(is_success, success, &[], check_other, &[]);
-            builder.switch_to_block(success);
-            match terminator {
-                Terminator::ChannelReceive { value, .. } => {
-                    let received = builder.ins().load(
-                        types::I64,
-                        MemFlagsData::new(),
-                        frame,
-                        word_offset(layout.result.start),
-                    );
-                    let param = function.blocks[value.0].params[0];
-                    builder.def_var(variables[param.0][0], received);
-                    builder.ins().jump(blocks[value.0], &[]);
-                }
-                Terminator::ChannelSend { sent, .. } => {
-                    builder.ins().jump(blocks[sent.0], &[]);
-                }
-                _ => unreachable!(),
-            }
-            builder.switch_to_block(check_other);
-            let is_terminal = builder.ins().icmp_imm_s(IntCC::Equal, status, 2);
-            let terminal = builder.create_block();
-            builder.ins().brif(is_terminal, terminal, &[], fault, &[]);
-            builder.switch_to_block(terminal);
-            match terminator {
-                Terminator::ChannelReceive { end, .. } => {
-                    builder.ins().jump(blocks[end.0], &[]);
-                }
-                Terminator::ChannelSend {
-                    message, closed, ..
-                } => {
-                    if let Some(param) = function.blocks[closed.0].params.first() {
-                        let message = builder.use_var(variables[message.0][0]);
-                        builder.def_var(variables[param.0][0], message);
+                    Terminator::ChannelNew {
+                        capacity,
+                        success,
+                        failure,
+                    } => {
+                        let sender_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let receiver_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let sender_out = builder.ins().stack_addr(pointer, sender_slot, 0);
+                        let receiver_out = builder.ins().stack_addr(pointer, receiver_slot, 0);
+                        let capacity = builder.use_var(variables[capacity.0][0]);
+                        let created = builder
+                            .ins()
+                            .call(create_ref, &[bridge, capacity, sender_out, receiver_out]);
+                        let status = builder.inst_results(created)[0];
+                        let valid = builder.ins().icmp_imm_s(IntCC::NotEqual, status, 255);
+                        let check = builder.create_block();
+                        builder.ins().brif(valid, check, &[], fault, &[]);
+                        builder.switch_to_block(check);
+                        let succeeded = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                        let created = builder.create_block();
+                        let failed = builder.create_block();
+                        builder.ins().brif(succeeded, created, &[], failed, &[]);
+                        builder.switch_to_block(created);
+                        let sender = builder
+                            .ins()
+                            .stack_load(pointer, types::I64, sender_slot, 0);
+                        let receiver =
+                            builder
+                                .ins()
+                                .stack_load(pointer, types::I64, receiver_slot, 0);
+                        let params = &function.blocks[success.0].params;
+                        builder.def_var(variables[params[0].0][0], sender);
+                        builder.def_var(variables[params[1].0][0], receiver);
+                        builder.ins().jump(blocks[success.0], &[]);
+                        builder.switch_to_block(failed);
+                        let error = function.blocks[failure.0].params[0];
+                        builder.def_var(variables[error.0][0], status);
+                        builder.ins().jump(blocks[failure.0], &[]);
                     }
-                    builder.ins().jump(blocks[closed.0], &[]);
+                    Terminator::Spawn {
+                        child,
+                        args,
+                        success,
+                        failure,
+                    } => {
+                        let child_layout = layouts[child.0].as_ref().expect("poll child frame");
+                        let child_id = ids[child.0].expect("declared poll child");
+                        let child_ref = module.declare_func_in_func(child_id, builder.func);
+                        let child_entry = builder.ins().func_addr(pointer, child_ref);
+                        let (initial_ptr, initial_count) = emit_frame_initial(
+                            &mut builder,
+                            args,
+                            child_layout,
+                            function,
+                            &variables,
+                            &shapes,
+                            pointer,
+                        )?;
+                        let transfers = args
+                            .iter()
+                            .filter(|arg| {
+                                matches!(
+                                    function.value_types[arg.0],
+                                    Type::SenderI64 | Type::ReceiverI64
+                                )
+                            })
+                            .map(|arg| builder.use_var(variables[arg.0][0]))
+                            .collect::<Vec<_>>();
+                        let transfer_count = i64::try_from(transfers.len())
+                            .map_err(|_| "spawn transfer count overflow")?;
+                        let transfer_ptr = if transfers.is_empty() {
+                            builder.ins().iconst(pointer, 0)
+                        } else {
+                            let bytes = u32::try_from(
+                                transfers
+                                    .len()
+                                    .checked_mul(8)
+                                    .ok_or("spawn transfer overflow")?,
+                            )
+                            .map_err(|_| "spawn transfer list exceeds stack slot")?;
+                            let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                                StackSlotKind::ExplicitSlot,
+                                bytes,
+                                3,
+                            ));
+                            for (index, token) in transfers.iter().enumerate() {
+                                builder.ins().stack_store(
+                                    pointer,
+                                    *token,
+                                    slot,
+                                    i32::try_from(index * 8)
+                                        .map_err(|_| "spawn transfer offset overflow")?,
+                                );
+                            }
+                            builder.ins().stack_addr(pointer, slot, 0)
+                        };
+                        let frame_words = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(child_layout.total_words)
+                                .map_err(|_| "spawn frame size overflow")?,
+                        );
+                        let initial_count = builder.ins().iconst(types::I64, initial_count);
+                        let transfer_count = builder.ins().iconst(types::I64, transfer_count);
+                        let spawned = builder.ins().call(
+                            spawn_ref,
+                            &[
+                                bridge,
+                                child_entry,
+                                frame_words,
+                                initial_ptr,
+                                initial_count,
+                                transfer_ptr,
+                                transfer_count,
+                            ],
+                        );
+                        let status = builder.inst_results(spawned)[0];
+                        let valid = builder.ins().icmp_imm_s(IntCC::NotEqual, status, 255);
+                        let check = builder.create_block();
+                        builder.ins().brif(valid, check, &[], fault, &[]);
+                        builder.switch_to_block(check);
+                        let admitted = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                        let failed = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(admitted, blocks[success.0], &[], failed, &[]);
+                        builder.switch_to_block(failed);
+                        let error = function.blocks[failure.0].params[0];
+                        builder.def_var(variables[error.0][0], status);
+                        builder.ins().jump(blocks[failure.0], &[]);
+                    }
+                    Terminator::ChannelReceive { .. } | Terminator::ChannelSend { .. } => {
+                        let index = layout
+                            .resumes
+                            .iter()
+                            .position(|slot| slot.block.0 == block_id)
+                            .expect("verified retry point");
+                        builder.ins().jump(retry_blocks[index], &[]);
+                    }
                 }
-                _ => unreachable!(),
             }
-        }
 
-        builder.seal_all_blocks();
-        builder.finalize(module.target_config());
+            for (index, point) in layout.resumes.iter().enumerate() {
+                if point.instruction.is_some() {
+                    continue;
+                }
+                builder.switch_to_block(retry_blocks[index]);
+                let terminator = &function.blocks[point.block.0].terminator;
+                let status = match terminator {
+                    Terminator::ChannelReceive { receiver, .. } => {
+                        let token = builder.use_var(variables[receiver.0][0]);
+                        let out = builder
+                            .ins()
+                            .iadd_imm_s(frame, word_offset(layout.result.start) as i64);
+                        let call = builder.ins().call(receive_ref, &[bridge, token, out]);
+                        builder.inst_results(call)[0]
+                    }
+                    Terminator::ChannelSend {
+                        sender, message, ..
+                    } => {
+                        let token = builder.use_var(variables[sender.0][0]);
+                        let message = builder.use_var(variables[message.0][0]);
+                        let call = builder.ins().call(send_ref, &[bridge, token, message]);
+                        builder.inst_results(call)[0]
+                    }
+                    _ => unreachable!("verified channel retry"),
+                };
+                let pending = builder.create_block();
+                let completed = builder.create_block();
+                let is_pending = builder.ins().icmp_imm_s(IntCC::Equal, status, 1);
+                builder.ins().brif(is_pending, pending, &[], completed, &[]);
+                builder.switch_to_block(pending);
+                for value in &point.values {
+                    let slot = layout
+                        .values
+                        .iter()
+                        .find(|slot| slot.id == *value)
+                        .expect("spill slot");
+                    for (part, var) in variables[value.0].iter().enumerate() {
+                        let component = builder.use_var(*var);
+                        builder.ins().store(
+                            MemFlagsData::new(),
+                            component,
+                            frame,
+                            word_offset(slot.words.start + part),
+                        );
+                    }
+                }
+                let pc = builder.ins().iconst(types::I64, point.pc);
+                builder.ins().store(MemFlagsData::new(), pc, frame, 0);
+                let pending_code = builder.ins().iconst(types::I64, 1);
+                builder.ins().return_(&[pending_code]);
+
+                builder.switch_to_block(completed);
+                let is_success = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                let success = builder.create_block();
+                let check_other = builder.create_block();
+                builder
+                    .ins()
+                    .brif(is_success, success, &[], check_other, &[]);
+                builder.switch_to_block(success);
+                match terminator {
+                    Terminator::ChannelReceive { value, .. } => {
+                        let received = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::new(),
+                            frame,
+                            word_offset(layout.result.start),
+                        );
+                        let param = function.blocks[value.0].params[0];
+                        builder.def_var(variables[param.0][0], received);
+                        builder.ins().jump(blocks[value.0], &[]);
+                    }
+                    Terminator::ChannelSend { sent, .. } => {
+                        builder.ins().jump(blocks[sent.0], &[]);
+                    }
+                    _ => unreachable!(),
+                }
+                builder.switch_to_block(check_other);
+                let is_terminal = builder.ins().icmp_imm_s(IntCC::Equal, status, 2);
+                let terminal = builder.create_block();
+                builder.ins().brif(is_terminal, terminal, &[], fault, &[]);
+                builder.switch_to_block(terminal);
+                match terminator {
+                    Terminator::ChannelReceive { end, .. } => {
+                        builder.ins().jump(blocks[end.0], &[]);
+                    }
+                    Terminator::ChannelSend {
+                        message, closed, ..
+                    } => {
+                        if let Some(param) = function.blocks[closed.0].params.first() {
+                            let message = builder.use_var(variables[message.0][0]);
+                            builder.def_var(variables[param.0][0], message);
+                        }
+                        builder.ins().jump(blocks[closed.0], &[]);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            builder.seal_all_blocks();
+            builder.finalize(module.target_config());
+        }
+        writeln!(
+            clif,
+            "; Phoebe poll function {}\n{}",
+            function.name,
+            ctx.func.display()
+        )
+        .map_err(|error| error.to_string())?;
+        module
+            .define_function(function_id, &mut ctx)
+            .map_err(|e| e.to_string())?;
+        module.clear_context(&mut ctx);
     }
-    let clif = ctx.func.display().to_string();
-    module
-        .define_function(entry, &mut ctx)
-        .map_err(|e| e.to_string())?;
-    module.clear_context(&mut ctx);
     module.finalize_definitions().map_err(|e| e.to_string())?;
-    Ok(PollLeafExecutable {
+    Ok(PollExecutable {
         module,
         entry,
-        layout,
+        layout: root_layout,
         clif,
     })
 }
 
 fn word_offset(word: usize) -> i32 {
     i32::try_from(word * 8).expect("checked frame address")
+}
+
+fn emit_frame_initial(
+    builder: &mut FunctionBuilder<'_>,
+    args: &[core::ValueId],
+    child: &FrameWords,
+    parent: &core::Function,
+    variables: &[Vec<Variable>],
+    shapes: &AbiShapes,
+    pointer: cranelift_codegen::ir::Type,
+) -> Result<(ClValue, i64), String> {
+    let mut initial = Vec::new();
+    for (arg, slot) in args.iter().zip(&child.entry_params) {
+        for (part, ty) in shapes
+            .types(parent.value_types[arg.0])
+            .into_iter()
+            .enumerate()
+        {
+            let value = builder.use_var(variables[arg.0][part]);
+            let word = if ty == types::I8 {
+                builder.ins().uextend(types::I64, value)
+            } else {
+                value
+            };
+            initial.push((slot.words.start + part, word));
+        }
+    }
+    let count = i64::try_from(initial.len()).map_err(|_| "frame argument count overflow")?;
+    if initial.is_empty() {
+        return Ok((builder.ins().iconst(pointer, 0), count));
+    }
+    let bytes = u32::try_from(
+        initial
+            .len()
+            .checked_mul(16)
+            .ok_or("frame arguments overflow")?,
+    )
+    .map_err(|_| "frame arguments exceed stack slot")?;
+    let slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, bytes, 3));
+    for (index, (word, value)) in initial.iter().enumerate() {
+        let word = builder.ins().iconst(
+            types::I64,
+            i64::try_from(*word).map_err(|_| "frame argument offset overflow")?,
+        );
+        builder.ins().stack_store(
+            pointer,
+            word,
+            slot,
+            i32::try_from(index * 16).map_err(|_| "frame argument offset overflow")?,
+        );
+        builder.ins().stack_store(
+            pointer,
+            *value,
+            slot,
+            i32::try_from(index * 16 + 8).map_err(|_| "frame argument offset overflow")?,
+        );
+    }
+    Ok((builder.ins().stack_addr(pointer, slot, 0), count))
+}
+
+fn validate_poll_function(
+    function: &core::Function,
+    layout: &FrameWords,
+    layouts: &[Option<FrameWords>],
+) -> Result<(), String> {
+    if function
+        .param_modes
+        .iter()
+        .any(|mode| *mode != ParamMode::Own)
+        || !function.place_types.is_empty()
+    {
+        return Err("retained poll requires owned parameters and no places".into());
+    }
+    if layout.resumes.is_empty() {
+        return Err("retained poll requires a suspension point".into());
+    }
+    for point in &layout.resumes {
+        if let Some(index) = point.instruction {
+            let Operation::Call(target, args) =
+                &function.blocks[point.block.0].instructions[index].operation
+            else {
+                return Err("retained call point does not name a call".into());
+            };
+            if layouts[target.0].is_none()
+                || args.iter().any(|arg| !matches!(arg, CallArg::Value(_)))
+            {
+                return Err("retained call requires owned values and a poll callee".into());
+            }
+        } else if !matches!(
+            function.blocks[point.block.0].terminator,
+            Terminator::ChannelReceive { .. } | Terminator::ChannelSend { .. }
+        ) {
+            return Err("unsupported retained poll point".into());
+        }
+    }
+    for (block_id, block) in function.blocks.iter().enumerate() {
+        for (index, instruction) in block.instructions.iter().enumerate() {
+            if !matches!(
+                instruction.operation,
+                Operation::Const(_)
+                    | Operation::Bool(_)
+                    | Operation::Move(_)
+                    | Operation::Copy(_)
+                    | Operation::Variant(_, _, _)
+                    | Operation::Add(_, _)
+                    | Operation::Sub(_, _)
+                    | Operation::CloseHandle(_)
+                    | Operation::Call(_, _)
+            ) {
+                return Err("operation is not yet supported by retained poll".into());
+            }
+            if matches!(instruction.operation, Operation::Call(_, _))
+                && !layout
+                    .resumes
+                    .iter()
+                    .any(|point| point.block.0 == block_id && point.instruction == Some(index))
+            {
+                return Err("retained poll has an unsupported direct call".into());
+            }
+        }
+        if !matches!(
+            block.terminator,
+            Terminator::Return(_)
+                | Terminator::Jump(_, _)
+                | Terminator::Branch { .. }
+                | Terminator::Match { .. }
+                | Terminator::ChannelNew { .. }
+                | Terminator::Spawn { .. }
+                | Terminator::ChannelReceive { .. }
+                | Terminator::ChannelSend { .. }
+        ) || matches!(
+            block.terminator,
+            Terminator::ChannelReceive { .. } | Terminator::ChannelSend { .. }
+        ) && !layout
+            .resumes
+            .iter()
+            .any(|point| point.block.0 == block_id && point.instruction.is_none())
+        {
+            return Err("terminator is not yet supported by retained poll".into());
+        }
+        if let Terminator::Spawn { child, .. } = block.terminator
+            && layouts[child.0].is_none()
+        {
+            return Err("retained poll spawn requires a poll child".into());
+        }
+    }
+    Ok(())
 }
 
 fn load_slot(
@@ -572,321 +1058,4 @@ fn load_slot(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use phoebe_runtime::{NativeFrameInit, NativePollTask, ReceiveResult, Receiver, Sender};
-    use std::ffi::c_void;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicI64, Ordering},
-    };
-
-    const PRODUCER_SOURCE: &str = r#"
-fn producer(sender: Sender<I64>) -> I64 {
-  val first = sender.send(20);
-  val second = when (first) {
-    Send<I64>.Sent -> { sender.send(22) },
-    Send<I64>.Closed(unsent) -> { Send<I64>.Closed(unsent) }
-  };
-  sender.close();
-  when (second) {
-    Send<I64>.Sent -> { 0 },
-    Send<I64>.Closed(unsent) -> { unsent }
-  }
-}
-"#;
-
-    const SOURCE: &str = r#"
-fn wait(receiver: Receiver<I64>, seed: I64) -> I64 {
-  val marker = seed + 1;
-  val item = receiver.receive();
-  receiver.close();
-  when (item) {
-    Receive<I64>.Value(value) -> { marker + value },
-    Receive<I64>.End -> { marker }
-  }
-}
-fn main() -> I64 = 0
-"#;
-
-    struct Capture {
-        task: NativePollTask,
-        answer: Arc<AtomicI64>,
-    }
-
-    impl Task for Capture {
-        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
-            let result = self.task.poll(context)?;
-            if let Poll::Ready(value) = result {
-                self.answer.store(value, Ordering::SeqCst);
-            }
-            Ok(result)
-        }
-    }
-
-    struct Host {
-        entry: runtime::NativePollEntry,
-        frame_words: usize,
-        receiver_word: usize,
-        seed_word: usize,
-        answer: Arc<AtomicI64>,
-        sender: Option<Sender>,
-        phase: u8,
-        close_without_value: bool,
-    }
-
-    impl Task for Host {
-        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
-            if self.phase == 0 {
-                let (sender, receiver) = context.channel(1)?;
-                let token = receiver.token();
-                let mut task = unsafe { NativePollTask::new(self.entry, self.frame_words) }
-                    .map_err(|error| error.to_string())?;
-                task.write_token(self.receiver_word, token)?;
-                task.frame_mut()[self.seed_word] = 7;
-                context
-                    .spawn_owned(
-                        Capture {
-                            task,
-                            answer: self.answer.clone(),
-                        },
-                        &[token],
-                    )
-                    .map_err(|error| error.message)?;
-                self.sender = Some(sender);
-                self.phase = 1;
-                context.yield_now()?;
-                return Ok(Poll::Pending);
-            }
-            if self.phase == 1 {
-                if !self.close_without_value {
-                    context.send(self.sender.as_ref().expect("sender"), 42)?;
-                }
-                context.close_sender(self.sender.take().expect("sender"))?;
-                self.phase = 2;
-            }
-            match context.join()? {
-                Poll::Pending => Ok(Poll::Pending),
-                Poll::Ready(()) => Ok(Poll::Ready(self.answer.load(Ordering::SeqCst))),
-            }
-        }
-    }
-
-    #[test]
-    fn generated_receive_leaf_parks_resumes_and_handles_end() {
-        let program = core::lower(&phoebe_syntax::syntax::parse(SOURCE).unwrap()).unwrap();
-        let executable = compile_poll_leaf_jit(&program, "wait").unwrap();
-        let layout = executable.layout();
-        assert_eq!(layout.entry_params.len(), 2);
-        assert_eq!(layout.values.len(), 2);
-        assert!(executable.clif().contains("call"));
-        for (close_without_value, expected) in [(false, 50), (true, 8)] {
-            let answer = Arc::new(AtomicI64::new(-1));
-            let host = Host {
-                entry: unsafe { executable.entry() },
-                frame_words: layout.total_words,
-                receiver_word: layout.entry_params[0].words.start,
-                seed_word: layout.entry_params[1].words.start,
-                answer,
-                sender: None,
-                phase: 0,
-                close_without_value,
-            };
-            let mut scheduler = Scheduler::new(host, 2, 1, 0).unwrap();
-            assert_eq!(scheduler.run().unwrap(), expected);
-            assert!(scheduler.stats().parks >= 1);
-        }
-    }
-
-    struct ProducerHost {
-        entry: runtime::NativePollEntry,
-        frame_words: usize,
-        sender_word: usize,
-        receiver: Option<Receiver>,
-        received: Vec<i64>,
-        phase: u8,
-    }
-
-    impl Task for ProducerHost {
-        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
-            if self.phase == 0 {
-                let (sender, receiver) = context.channel(1)?;
-                let token = sender.token();
-                let mut fault = false;
-                let mut bridge = NativeCallContext {
-                    context: context as *mut _ as *mut c_void,
-                    fault: &mut fault,
-                    call_request: std::ptr::null_mut(),
-                };
-                let token_word = token.native_word()?;
-                let initial = [NativeFrameInit {
-                    word: self.sender_word as i64,
-                    value: token_word,
-                }];
-                let transfers = [token_word];
-                let code = unsafe {
-                    runtime::phoebe_spawn_poll(
-                        &mut bridge,
-                        self.entry,
-                        self.frame_words as i64,
-                        initial.as_ptr(),
-                        initial.len() as i64,
-                        transfers.as_ptr(),
-                        transfers.len() as i64,
-                    )
-                };
-                if fault || code != 0 {
-                    return Err(format!("native spawn failed: {code}"));
-                }
-                self.receiver = Some(receiver);
-                self.phase = 1;
-            }
-            if self.phase == 1 {
-                loop {
-                    match context.receive(self.receiver.as_ref().expect("receiver"))? {
-                        ReceiveResult::Value(value) => self.received.push(value),
-                        ReceiveResult::Pending => return Ok(Poll::Pending),
-                        ReceiveResult::End => {
-                            context.close_receiver(self.receiver.take().expect("receiver"))?;
-                            self.phase = 2;
-                            break;
-                        }
-                    }
-                }
-            }
-            match context.join()? {
-                Poll::Pending => Ok(Poll::Pending),
-                Poll::Ready(()) => {
-                    assert_eq!(self.received, [20, 22]);
-                    Ok(Poll::Ready(self.received.iter().sum()))
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn generated_two_send_leaf_retries_after_one_slot_backpressure() {
-        let program = core::lower(&phoebe_syntax::syntax::parse(PRODUCER_SOURCE).unwrap()).unwrap();
-        let executable = compile_poll_leaf_jit(&program, "producer").unwrap();
-        assert_eq!(executable.layout().resumes.len(), 2);
-        let host = ProducerHost {
-            entry: unsafe { executable.entry() },
-            frame_words: executable.layout().total_words,
-            sender_word: executable.layout().entry_params[0].words.start,
-            receiver: None,
-            received: Vec::new(),
-            phase: 0,
-        };
-        let mut scheduler = Scheduler::new(host, 2, 1, 0).unwrap();
-        assert_eq!(scheduler.run().unwrap(), 42);
-        assert!(scheduler.stats().parks >= 2);
-        assert!(scheduler.stats().wakes >= 2);
-        scheduler.verify().unwrap();
-    }
-
-    struct FailedSpawnHost {
-        entry: runtime::NativePollEntry,
-        frame_words: usize,
-        sender_word: usize,
-    }
-
-    impl Task for FailedSpawnHost {
-        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
-            let (sender, receiver) = context.channel(1)?;
-            let token_word = sender.token().native_word()?;
-            let initial = [NativeFrameInit {
-                word: self.sender_word as i64,
-                value: token_word,
-            }];
-            let transfers = [token_word];
-            let mut fault = false;
-            let mut bridge = NativeCallContext {
-                context: context as *mut _ as *mut c_void,
-                fault: &mut fault,
-                call_request: std::ptr::null_mut(),
-            };
-            let code = unsafe {
-                runtime::phoebe_spawn_poll(
-                    &mut bridge,
-                    self.entry,
-                    self.frame_words as i64,
-                    initial.as_ptr(),
-                    initial.len() as i64,
-                    transfers.as_ptr(),
-                    transfers.len() as i64,
-                )
-            };
-            assert_eq!(code, 5);
-            assert!(!fault);
-            context.close_sender(sender)?;
-            context.close_receiver(receiver)?;
-            Ok(Poll::Ready(0))
-        }
-    }
-
-    #[test]
-    fn native_spawn_limit_keeps_parent_rights() {
-        let program = core::lower(&phoebe_syntax::syntax::parse(PRODUCER_SOURCE).unwrap()).unwrap();
-        let executable = compile_poll_leaf_jit(&program, "producer").unwrap();
-        let host = FailedSpawnHost {
-            entry: unsafe { executable.entry() },
-            frame_words: executable.layout().total_words,
-            sender_word: executable.layout().entry_params[0].words.start,
-        };
-        let mut scheduler = Scheduler::new(host, 1, 1, 0).unwrap();
-        assert_eq!(scheduler.run().unwrap(), 0);
-        assert_eq!(scheduler.stats().tasks_created, 1);
-        scheduler.verify().unwrap();
-    }
-
-    struct ClosedSendHost {
-        entry: runtime::NativePollEntry,
-        frame_words: usize,
-        sender_word: usize,
-        child_return: Arc<AtomicI64>,
-        started: bool,
-    }
-
-    impl Task for ClosedSendHost {
-        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
-            if !self.started {
-                let (sender, receiver) = context.channel(1)?;
-                let token = sender.token();
-                let mut child = unsafe { NativePollTask::new(self.entry, self.frame_words) }
-                    .map_err(|error| error.to_string())?;
-                child.write_token(self.sender_word, token)?;
-                context
-                    .spawn_owned(
-                        Capture {
-                            task: child,
-                            answer: self.child_return.clone(),
-                        },
-                        &[token],
-                    )
-                    .map_err(|error| error.message)?;
-                context.close_receiver(receiver)?;
-                self.started = true;
-            }
-            match context.join()? {
-                Poll::Pending => Ok(Poll::Pending),
-                Poll::Ready(()) => Ok(Poll::Ready(self.child_return.load(Ordering::SeqCst))),
-            }
-        }
-    }
-
-    #[test]
-    fn generated_send_leaf_returns_the_original_message_when_closed() {
-        let program = core::lower(&phoebe_syntax::syntax::parse(PRODUCER_SOURCE).unwrap()).unwrap();
-        let executable = compile_poll_leaf_jit(&program, "producer").unwrap();
-        let host = ClosedSendHost {
-            entry: unsafe { executable.entry() },
-            frame_words: executable.layout().total_words,
-            sender_word: executable.layout().entry_params[0].words.start,
-            child_return: Arc::new(AtomicI64::new(-1)),
-            started: false,
-        };
-        let mut scheduler = Scheduler::new(host, 2, 1, 0).unwrap();
-        assert_eq!(scheduler.run().unwrap(), 20);
-        scheduler.verify().unwrap();
-    }
-}
+mod tests;

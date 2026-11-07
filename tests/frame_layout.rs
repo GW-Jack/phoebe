@@ -153,7 +153,8 @@ fn physical_frame_words_reserve_flattened_result_and_only_live_payload() {
     assert_eq!(layouts[1].result, 1..3);
     assert_eq!(layouts[1].total_words, 6);
     assert_eq!(layouts[2].result, 1..2);
-    assert_eq!(layouts[2].total_words, 2);
+    assert_eq!(layouts[2].call_result, Some(2..4));
+    assert_eq!(layouts[2].total_words, 4);
     assert_eq!(layouts[2].resumes.len(), 1);
     assert!(layouts[2].resumes[0].instruction.is_some());
     let frames = frame_layout::analyze(&program).unwrap();

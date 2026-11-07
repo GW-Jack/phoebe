@@ -55,6 +55,8 @@ pub struct FrameWords {
     pub entry_params: Vec<WordSlot<ValueId>>,
     pub values: Vec<WordSlot<ValueId>>,
     pub places: Vec<WordSlot<PlaceId>>,
+    /// One reusable result buffer for the currently active child call.
+    pub call_result: Option<Range<usize>>,
     pub resumes: Vec<ResumeSlot>,
     pub total_words: usize,
 }
@@ -133,6 +135,42 @@ pub fn word_layout(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
+    let mut call_result_width = None;
+    for point in &frame.points {
+        let Some(index) = point.instruction else {
+            continue;
+        };
+        let operation = &function
+            .blocks
+            .get(point.block.0)
+            .ok_or("invalid frame call block")?
+            .instructions
+            .get(index)
+            .ok_or("invalid frame call instruction")?
+            .operation;
+        let Operation::Call(target, _) = operation else {
+            return Err("frame call point does not name a call".into());
+        };
+        let callee = program
+            .functions
+            .get(target.0)
+            .ok_or("invalid frame call target")?;
+        let words = width(callee.return_type);
+        call_result_width = Some(call_result_width.unwrap_or(0).max(words));
+    }
+    let call_result = call_result_width
+        .map(|words| {
+            if words == 0 {
+                return Err("zero-width native call result".into());
+            }
+            let end = next
+                .checked_add(words)
+                .ok_or("native call result size overflow")?;
+            let range = next..end;
+            next = end;
+            Ok::<_, String>(range)
+        })
+        .transpose()?;
     if next
         .checked_mul(std::mem::size_of::<i64>())
         .is_none_or(|bytes| bytes > i32::MAX as usize)
@@ -160,6 +198,7 @@ pub fn word_layout(
         entry_params,
         values,
         places,
+        call_result,
         resumes,
         total_words: next,
     })

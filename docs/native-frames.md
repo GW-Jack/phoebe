@@ -1,11 +1,12 @@
 # Retained native task frames
 
 Status: the spill analysis and `phoebe frames` inspection command run on
-verified Core. The runtime can allocate and poll a stable native frame through
-the versioned v1 ABI. A generated Cranelift poll path handles verified I64
-leaves with channel send and receive retries; it has not yet been connected to
-normal `run` or `build`. Calls into suspendable functions and task spawn still
-need generated continuations. The analysis is tested, not formally proved.
+verified Core. The runtime can allocate and poll stable native frames through
+the versioned v1 ABI. Generated Cranelift poll functions handle scalar channel
+retries, same-task calls into suspendable functions, channel creation, and
+spawned poll children. The public `run` path selects this backend when its
+entry can suspend; standalone `build` still needs object emission for it.
+The analysis is tested, not formally proved.
 
 ## Suspension boundary
 
@@ -45,12 +46,13 @@ header and child-frame link.
 `phoebe frames <file|project>` prints those point-local and union sets. For
 `examples/channel_exchange.phoebe`, it shows two send points in `producer`,
 two receive points in `exchange`, and a call continuation in `main`.
-`examples/spawn_close.phoebe` needs no retained frame. This is a planned
-layout, not yet native code generation.
+`examples/spawn_close.phoebe` needs no retained frame. Generated poll code
+uses this layout for the source exchange.
 
 ## Native ABI obligations
 
-The v1 poll ABI uses status `0` for Ready, `1` for Pending, and `255` for fault.
+The v1 poll ABI uses status `0` for Ready, `1` for Pending, `3` for a queued
+same-task call, and `255` for fault.
 The frame is a stable array of `I64` words: word 0 is the program counter,
 words starting at 1 hold the flattened result, and later words hold the
 generated payload. Each entry parameter has a frame address before first
@@ -70,8 +72,8 @@ checked result range into the parent, and resumes the parent without
 replaying its entry. Synthetic ABI tests exercise this sequence and reject a
 result range outside the parent frame. A combined scheduler test parks the
 child on a real channel receive, wakes it from a sender task, and then resumes
-the parent. Generated Cranelift calls do not use
-the mailbox yet.
+the parent. Generated Cranelift calls now use this mailbox, including a
+flattened two-word `Result` across a suspended call.
 The standalone entry point
 `phoebe_rt_v1_main_poll` runs a zero-argument poll function under a bounded
 scope. A synthetic poll test yields and resumes at the same frame address;
@@ -85,7 +87,7 @@ outside the v1 ABI. A generated retry must start at the pending terminator or
 call continuation, using only that point's retained slots, without replaying
 earlier instructions in the block.
 
-Generated code still needs a program counter that distinguishes
+Generated code uses a program counter that distinguishes
 first entry from each retry or child continuation. The scheduler owns a
 pending frame until completion or cancellation. Frame initialization and
 task admission must reserve storage before transferring endpoint ownership;
@@ -111,7 +113,8 @@ message. Its pre-legalization CLIF is available from the compiled artifact.
 The versioned `phoebe_rt_v1_spawn_poll` ABI initializes a child frame before
 committing endpoint transfer. Tests use a generated send leaf to cover
 successful admission and a task-limit failure that leaves the rights with
-the parent. Generated code does not call this ABI yet.
+the parent. Generated code now calls this ABI for a spawned poll child in the
+source exchange.
 A broader differential suite and bounded model should check subsequent poll
 paths. The compiler should run the established analysis, not execute a model
 checker for each build.

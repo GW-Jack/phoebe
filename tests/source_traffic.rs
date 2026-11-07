@@ -1,4 +1,4 @@
-use phoebe::runtime::ScopeLimits;
+use phoebe::runtime::{NativePollTask, Scheduler, ScopeLimits};
 use phoebe::{core, native, syntax};
 
 #[test]
@@ -22,11 +22,50 @@ fn source_two_message_exchange_parks_and_wakes() {
             .unwrap(),
         42
     );
-    assert!(
-        native::run(&program, "main", &[])
-            .unwrap_err()
-            .contains("retained task frames")
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_eq!(
+        native::run_with_limits(
+            &program,
+            "main",
+            &[],
+            ScopeLimits {
+                tasks: 1,
+                channels: 1,
+                replies: 0,
+            }
+        )
+        .unwrap(),
+        0
     );
+    assert_eq!(
+        native::run_with_limits(
+            &program,
+            "main",
+            &[],
+            ScopeLimits {
+                tasks: 2,
+                channels: 0,
+                replies: 0,
+            }
+        )
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn native_poll_exchange_agrees_on_value_and_spawn_limit() {
+    let source = include_str!("../examples/channel_exchange.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let executable = native::compile_poll_jit(&program, "main").unwrap();
+    for (tasks, expected) in [(2, 42), (1, 0)] {
+        let root =
+            unsafe { NativePollTask::new(executable.entry(), executable.layout().total_words) }
+                .unwrap();
+        let mut scheduler = Scheduler::new(root, tasks, 1, 0).unwrap();
+        assert_eq!(scheduler.run().unwrap(), expected);
+        scheduler.verify().unwrap();
+    }
 }
 
 #[test]
@@ -68,6 +107,7 @@ fn main() -> I64 {
 "#;
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
     assert_eq!(program.interpret("main", &[]).unwrap(), 10);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 10);
 }
 
 #[test]
