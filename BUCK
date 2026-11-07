@@ -37,6 +37,7 @@ rust_test(
     srcs = [
         "tests/source_traffic.rs",
         "examples/channel_exchange.phoebe",
+        "examples/channel_exchange_helper.phoebe",
     ],
     edition = "2024",
     deps = [":phoebe_lib"],

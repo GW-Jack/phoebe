@@ -84,6 +84,26 @@ fn native_poll_exchange_agrees_on_value_and_spawn_limit() {
 }
 
 #[test]
+fn suspendable_functions_call_direct_helpers_without_poll_continuations() {
+    let source = include_str!("../examples/channel_exchange_helper.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let plan = phoebe::frame_layout::format(&program).unwrap();
+    assert!(!plan.contains("plus_one"));
+    assert!(!plan.contains("combine"));
+    assert!(!plan.contains("wrap"));
+    assert!(!plan.contains("resource_probe"));
+    let clif = native::clif(&program).unwrap();
+    assert!(clif.contains("Phoebe function plus_one"));
+    assert!(clif.contains("Phoebe function combine"));
+    assert!(clif.contains("Phoebe function wrap"));
+    assert!(clif.contains("Phoebe function resource_probe"));
+    assert!(clif.contains("Phoebe poll function producer"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "channel-helper-exchange", 42);
+}
+
+#[test]
 fn source_closed_send_returns_original_value_and_receive_reports_end() {
     let source = r#"
 fn inspect() -> Result<I64, ResourceError> {

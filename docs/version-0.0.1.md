@@ -127,6 +127,9 @@ task frames. The native JIT and object paths use the same generated call
 continuations and spawned poll children for the source exchange. A direct
 parent can also spawn a suspendable child using a separate poll code object,
 so the parent keeps its direct calling convention.
+A suspendable function can call a direct-only helper with owned values and
+receive a flattened nominal result without allocating a child frame; the
+helper exchange runs in the interpreter, JIT, and standalone object path.
 Core now checks scalar send/receive terminators and derives live-right maps
 for retry suspension. Its interpreter retains frames and places across a
 pending operation, and executes buffered scalar traffic. Core `spawn` now

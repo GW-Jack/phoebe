@@ -92,7 +92,7 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
         );
     }
     let mut module = JITModule::new(jit);
-    let ids = compile_functions(&mut module, program, &context_functions, false, None)?;
+    let ids = compile_functions(&mut module, program, &context_functions, false, None, None)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
     let (entry_id, _) = program.function(name).expect("checked above");
     Ok(JitExecutable {
@@ -329,7 +329,7 @@ fn emit_object_with_poll_layout(program: &Program) -> Result<ObjectEmission, Str
     let builder =
         ObjectBuilder::new(isa, "phoebe", default_libcall_names()).map_err(|e| e.to_string())?;
     let mut module = ObjectModule::new(builder);
-    compile_functions(&mut module, program, &context_functions, true, None)?;
+    compile_functions(&mut module, program, &context_functions, true, None, None)?;
     Ok(ObjectEmission {
         root: module.finish().emit().map_err(|e| e.to_string())?,
         poll_words: None,
@@ -363,6 +363,7 @@ pub fn clif(program: &Program) -> Result<String, String> {
         &context_functions,
         false,
         Some(&mut output),
+        None,
     )?;
     for child in spawned_poll_children(program)? {
         output.push_str(compile_poll_jit(program, &program.functions[child.0].name)?.clif());

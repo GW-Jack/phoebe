@@ -68,6 +68,9 @@ pub(super) fn compile_functions<M: Module>(
     context_functions: &[bool],
     export_main: bool,
     mut clif: Option<&mut String>,
+    // A poll module passes the direct-call closure; ordinary direct builds
+    // define every non-suspendable function.
+    selected: Option<&[bool]>,
 ) -> Result<Vec<(FuncId, Signature)>, String> {
     let uses_runtime = context_functions.iter().any(|needed| *needed);
     let suspendable = frame_layout::suspendable_functions(program)?;
@@ -159,7 +162,7 @@ pub(super) fn compile_functions<M: Module>(
         } else {
             format!("phoebe_fn_{index}")
         };
-        let linkage = if suspendable[index] {
+        let linkage = if suspendable[index] || selected.is_some_and(|set| !set[index]) {
             Linkage::Import
         } else if export_main && function.name == "main" {
             Linkage::Export
@@ -172,7 +175,10 @@ pub(super) fn compile_functions<M: Module>(
         ids.push((id, signature));
     }
     let mut spawn_wrappers: Vec<Option<SpawnEntry>> = vec![None; program.functions.len()];
-    for function in &program.functions {
+    for (index, function) in program.functions.iter().enumerate() {
+        if suspendable[index] || selected.is_some_and(|set| !set[index]) {
+            continue;
+        }
         for block in &function.blocks {
             if let Terminator::Spawn { child, .. } = block.terminator
                 && spawn_wrappers[child.0].is_none()
@@ -232,7 +238,7 @@ pub(super) fn compile_functions<M: Module>(
     let mut ctx = module.make_context();
     let mut builder_context = FunctionBuilderContext::new();
     for (index, function) in program.functions.iter().enumerate() {
-        if suspendable[index] {
+        if suspendable[index] || selected.is_some_and(|set| !set[index]) {
             continue;
         }
         let (id, signature) = &ids[index];

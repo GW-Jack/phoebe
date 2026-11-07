@@ -1,0 +1,54 @@
+fn plus_one(value: I64) -> I64 = value + 1
+
+fn combine(a: I64, b: I64) -> I64 = a + b
+
+fn wrap(value: I64) -> Result<I64, ResourceError> = Result<I64, ResourceError>.Ok(value)
+
+fn resource_probe() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  sender.close();
+  receiver.close();
+  Result<I64, ResourceError>.Ok(0)
+}
+
+fn producer(sender: Sender<I64>) -> I64 {
+  val first = sender.send(plus_one(19));
+  val second = when (first) {
+    Send<I64>.Sent -> { sender.send(plus_one(21)) },
+    Send<I64>.Closed(unsent) -> { Send<I64>.Closed(unsent) }
+  };
+  sender.close();
+  when (second) {
+    Send<I64>.Sent -> { 0 },
+    Send<I64>.Closed(unsent) -> { unsent }
+  }
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  spawn producer(sender)?;
+  val first = receiver.receive();
+  val second = receiver.receive();
+  receiver.close();
+  when (first) {
+    Receive<I64>.Value(a) -> {
+      when (second) {
+        Receive<I64>.Value(b) -> {
+          when (resource_probe()) {
+            Result<I64, ResourceError>.Ok(offset) -> { wrap(combine(a, b) + offset) },
+            Result<I64, ResourceError>.Err(error) -> { wrap(0) }
+          }
+        },
+        Receive<I64>.End -> { Result<I64, ResourceError>.Ok(a) }
+      }
+    },
+    Receive<I64>.End -> { Result<I64, ResourceError>.Ok(0) }
+  }
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

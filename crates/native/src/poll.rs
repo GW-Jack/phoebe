@@ -119,6 +119,7 @@ fn compile_poll_module<M: Module>(
     if entry_function.return_type != Type::I64 {
         return Err("external poll entry requires an I64 result".into());
     }
+    let suspendable = frame_layout::suspendable_functions(program)?;
     let mut reachable = Vec::new();
     let mut seen = vec![false; program.functions.len()];
     let mut pending = vec![root];
@@ -133,12 +134,16 @@ fn compile_poll_module<M: Module>(
             .iter()
             .flat_map(|block| &block.instructions)
         {
-            if let Operation::Call(child, _) = &instruction.operation {
+            if let Operation::Call(child, _) = &instruction.operation
+                && suspendable[child.0]
+            {
                 pending.push(*child);
             }
         }
         for block in &program.functions[id.0].blocks {
-            if let Terminator::Spawn { child, .. } = block.terminator {
+            if let Terminator::Spawn { child, .. } = block.terminator
+                && suspendable[child.0]
+            {
                 pending.push(child);
             }
         }
@@ -155,9 +160,51 @@ fn compile_poll_module<M: Module>(
             .ok_or("retained poll graph contains a direct-only callee")?;
         validate_poll_function(&program.functions[id.0], layout, &layouts)?;
     }
+    let mut direct = vec![false; program.functions.len()];
+    let mut pending_direct = reachable
+        .iter()
+        .flat_map(|id| &program.functions[id.0].blocks)
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| match instruction.operation {
+            Operation::Call(child, _) if !suspendable[child.0] => Some(child),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    while let Some(id) = pending_direct.pop() {
+        if direct[id.0] {
+            continue;
+        }
+        direct[id.0] = true;
+        for block in &program.functions[id.0].blocks {
+            for instruction in &block.instructions {
+                if let Operation::Call(child, _) = instruction.operation {
+                    pending_direct.push(child);
+                }
+            }
+            if let Terminator::Spawn { child, .. } = block.terminator
+                && suspendable[child.0]
+            {
+                return Err("direct helper spawning a suspendable child is not yet supported in a poll module".into());
+            }
+        }
+    }
     let root_layout = layouts[root.0].clone().expect("validated root frame");
     let pointer = module.target_config().pointer_type();
     let shapes = AbiShapes::new(program, pointer);
+    let context_functions = program.runtime_context_functions();
+    let mut clif = String::new();
+    let direct_ids = if direct.iter().any(|selected| *selected) {
+        Some(compile_functions(
+            module,
+            program,
+            &context_functions,
+            false,
+            Some(&mut clif),
+            Some(&direct),
+        )?)
+    } else {
+        None
+    };
 
     let mut receive_signature = module.make_signature();
     receive_signature.params.extend([
@@ -262,7 +309,6 @@ fn compile_poll_module<M: Module>(
         );
     }
     let entry = ids[root.0].expect("declared root poll");
-    let mut clif = String::new();
     for id in reachable {
         let function = &program.functions[id.0];
         let layout = layouts[id.0].as_ref().expect("validated poll frame");
@@ -390,6 +436,29 @@ fn compile_poll_module<M: Module>(
                             .collect::<Vec<_>>()
                     };
                     if let Operation::Call(target, args) = &instruction.operation {
+                        if !suspendable[target.0] {
+                            let (direct_id, _) = direct_ids
+                                .as_ref()
+                                .expect("compiled direct helper graph")[target.0];
+                            let target_ref = module.declare_func_in_func(direct_id, builder.func);
+                            let mut operands = Vec::new();
+                            if context_functions[target.0] {
+                                operands.push(bridge);
+                            }
+                            for arg in args {
+                                let CallArg::Value(value) = arg else {
+                                    unreachable!("validated owned direct call argument")
+                                };
+                                operands.extend(get(*value, &mut builder));
+                            }
+                            let call_inst = builder.ins().call(target_ref, &operands);
+                            let result = instruction.result.expect("verified direct call result");
+                            let returned = builder.inst_results(call_inst).to_vec();
+                            for (var, value) in variables[result.0].iter().zip(returned) {
+                                builder.def_var(*var, value);
+                            }
+                            continue;
+                        }
                         let point_index = layout
                             .resumes
                             .iter()
@@ -1036,13 +1105,18 @@ fn validate_poll_function(
             ) {
                 return Err("operation is not yet supported by retained poll".into());
             }
-            if matches!(instruction.operation, Operation::Call(_, _))
-                && !layout
-                    .resumes
-                    .iter()
-                    .any(|point| point.block.0 == block_id && point.instruction == Some(index))
-            {
-                return Err("retained poll has an unsupported direct call".into());
+            if let Operation::Call(target, args) = &instruction.operation {
+                if args.iter().any(|arg| !matches!(arg, CallArg::Value(_))) {
+                    return Err("retained poll calls require owned values".into());
+                }
+                if layouts[target.0].is_some()
+                    && !layout
+                        .resumes
+                        .iter()
+                        .any(|point| point.block.0 == block_id && point.instruction == Some(index))
+                {
+                    return Err("retained call has no continuation point".into());
+                }
             }
         }
         if !matches!(
