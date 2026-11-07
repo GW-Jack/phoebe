@@ -152,6 +152,21 @@ pub(super) fn compile_functions<M: Module>(
                 &create_signature,
             )
             .map_err(|error| error.to_string())?;
+        let mut fork_signature = module.make_signature();
+        fork_signature.params.extend([
+            AbiParam::new(pointer_type),
+            AbiParam::new(types::I64),
+            AbiParam::new(types::I64),
+            AbiParam::new(pointer_type),
+        ]);
+        fork_signature.returns.push(AbiParam::new(types::I64));
+        let fork = module
+            .declare_function(
+                "phoebe_rt_v1_fork_handle_i64",
+                Linkage::Import,
+                &fork_signature,
+            )
+            .map_err(|error| error.to_string())?;
         let mut close_signature = module.make_signature();
         close_signature.params.extend([
             AbiParam::new(pointer_type),
@@ -180,7 +195,7 @@ pub(super) fn compile_functions<M: Module>(
         let spawn = module
             .declare_function("phoebe_rt_v1_spawn_poll", Linkage::Import, &spawn_signature)
             .map_err(|error| error.to_string())?;
-        Some((create, close, spawn))
+        Some((create, close, spawn, fork))
     } else {
         None
     };
@@ -378,6 +393,9 @@ pub(super) fn compile_functions<M: Module>(
                     Terminator::ChannelNew {
                         success, failure, ..
                     } => vec![success.0, failure.0],
+                    Terminator::Fork {
+                        success, failure, ..
+                    } => vec![success.0, failure.0],
                     Terminator::ChannelSend { sent, closed, .. } => vec![sent.0, closed.0],
                     Terminator::ChannelReceive { value, end, .. } => vec![value.0, end.0],
                     Terminator::Spawn {
@@ -514,7 +532,8 @@ pub(super) fn compile_functions<M: Module>(
                             None
                         }
                         Operation::CloseHandle(value) => {
-                            let (_, close, _) = runtime_imports.expect("channel runtime imports");
+                            let (_, close, _, _) =
+                                runtime_imports.expect("channel runtime imports");
                             let callee = module.declare_func_in_func(close, builder.func);
                             let kind = match function.value_types[value.0] {
                                 Type::SenderI64 => 0,
@@ -650,7 +669,7 @@ pub(super) fn compile_functions<M: Module>(
                         success,
                         failure,
                     } => {
-                        let (create, _, _) = runtime_imports.expect("channel runtime imports");
+                        let (create, _, _, _) = runtime_imports.expect("channel runtime imports");
                         let callee = module.declare_func_in_func(create, builder.func);
                         let sender_slot = builder.create_sized_stack_slot(StackSlotData::new(
                             StackSlotKind::ExplicitSlot,
@@ -698,13 +717,55 @@ pub(super) fn compile_functions<M: Module>(
                             .ins()
                             .jump(blocks[success.0], &[sender.into(), receiver.into()]);
                     }
+                    Terminator::Fork {
+                        source,
+                        success,
+                        failure,
+                    } => {
+                        let (_, _, _, fork) = runtime_imports.expect("fork runtime import");
+                        let callee = module.declare_func_in_func(fork, builder.func);
+                        let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let out = builder.ins().stack_addr(pointer_type, out_slot, 0);
+                        let kind = builder.ins().iconst(
+                            types::I64,
+                            i64::from(function.value_types[source.0] == Type::ReceiverI64),
+                        );
+                        let call = builder.ins().call(
+                            callee,
+                            &[
+                                runtime_context.expect("runtime context"),
+                                get(*source)[0],
+                                kind,
+                                out,
+                            ],
+                        );
+                        let status = builder.inst_results(call)[0];
+                        let succeeded = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                        let success_load = builder.create_block();
+                        builder.ins().brif(
+                            succeeded,
+                            success_load,
+                            &[],
+                            blocks[failure.0],
+                            &[status.into()],
+                        );
+                        builder.switch_to_block(success_load);
+                        let fresh = builder
+                            .ins()
+                            .stack_load(pointer_type, types::I64, out_slot, 0);
+                        builder.ins().jump(blocks[success.0], &[fresh.into()]);
+                    }
                     Terminator::Spawn {
                         child,
                         args,
                         success,
                         failure,
                     } => {
-                        let (_, _, spawn) = runtime_imports.expect("spawn runtime import");
+                        let (_, _, spawn, _) = runtime_imports.expect("spawn runtime import");
                         let entry = spawn_wrappers[child.0]
                             .as_ref()
                             .expect("declared spawn wrapper");

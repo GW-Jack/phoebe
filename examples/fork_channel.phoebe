@@ -1,0 +1,29 @@
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 2)?;
+  val other_sender = sender.fork()?;
+  val other_receiver = receiver.fork()?;
+  sender.send(20);
+  other_sender.send(22);
+  sender.close();
+  other_sender.close();
+  val first = receiver.receive();
+  val second = other_receiver.receive();
+  receiver.close();
+  other_receiver.close();
+  when (first) {
+    Receive<I64>.Value(a) -> {
+      when (second) {
+        Receive<I64>.Value(b) -> { Result<I64, ResourceError>.Ok(a + b) },
+        Receive<I64>.End -> { Result<I64, ResourceError>.Ok(a) }
+      }
+    },
+    Receive<I64>.End -> { Result<I64, ResourceError>.Ok(0) }
+  }
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

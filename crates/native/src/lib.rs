@@ -83,6 +83,10 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
             runtime::phoebe_channel_new_i64 as *const u8,
         );
         jit.symbol(
+            "phoebe_rt_v1_fork_handle_i64",
+            runtime::phoebe_fork_handle_i64 as *const u8,
+        );
+        jit.symbol(
             "phoebe_rt_v1_close_handle_i64",
             runtime::phoebe_close_handle_i64 as *const u8,
         );

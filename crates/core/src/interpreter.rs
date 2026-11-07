@@ -61,6 +61,7 @@ impl Program {
                     && (matches!(
                         block.terminator,
                         Terminator::ChannelNew { .. }
+                            | Terminator::Fork { .. }
                             | Terminator::Yield { .. }
                             | Terminator::ChannelSend { .. }
                             | Terminator::ChannelReceive { .. }
@@ -391,6 +392,29 @@ impl CoreTask {
                         Err(error) => self.enter(failure, vec![Value::ResourceError(error)]),
                     }
                 }
+                Terminator::Fork {
+                    source,
+                    success,
+                    failure,
+                } => {
+                    let result = match self.value(source) {
+                        Value::Sender(token) => context
+                            .as_deref_mut()
+                            .expect("runtime context")
+                            .fork_sender_typed(&runtime::Sender::from_token(token))?
+                            .map(|handle| Value::Sender(handle.token())),
+                        Value::Receiver(token) => context
+                            .as_deref_mut()
+                            .expect("runtime context")
+                            .fork_receiver_typed(&runtime::Receiver::from_token(token))?
+                            .map(|handle| Value::Receiver(handle.token())),
+                        _ => unreachable!("verified endpoint"),
+                    };
+                    match result {
+                        Ok(handle) => self.enter(success, vec![handle]),
+                        Err(error) => self.enter(failure, vec![Value::ResourceError(error)]),
+                    }
+                }
                 Terminator::ChannelSend {
                     sender,
                     message,
@@ -649,6 +673,15 @@ impl fmt::Display for Program {
                         f,
                         "    channel.new.i64 v{} success block{} failure block{}",
                         capacity.0, success.0, failure.0
+                    )?,
+                    Terminator::Fork {
+                        source,
+                        success,
+                        failure,
+                    } => writeln!(
+                        f,
+                        "    handle.fork v{} success block{} failure block{}",
+                        source.0, success.0, failure.0
                     )?,
                     Terminator::ChannelSend {
                         sender,

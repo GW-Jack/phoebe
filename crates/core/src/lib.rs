@@ -152,6 +152,11 @@ pub enum Terminator {
         success: BlockId,
         failure: BlockId,
     },
+    Fork {
+        source: ValueId,
+        success: BlockId,
+        failure: BlockId,
+    },
     ChannelSend {
         sender: ValueId,
         message: ValueId,

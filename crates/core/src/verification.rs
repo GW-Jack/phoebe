@@ -400,6 +400,9 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                 Terminator::ChannelNew {
                     success, failure, ..
                 } => vec![success.0, failure.0],
+                Terminator::Fork {
+                    success, failure, ..
+                } => vec![success.0, failure.0],
                 Terminator::ChannelSend { sent, closed, .. } => vec![sent.0, closed.0],
                 Terminator::ChannelReceive { value, end, .. } => vec![value.0, end.0],
                 Terminator::Spawn {
@@ -607,6 +610,14 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                             "{}: creation edges must be distinct",
                             function.name
                         ));
+                    }
+                    vec![*success, *failure]
+                }
+                Terminator::Fork {
+                    success, failure, ..
+                } => {
+                    if success == failure {
+                        return Err(format!("{}: fork edges must be distinct", function.name));
                     }
                     vec![*success, *failure]
                 }
@@ -842,6 +853,23 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                             "{}: channel creation edge signature mismatch",
                             function.name
                         ));
+                    }
+                }
+                Terminator::Fork {
+                    source,
+                    success,
+                    failure,
+                } => {
+                    check_use(*source, block_id, end)?;
+                    let ty = function.value_types[source.0];
+                    if !matches!(ty, Type::SenderI64 | Type::ReceiverI64)
+                        || function.blocks[success.0].params.len() != 1
+                        || function.value_types[function.blocks[success.0].params[0].0] != ty
+                        || function.blocks[failure.0].params.len() != 1
+                        || function.value_types[function.blocks[failure.0].params[0].0]
+                            != Type::ResourceError
+                    {
+                        return Err(format!("{}: fork edge signature mismatch", function.name));
                     }
                 }
                 Terminator::ChannelSend {
@@ -1085,6 +1113,26 @@ pub(super) fn capability_graph(
                             }],
                         ),
                         edge(CapTarget::Block(failure.0), vec![]),
+                    ]
+                }
+                Terminator::Fork {
+                    source,
+                    success,
+                    failure,
+                } => {
+                    let fresh = function.blocks[success.0].params[0];
+                    vec![
+                        edge(
+                            CapTarget::Block(success.0),
+                            vec![
+                                CapAction::Require(slot(*source)),
+                                CapAction::Create(slot(fresh)),
+                            ],
+                        ),
+                        edge(
+                            CapTarget::Block(failure.0),
+                            vec![CapAction::Require(slot(*source))],
+                        ),
                     ]
                 }
                 Terminator::ChannelSend {

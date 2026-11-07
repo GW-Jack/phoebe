@@ -345,6 +345,53 @@ impl<'a> Lowerer<'a> {
                     if locals.contains_key(name) {
                         return Err(Diagnostic::new(*span, format!("duplicate local {name}")));
                     }
+                    if let ExprKind::Try(inner) = &expr.kind
+                        && let ExprKind::QualifiedCall(source, method, args) = &inner.kind
+                        && method == "fork"
+                        && args.is_empty()
+                    {
+                        if matches!(statement, Statement::Var(..)) {
+                            return Err(Diagnostic::new(*span, "fork result must bind to val"));
+                        }
+                        let endpoint = match locals.get(source).copied() {
+                            Some(Binding::Val(value)) => value,
+                            _ => {
+                                return Err(Diagnostic::new(
+                                    inner.span,
+                                    "fork requires a named val endpoint",
+                                ));
+                            }
+                        };
+                        let ty = self.value_types[endpoint.0];
+                        if !matches!(ty, Type::SenderI64 | Type::ReceiverI64) {
+                            return Err(Diagnostic::new(
+                                inner.span,
+                                "fork requires Sender<I64> or Receiver<I64>",
+                            ));
+                        }
+                        let result_id = self.resource_result_id(expr.span)?;
+                        let success = self.block();
+                        let fresh = self.block_param(success, ty);
+                        let failure = self.block();
+                        let error = self.block_param(failure, Type::ResourceError);
+                        self.terminate(Terminator::Fork {
+                            source: endpoint,
+                            success,
+                            failure,
+                        });
+                        self.current = failure;
+                        let failed = self.emit(
+                            Operation::Variant(result_id, 1, Some(error)),
+                            self.return_type,
+                            expr.span,
+                        );
+                        self.terminate(Terminator::Return(failed));
+                        self.implicit_cleanup_returns
+                            .push((self.current, expr.span));
+                        self.current = success;
+                        locals.insert(name.clone(), Binding::Val(fresh));
+                        continue;
+                    }
                     let (value, ty) = self.expr(expr, locals)?;
                     if matches!(statement, Statement::Var(..)) {
                         let place = self.place(ty);

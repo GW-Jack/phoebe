@@ -64,6 +64,55 @@ pub unsafe extern "C" fn phoebe_channel_new_i64(
     }
 }
 
+/// Fork kind: 0 sender, 1 receiver. Status 0 writes one new handle;
+/// resource failure leaves the original handle owned by the caller.
+///
+/// # Safety
+///
+/// `bridge` must satisfy the lifetime and exclusive-borrow contract of
+/// `phoebe_channel_new_i64`; `token` must be a checked handle of `kind` and
+/// `out` must be aligned and writable for one i64.
+#[unsafe(export_name = "phoebe_rt_v1_fork_handle_i64")]
+pub unsafe extern "C" fn phoebe_fork_handle_i64(
+    bridge: *mut NativeCallContext,
+    token: i64,
+    kind: i64,
+    out: *mut i64,
+) -> i64 {
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let bridge = unsafe { &mut *bridge };
+        let context = unsafe { &mut *(bridge.context as *mut Context<'_>) };
+        let token = usize::try_from(token)
+            .map(Token)
+            .map_err(|_| "negative handle token")?;
+        let result = match kind {
+            0 => context
+                .fork_sender_typed(&Sender { token })?
+                .map(|handle| handle.token.0),
+            1 => context
+                .fork_receiver_typed(&Receiver { token })?
+                .map(|handle| handle.token.0),
+            _ => return Err("invalid handle kind".into()),
+        };
+        Ok::<_, String>(match result {
+            Ok(fork) => {
+                unsafe { *out = fork as i64 };
+                0
+            }
+            Err(error) => resource_code(error),
+        })
+    }));
+    match outcome {
+        Ok(Ok(code)) => code,
+        _ => {
+            if !bridge.is_null() {
+                unsafe { *(*bridge).fault = true };
+            }
+            255
+        }
+    }
+}
+
 /// Close kind: 0 sender, 1 receiver. A fault is reported after native return.
 ///
 /// # Safety

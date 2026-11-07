@@ -117,6 +117,13 @@ parameters and `spawn worker(sender)?;` as a fallible statement. On success
 the child owns its argument; on task-limit failure the parent retains it and
 the `?` cleanup closes it. Children without suspension also run through the
 Cranelift JIT and standalone object path.
+Source `val another = sender.fork()?` and the receiver equivalent now create
+one independently owned handle on success. The original remains live on both
+edges, and a resource failure creates no new handle. Core checks the fresh
+slot and requires the original right on each edge. Direct code, retained
+tasks, the interpreter, and standalone binaries run the same fork operation;
+`examples/fork_channel.phoebe` exercises both handle kinds. Allocation
+failure is represented in the ABI but has not been forced in a test.
 Source `send` and `receive` now yield explicit `Send<I64>` and `Receive<I64>`
 outcomes. A two-message source exchange over a one-slot channel exercises
 parking and wakeup in the interpreter. The outcome types are added to Core

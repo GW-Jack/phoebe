@@ -1,14 +1,15 @@
 # Capability flow in Core IR
 
-Status: design contract with an initial checked Core and source creation edge. The checker
+Status: design contract with checked scalar channel creation and handle fork edges. The checker
 in `crates/capability/src/lib.rs` verifies exact capability-slot states at joins and
 normal returns, and derives live-slot maps for failure and suspension edges.
 Core now derives a graph for `channel.new.i64`, endpoint closes, scalar
 send/receive, and jumps
 between capability-bearing block parameters. The interpreter, Cranelift JIT,
 and standalone executable run creation and close through the bounded runtime
-kernel. Source `val (sender, receiver) = channel<I64>(capacity = n)?` now lowers
-directly to those edges, and source `close()` lowers to endpoint close.
+kernel. Source `val (sender, receiver) = channel<I64>(capacity = n)?` and
+`val another = sender.fork()?` (or `receiver.fork()?`) lower directly to
+those edges, and source `close()` lowers to endpoint close.
 
 ## Why the current affine rule is insufficient
 
@@ -86,6 +87,8 @@ For creation from live state `O`, the verifier checks these edge equations:
 ```text
 channel.new success: O' = O ∪ {sender, receiver}
 channel.new failure: O' = O
+handle.fork success: O' = O ∪ {fresh handle}
+handle.fork failure: O' = O
 reply.new success:   O' = O ∪ {reply_to, reply_receiver}
 reply.new failure:   O' = O
 ```
@@ -98,7 +101,9 @@ slots to the new task; failure returns the intact frame and retains its slots
 with the parent.
 
 The Core verifier now generates the paired `CreatePair` action exclusively for
-the typed success edge and no creation action for the failure edge. It checks
+channel creation's typed success edge and a single `Create` action for a
+handle fork's success edge. Both fork edges require the source right; a failed
+fork leaves it live. It checks
 their parameter types and exact capability disposition on return. This
 integration covers scalar `I64` channels, endpoint closes, scalar traffic,
 retry suspension, and Core task spawn. Request/reply creation, nested

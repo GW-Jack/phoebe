@@ -71,6 +71,10 @@ pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable,
         runtime::phoebe_channel_new_i64 as *const u8,
     );
     jit.symbol(
+        "phoebe_rt_v1_fork_handle_i64",
+        runtime::phoebe_fork_handle_i64 as *const u8,
+    );
+    jit.symbol(
         "phoebe_rt_v1_spawn_poll",
         runtime::phoebe_spawn_poll as *const u8,
     );
@@ -333,6 +337,21 @@ fn compile_poll_module<M: Module>(
             &create_signature,
         )
         .map_err(|e| e.to_string())?;
+    let mut fork_signature = module.make_signature();
+    fork_signature.params.extend([
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+        AbiParam::new(types::I64),
+        AbiParam::new(pointer),
+    ]);
+    fork_signature.returns.push(AbiParam::new(types::I64));
+    let fork = module
+        .declare_function(
+            "phoebe_rt_v1_fork_handle_i64",
+            Linkage::Import,
+            &fork_signature,
+        )
+        .map_err(|e| e.to_string())?;
     let mut spawn_signature = module.make_signature();
     spawn_signature.params.extend([
         AbiParam::new(pointer),
@@ -524,6 +543,7 @@ fn compile_poll_module<M: Module>(
             let close_ref = module.declare_func_in_func(close, builder.func);
             let call_ref = module.declare_func_in_func(call, builder.func);
             let create_ref = module.declare_func_in_func(create, builder.func);
+            let fork_ref = module.declare_func_in_func(fork, builder.func);
             let spawn_ref = module.declare_func_in_func(spawn, builder.func);
             for (block_id, block) in function.blocks.iter().enumerate() {
                 builder.switch_to_block(blocks[block_id]);
@@ -965,6 +985,42 @@ fn compile_poll_module<M: Module>(
                         builder.def_var(variables[error.0][0], status);
                         builder.ins().jump(blocks[failure.0], &[]);
                     }
+                    Terminator::Fork {
+                        source,
+                        success,
+                        failure,
+                    } => {
+                        let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let out = builder.ins().stack_addr(pointer, out_slot, 0);
+                        let token = builder.use_var(variables[source.0][0]);
+                        let kind = builder.ins().iconst(
+                            types::I64,
+                            i64::from(function.value_types[source.0] == Type::ReceiverI64),
+                        );
+                        let call = builder.ins().call(fork_ref, &[bridge, token, kind, out]);
+                        let status = builder.inst_results(call)[0];
+                        let valid = builder.ins().icmp_imm_s(IntCC::NotEqual, status, 255);
+                        let check = builder.create_block();
+                        builder.ins().brif(valid, check, &[], fault, &[]);
+                        builder.switch_to_block(check);
+                        let succeeded = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                        let created = builder.create_block();
+                        let failed = builder.create_block();
+                        builder.ins().brif(succeeded, created, &[], failed, &[]);
+                        builder.switch_to_block(created);
+                        let fresh = builder.ins().stack_load(pointer, types::I64, out_slot, 0);
+                        let param = function.blocks[success.0].params[0];
+                        builder.def_var(variables[param.0][0], fresh);
+                        builder.ins().jump(blocks[success.0], &[]);
+                        builder.switch_to_block(failed);
+                        let error = function.blocks[failure.0].params[0];
+                        builder.def_var(variables[error.0][0], status);
+                        builder.ins().jump(blocks[failure.0], &[]);
+                    }
                     Terminator::Spawn {
                         child,
                         args,
@@ -1337,6 +1393,7 @@ fn validate_poll_function(
                 | Terminator::Branch { .. }
                 | Terminator::Match { .. }
                 | Terminator::ChannelNew { .. }
+                | Terminator::Fork { .. }
                 | Terminator::Spawn { .. }
                 | Terminator::ChannelReceive { .. }
                 | Terminator::ChannelSend { .. }

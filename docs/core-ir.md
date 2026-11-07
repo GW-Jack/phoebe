@@ -81,6 +81,11 @@ for the next implementation slice.
 `channel.new.i64` is a checked Core edge. It takes an `I64`
 capacity and has a success successor with `SenderI64` and `ReceiverI64` block
 parameters, plus a failure successor with a `ResourceError` parameter.
+`handle.fork` takes an owned sender or receiver without consuming it. Its
+success successor receives one fresh endpoint of the same type; its failure
+successor receives `ResourceError` and no new endpoint. The exact capability
+verifier requires the original right on both edges and creates the new slot
+only on success.
 `close.handle` consumes either endpoint. Core derives a capability-flow graph
 from these operations: only the success edge creates the two rights, jumps
 move rights to destination parameters, and normal return requires both rights

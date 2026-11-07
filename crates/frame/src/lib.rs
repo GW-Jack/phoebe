@@ -484,6 +484,15 @@ fn terminator_live(function: &Function, block_id: usize, incoming: &[Live]) -> L
             edge(*failure, None);
             live.values[capacity.0] = true;
         }
+        Terminator::Fork {
+            source,
+            success,
+            failure,
+        } => {
+            edge(*success, None);
+            edge(*failure, None);
+            live.values[source.0] = true;
+        }
         Terminator::ChannelSend {
             sender,
             message,

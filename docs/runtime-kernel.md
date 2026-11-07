@@ -33,7 +33,10 @@ this ABI for scalar channel traffic, same-task call continuations, and spawned
 poll children in the source exchange.
 
 `Sender` and `Receiver` wrap opaque tokens. The handle table records each
-token's one task owner. `fork` creates another handle explicitly; `spawn`
+token's one task owner. `fork` creates another handle explicitly and returns
+a typed allocation failure before changing channel counts or publishing a
+handle; invalid tokens remain internal faults. Source binds the new right
+with `val another = sender.fork()?` or `receiver.fork()?`. `spawn`
 validates all transfers before changing their owners. A successful send
 copies a closed `I64` into a pre-reserved FIFO slot. If no receiver remains,
 `send` returns `Closed(message)` without queueing or consuming it. Closing
