@@ -1,9 +1,9 @@
 # Local project modules
 
 Status: executable local modules with in-process parsed-module and checked-Core
-function reuse sessions. Local path dependency lock verification is available
-through `phoebe lock` and `phoebe deps`; dependency compilation, visibility,
-and incremental native object rebuilds are not implemented yet.
+function reuse sessions. Content-pinned local path dependencies compile into
+the same program; visibility and incremental native object rebuilds remain
+open.
 
 `phoebe.toml` uses this form:
 
@@ -39,7 +39,9 @@ import. Modules are loaded in dependency order, so a data declaration may
 contain a nominal type from an imported module. Import cycles and unknown
 imports are rejected. The compiler maps
 Core lowering diagnostics back to the defining file and local line/column.
-The working example is `examples/multi_module/`.
+The local module example is `examples/multi_module/`. A package may import a
+direct dependency's root module by its alias; see `docs/packages.md` and
+`examples/package_graph/app/`.
 
 `phoebe-project::ProjectSession` can load the same manifest repeatedly. It
 compares each module's exact source bytes and path to reuse unchanged parsed
@@ -70,8 +72,7 @@ marginal difference on a six-function project.
 Current limitations are explicit: imported modules cannot construct another
 module's variants directly, the root module cannot be imported, imports are
 module-wide rather than item-level, and all declarations in an imported
-module are currently visible. There is no cached typed interface or pinned
-external dependency graph in the compiler. A `[dependencies]` table is
-rejected during compilation; `docs/packages.md` describes the separate
-lockfile graph commands. A standalone `.phoebe` file still works without a manifest,
+module are currently visible. There is no cached typed interface or registry
+dependency graph. `docs/packages.md` describes pinned local path dependencies.
+A standalone `.phoebe` file still works without a manifest,
 but `import` in that mode produces a diagnostic.

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use phoebe::{ProjectCompilerSession, core, native, project, syntax};
+use phoebe::{ProjectCompilerSession, core, native, package, project, syntax};
 
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -29,6 +29,126 @@ fn temp_project() -> PathBuf {
         std::fs::write(path.join(name), source).unwrap();
     }
     path
+}
+
+fn temp_package_graph() -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "phoebe-package-project-test-{}-{}",
+        std::process::id(),
+        NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    for package in ["app", "math", "util"] {
+        std::fs::create_dir_all(path.join(package)).unwrap();
+    }
+    for (name, source) in [
+        (
+            "app/phoebe.toml",
+            include_str!("../examples/package_graph/app/phoebe.toml"),
+        ),
+        (
+            "app/phoebe.lock",
+            include_str!("../examples/package_graph/app/phoebe.lock"),
+        ),
+        (
+            "app/app.phoebe",
+            include_str!("../examples/package_graph/app/app.phoebe"),
+        ),
+        (
+            "math/phoebe.toml",
+            include_str!("../examples/package_graph/math/phoebe.toml"),
+        ),
+        (
+            "math/api.phoebe",
+            include_str!("../examples/package_graph/math/api.phoebe"),
+        ),
+        (
+            "math/helper.phoebe",
+            include_str!("../examples/package_graph/math/helper.phoebe"),
+        ),
+        (
+            "util/phoebe.toml",
+            include_str!("../examples/package_graph/util/phoebe.toml"),
+        ),
+        (
+            "util/api.phoebe",
+            include_str!("../examples/package_graph/util/api.phoebe"),
+        ),
+    ] {
+        std::fs::write(path.join(name), source).unwrap();
+    }
+    path
+}
+
+#[test]
+fn locked_transitive_package_modules_compile_and_rebuild() {
+    let path = temp_package_graph();
+    let app = path.join("app");
+    let mut session = ProjectCompilerSession::new();
+    let (first, initial) = session.compile(&app).unwrap();
+    assert_eq!(
+        initial.load.parsed,
+        ["app", "math", "math__helper", "math__util"]
+    );
+    assert_eq!(first.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&first, "main", &[]).unwrap(), 42);
+    let executable = path.join("package-app");
+    native::build_executable(&first, &executable).unwrap();
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+    assert!(first.to_string().contains("call math__util.add"));
+
+    let util = path.join("util/api.phoebe");
+    std::fs::write(&util, "fn add(a: I64, b: I64) -> I64 = a + b + 1\n").unwrap();
+    assert!(
+        session
+            .compile(&app)
+            .unwrap_err()
+            .contains("stale dependency pins")
+    );
+    package::write_lock(&app).unwrap();
+    let (changed, report) = session.compile(&app).unwrap();
+    assert_eq!(report.load.parsed, ["math__util"]);
+    assert_eq!(report.load.affected, ["math__util"]);
+    assert_eq!(report.reused_core_functions, 6);
+    assert_eq!(changed.interpret("main", &[]).unwrap(), 43);
+    assert_eq!(native::run(&changed, "main", &[]).unwrap(), 43);
+
+    let renamed = "fn add(x: I64, b: I64) -> I64 = x + b + 1\n";
+    std::fs::write(&util, renamed).unwrap();
+    package::write_lock(&app).unwrap();
+    let (renamed_core, report) = session.compile(&app).unwrap();
+    assert_eq!(report.load.changed_interfaces, ["math__util"]);
+    assert_eq!(
+        report.load.affected,
+        ["app", "math", "math__helper", "math__util"]
+    );
+    assert_eq!(report.reused_core_functions, 6);
+    assert_eq!(renamed_core.interpret("main", &[]).unwrap(), 43);
+
+    std::fs::write(&util, "fn add(a: Bool, b: I64) -> I64 = b\n").unwrap();
+    package::write_lock(&app).unwrap();
+    assert!(session.compile(&app).is_err());
+    std::fs::write(&util, renamed).unwrap();
+    package::write_lock(&app).unwrap();
+    let (restored, report) = session.compile(&app).unwrap();
+    assert_eq!(report.reused_core_functions, 7);
+    assert_eq!(restored.interpret("main", &[]).unwrap(), 43);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn dependency_alias_requires_import() {
+    let path = temp_package_graph();
+    let app = path.join("app");
+    std::fs::write(
+        app.join("app.phoebe"),
+        "fn main() -> I64 = math.answer(20)\n",
+    )
+    .unwrap();
+    let error = project::load(&app).err().expect("missing import must fail");
+    assert!(error.contains("module `math` is not imported"), "{error}");
+    std::fs::remove_dir_all(path).unwrap();
 }
 
 #[test]

@@ -1,0 +1,4 @@
+import math
+
+fn unwrap(value: math.Boxed) -> I64 = math.unbox(value)
+fn main() -> I64 = math.answer(20) + unwrap(math.boxed())

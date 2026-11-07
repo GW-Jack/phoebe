@@ -6,5 +6,6 @@ rust-version = "1.95"
 license = "Apache-2.0"
 
 [dependencies]
+phoebe-package = { path = "../package" }
 phoebe-syntax = { path = "../syntax" }
 toml = "=1.2.1"

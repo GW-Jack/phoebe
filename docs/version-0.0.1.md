@@ -86,9 +86,11 @@ gates above. A local `phoebe.toml` manifest and explicit imports now compile
 multiple modules together; `examples/multi_module/` runs in both engines and
 builds a standalone executable. `docs/modules.md` describes that path and
 the in-process parsed-module session with exact source-level interfaces and
-checked-Core function-body reuse. The package resolver can lock and verify
-transitive local path dependencies by exact source content, but the compiler
-does not import their modules yet. Registry dependencies, cached typed
+checked-Core function-body reuse. The package resolver locks and verifies
+transitive local path dependencies by exact source content. Direct dependency
+root modules and their transitive calls compile and run in the interpreter,
+Cranelift JIT, and standalone executable; see `examples/package_graph/app/`.
+Registry dependencies, cached typed
 interfaces, and incremental native object rebuilds remain open. The
 `examples/cost/` files other than scalar `identity` remain
 design fixtures, not executable acceptance tests.

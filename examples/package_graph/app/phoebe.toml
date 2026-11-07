@@ -1,0 +1,10 @@
+[package]
+name = "package_app"
+version = "0.0.1"
+root = "app"
+
+[modules]
+app = "app.phoebe"
+
+[dependencies]
+math = { path = "../math", version = "0.0.1" }

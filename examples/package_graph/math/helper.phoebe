@@ -1,0 +1,3 @@
+import util
+
+fn finish(value: I64) -> I64 = util.add(value, 22)

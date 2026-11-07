@@ -1,0 +1,9 @@
+import helper
+
+data Boxed { Value(value: I64) }
+
+fn answer(value: I64) -> I64 = helper.finish(value)
+fn boxed() -> Boxed = Boxed.Value(0)
+fn unbox(value: Boxed) -> I64 = when (value) {
+  Boxed.Value(number) -> { number },
+}

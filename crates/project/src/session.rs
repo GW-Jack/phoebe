@@ -59,7 +59,7 @@ impl ProjectSession {
                         .ast
                         .imports
                         .iter()
-                        .any(|import| frontier.contains(&import.name))
+                        .any(|import| frontier.contains(&module.available[&import.name]))
                 {
                     frontier.insert(module.name.clone());
                     affected.insert(module.name.clone());

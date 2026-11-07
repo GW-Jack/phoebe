@@ -13,7 +13,15 @@ pub struct Package {
     pub version: String,
     pub root: String,
     pub manifest: PathBuf,
-    pub modules: BTreeMap<String, PathBuf>,
+    pub manifest_bytes: Vec<u8>,
+    pub modules: BTreeMap<String, ModuleSource>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ModuleSource {
+    pub path: PathBuf,
+    /// The exact bytes included in this package's content digest.
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -168,7 +176,13 @@ impl Walk {
             let content = fs::read(&module_path)
                 .map_err(|error| format!("{}: {error}", module_path.display()))?;
             update_hash(&mut hash, module_name, &content);
-            modules.insert(module_name.clone(), module_path);
+            modules.insert(
+                module_name.clone(),
+                ModuleSource {
+                    path: module_path,
+                    bytes: content,
+                },
+            );
         }
         let package_record = Package {
             locator: locator.clone(),
@@ -176,6 +190,7 @@ impl Walk {
             version: version.to_owned(),
             root: root.to_owned(),
             manifest: manifest.to_owned(),
+            manifest_bytes: bytes.clone(),
             modules,
         };
         self.packages.push(package_record);
@@ -376,8 +391,13 @@ mod tests {
         assert_eq!(graph.packages.len(), 3);
         assert_eq!(graph.packages[1].locator, "math");
         assert_eq!(graph.packages[2].locator, "math/util");
-        assert_eq!(resolve(&app).unwrap().packages.len(), 3);
+        let snapshot = resolve(&app).unwrap();
+        assert_eq!(snapshot.packages.len(), 3);
         fs::write(util.join("api.phoebe"), "fn id(x: I64) -> I64 = x + 0\n").unwrap();
+        assert_eq!(
+            snapshot.packages[2].modules["api"].bytes,
+            b"fn id(x: I64) -> I64 = x\n"
+        );
         assert!(resolve(&app).unwrap_err().contains("stale dependency pins"));
         write_lock(&app).unwrap();
         assert_eq!(resolve(&app).unwrap().packages.len(), 3);

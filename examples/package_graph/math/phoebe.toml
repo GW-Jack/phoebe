@@ -1,0 +1,11 @@
+[package]
+name = "package_math"
+version = "0.0.1"
+root = "api"
+
+[modules]
+api = "api.phoebe"
+helper = "helper.phoebe"
+
+[dependencies]
+util = { path = "../util", version = "0.0.1" }

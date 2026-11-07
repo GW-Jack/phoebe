@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use phoebe_syntax::syntax::{self, Body, CallArgument, Expr, ExprKind, Statement, TypeName};
 use phoebe_syntax::{Diagnostic, Span};
 
+mod graph;
 mod interface;
 mod session;
 
@@ -48,6 +49,8 @@ impl Loaded {
 #[derive(Clone)]
 struct Module {
     name: String,
+    package_root: String,
+    available: HashMap<String, String>,
     path: PathBuf,
     source: String,
     ast: syntax::Program,
@@ -91,11 +94,7 @@ fn load_with_cache(
         .map_err(|error| format!("{}: {error}", manifest_path.display()))?;
     let manifest: toml::Table =
         toml::from_str(&source).map_err(|error| format!("{}: {error}", manifest_path.display()))?;
-    let table = &manifest;
-    if table.contains_key("dependencies") {
-        return Err("external dependencies are not implemented in this project loader".into());
-    }
-    let package = table
+    let package = manifest
         .get("package")
         .and_then(toml::Value::as_table)
         .ok_or("manifest requires [package]")?;
@@ -103,30 +102,57 @@ fn load_with_cache(
     if !identifier(name) {
         return Err("package name must be an identifier".into());
     }
-    let root = manifest_string(package, "root")?;
-    let modules = table
+    let root = manifest_string(package, "root")?.to_owned();
+    let module_table = manifest
         .get("modules")
         .and_then(toml::Value::as_table)
         .ok_or("manifest requires [modules]")?;
-    if !modules.contains_key(root) {
+    if !module_table.contains_key(&root) {
         return Err(format!("root module `{root}` is not listed in [modules]"));
     }
     let directory = manifest_path.parent().unwrap_or(Path::new("."));
     let mut parsed = Vec::new();
-    let mut modules = modules
-        .iter()
-        .map(|(name, path)| {
-            if !identifier(name) {
+    let specs = if manifest.contains_key("dependencies") {
+        graph::sources(&manifest_path, source.as_bytes())?.1
+    } else {
+        let available = module_table
+            .keys()
+            .map(|name| (name.clone(), name.clone()))
+            .collect::<HashMap<_, _>>();
+        module_table
+            .iter()
+            .map(|(name, path)| {
+                if !identifier(name) {
+                    return Err(format!("invalid module name `{name}`"));
+                }
+                let relative = path
+                    .as_str()
+                    .ok_or_else(|| format!("module `{name}` path must be a string"))?;
+                Ok(graph::SourceSpec {
+                    name: name.clone(),
+                    path: directory.join(relative),
+                    source: None,
+                    package_root: root.clone(),
+                    available: available.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?
+    };
+    let mut modules = specs
+        .into_iter()
+        .map(|spec| {
+            let name = spec.name;
+            if !identifier(&name) {
                 return Err(format!("invalid module name `{name}`"));
             }
-            let relative = path
-                .as_str()
-                .ok_or_else(|| format!("module `{name}` path must be a string"))?;
-            let path = directory.join(relative);
-            let source = fs::read_to_string(&path)
-                .map_err(|error| format!("{}: {error}", path.display()))?;
+            let path = spec.path;
+            let source = if let Some(source) = spec.source {
+                source
+            } else {
+                fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?
+            };
             let ast = if let Some(previous) = cache
-                .and_then(|cache| cache.get(name))
+                .and_then(|cache| cache.get(&name))
                 .filter(|previous| previous.path == path && previous.source == source)
             {
                 previous.ast.clone()
@@ -136,7 +162,9 @@ fn load_with_cache(
                     .map_err(|error| format!("{}:{}", path.display(), error.render(&source)))?
             };
             Ok(Module {
-                name: name.clone(),
+                name,
+                package_root: spec.package_root,
+                available: spec.available,
                 path,
                 source,
                 ast,
@@ -148,18 +176,27 @@ fn load_with_cache(
         .iter()
         .map(|module| module.name.clone())
         .collect::<HashSet<_>>();
+    if names.len() != modules.len() {
+        return Err("duplicate module name".into());
+    }
     for module in &modules {
         let mut seen = HashSet::new();
         for import in &module.ast.imports {
-            if !names.contains(import.name.as_str()) {
+            let Some(target) = module.available.get(&import.name) else {
                 return Err(format!(
                     "{}:{}",
                     module.path.display(),
                     Diagnostic::new(import.span, format!("unknown module {}", import.name))
                         .render(&module.source)
                 ));
+            };
+            if !names.contains(target) {
+                return Err(format!("unresolved module `{}`", import.name));
             }
-            if import.name == module.name || import.name == root || !seen.insert(&import.name) {
+            if target == &module.name
+                || target == &module.package_root
+                || !seen.insert(&import.name)
+            {
                 return Err(format!(
                     "{}:{}",
                     module.path.display(),
@@ -212,9 +249,9 @@ fn load_with_cache(
             .ast
             .imports
             .iter()
-            .map(|item| item.name.clone())
-            .collect::<HashSet<_>>();
-        if let Some(collision) = imports.iter().find(|name| local_data.contains(*name)) {
+            .map(|item| (item.name.clone(), module.available[&item.name].clone()))
+            .collect::<HashMap<_, _>>();
+        if let Some(collision) = imports.keys().find(|name| local_data.contains(*name)) {
             return Err(format!(
                 "{}: imported module `{collision}` conflicts with a local data type",
                 module.path.display()
@@ -223,48 +260,66 @@ fn load_with_cache(
         let mut result_names = HashMap::new();
         for (ty, span) in &mut module.ast.applied_results {
             let before = ty.key();
-            qualify_type(ty, &module.name, &local_data, &imports, &names)
+            qualify_type(ty, &module.name, &local_data, &imports, &module.available)
                 .map_err(|message| source_error(path, source, *span, message))?;
             result_names.insert(before, ty.key());
         }
         for definition in &mut module.ast.data {
             for variant in &mut definition.variants {
                 if let Some(payload) = &mut variant.payload {
-                    qualify_type(&mut payload.ty, &module.name, &local_data, &imports, &names)
-                        .map_err(|message| source_error(path, source, payload.span, message))?;
+                    qualify_type(
+                        &mut payload.ty,
+                        &module.name,
+                        &local_data,
+                        &imports,
+                        &module.available,
+                    )
+                    .map_err(|message| source_error(path, source, payload.span, message))?;
                 }
             }
             for field in &mut definition.fields {
-                qualify_type(&mut field.ty, &module.name, &local_data, &imports, &names)
-                    .map_err(|message| source_error(path, source, field.span, message))?;
+                qualify_type(
+                    &mut field.ty,
+                    &module.name,
+                    &local_data,
+                    &imports,
+                    &module.available,
+                )
+                .map_err(|message| source_error(path, source, field.span, message))?;
             }
             definition.name = format!("{}.{}", module.name, definition.name);
         }
         for function in &mut module.ast.functions {
             for param in &mut function.params {
-                qualify_type(&mut param.ty, &module.name, &local_data, &imports, &names)
-                    .map_err(|message| source_error(path, source, param.span, message))?;
+                qualify_type(
+                    &mut param.ty,
+                    &module.name,
+                    &local_data,
+                    &imports,
+                    &module.available,
+                )
+                .map_err(|message| source_error(path, source, param.span, message))?;
             }
             qualify_type(
                 &mut function.return_type,
                 &module.name,
                 &local_data,
                 &imports,
-                &names,
+                &module.available,
             )
             .map_err(|message| source_error(path, source, function.name_span, message))?;
             rewrite_body(
                 &mut function.body,
                 &module.name,
-                root,
+                &root,
                 &local_data,
                 &local_functions,
                 &imports,
-                &names,
+                &module.available,
                 &result_names,
             )
             .map_err(|(span, message)| source_error(path, source, span, message))?;
-            function.name = symbol(&module.name, &function.name, root);
+            function.name = symbol(&module.name, &function.name, &root);
         }
         interfaces.push(interface::from_program(&module.name, &module.ast));
         function_modules.extend(std::iter::repeat_n(
@@ -321,7 +376,7 @@ fn check_import_cycles(modules: &[Module]) -> Result<Vec<String>, String> {
                     .ast
                     .imports
                     .iter()
-                    .map(|import| import.name.as_str())
+                    .map(|import| module.available[&import.name].as_str())
                     .collect::<Vec<_>>(),
             )
         })
@@ -368,8 +423,8 @@ fn qualify_type(
     ty: &mut TypeName,
     module: &str,
     local_data: &HashSet<String>,
-    imports: &HashSet<String>,
-    modules: &HashSet<String>,
+    imports: &HashMap<String, String>,
+    available: &HashMap<String, String>,
 ) -> Result<(), String> {
     match ty {
         TypeName::I64 | TypeName::Bool | TypeName::SenderI64 | TypeName::ReceiverI64 => {}
@@ -377,16 +432,17 @@ fn qualify_type(
             *name = format!("{module}.{name}");
         }
         TypeName::Named(name) => {
-            if let Some((prefix, _)) = name.split_once('.')
-                && modules.contains(prefix)
-                && !imports.contains(prefix)
-            {
-                return Err(format!("module `{prefix}` is not imported"));
+            if let Some((prefix, member)) = name.split_once('.') {
+                if let Some(target) = imports.get(prefix) {
+                    *name = format!("{target}.{member}");
+                } else if available.contains_key(prefix) {
+                    return Err(format!("module `{prefix}` is not imported"));
+                }
             }
         }
         TypeName::Result(ok, err) => {
-            qualify_type(ok, module, local_data, imports, modules)?;
-            qualify_type(err, module, local_data, imports, modules)?;
+            qualify_type(ok, module, local_data, imports, available)?;
+            qualify_type(err, module, local_data, imports, available)?;
         }
     }
     Ok(())
@@ -399,8 +455,8 @@ fn rewrite_body(
     root: &str,
     local_data: &HashSet<String>,
     local_functions: &HashSet<String>,
-    imports: &HashSet<String>,
-    modules: &HashSet<String>,
+    imports: &HashMap<String, String>,
+    available: &HashMap<String, String>,
     results: &HashMap<String, String>,
 ) -> Result<(), (Span, String)> {
     let rewrite = |expr: &mut Expr| {
@@ -411,7 +467,7 @@ fn rewrite_body(
             local_data,
             local_functions,
             imports,
-            modules,
+            available,
             results,
         )
     };
@@ -442,7 +498,7 @@ fn rewrite_body(
                     local_data,
                     local_functions,
                     imports,
-                    modules,
+                    available,
                     results,
                 )?;
             }
@@ -455,7 +511,7 @@ fn rewrite_body(
                     local_data,
                     local_functions,
                     imports,
-                    modules,
+                    available,
                     results,
                 )?;
             }
@@ -474,8 +530,8 @@ fn rewrite_expr(
     root: &str,
     local_data: &HashSet<String>,
     local_functions: &HashSet<String>,
-    imports: &HashSet<String>,
-    modules: &HashSet<String>,
+    imports: &HashMap<String, String>,
+    available: &HashMap<String, String>,
     results: &HashMap<String, String>,
 ) -> Result<(), (Span, String)> {
     let span = expr.span;
@@ -487,7 +543,7 @@ fn rewrite_expr(
             local_data,
             local_functions,
             imports,
-            modules,
+            available,
             results,
         )
     };
@@ -512,7 +568,7 @@ fn rewrite_expr(
                     local_data,
                     local_functions,
                     imports,
-                    modules,
+                    available,
                     results,
                 )?;
             }
@@ -526,7 +582,7 @@ fn rewrite_expr(
                 local_data,
                 local_functions,
                 imports,
-                modules,
+                available,
                 results,
             )?;
         }
@@ -545,7 +601,9 @@ fn rewrite_expr(
                 *name = format!("{module}.{name}");
             } else if let Some(qualified) = results.get(name) {
                 *name = qualified.clone();
-            } else if modules.contains(name.as_str()) && !imports.contains(name) {
+            } else if let Some(target) = imports.get(name.as_str()) {
+                *name = target.clone();
+            } else if available.contains_key(name.as_str()) {
                 return Err((span, format!("module `{name}` is not imported")));
             }
             rewrite_args(args, &mut nested)?;
@@ -575,7 +633,7 @@ fn rewrite_expr(
                     local_data,
                     local_functions,
                     imports,
-                    modules,
+                    available,
                     results,
                 )?;
             }

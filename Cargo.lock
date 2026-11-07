@@ -460,6 +460,7 @@ dependencies = [
 name = "phoebe-project"
 version = "0.0.1"
 dependencies = [
+ "phoebe-package",
  "phoebe-syntax",
  "toml",
 ]

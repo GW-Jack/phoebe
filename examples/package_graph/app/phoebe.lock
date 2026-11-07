@@ -1,0 +1,13 @@
+version = 1
+
+[[package]]
+locator = "math"
+name = "package_math"
+version = "0.0.1"
+sha256 = "e74f1d47148b8134a169c6d1bad497c5721f078e98e9624b9c81a4cff7dbe7e9"
+
+[[package]]
+locator = "math/util"
+name = "package_util"
+version = "0.0.1"
+sha256 = "761a5745856d1d8a09738582d1b7c3127926e21a370ac8d994942b5288a22bca"
