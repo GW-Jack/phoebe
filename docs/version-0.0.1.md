@@ -109,6 +109,10 @@ returning `Result<_, ResourceError>`, with explicit endpoint `close()`.
 twice-closed endpoints. General source capability safety, send/receive, and
 lexical cleanup remain open. `docs/capability-ir.md` specifies
 the integration boundary.
+The versioned runtime ABI now has send and receive calls with explicit
+`Pending` statuses and no endpoint transfer. Scheduler tests show wake and
+retry across both operations. Core and Cranelift still need generated task
+frames and suspension edges before source send/receive can use those calls.
 
 ## Commands
 

@@ -4,8 +4,9 @@ Status: executable Rust kernel for one scope, bounded `I64` and request
 channels, and one-shot `ReplyTo<I64>`. Hand-built Core programs can interpret
 channel creation and endpoint close through it. Cranelift JIT and standalone
 object code call the same kernel for those operations through a C ABI shim.
-Source syntax, compiler-generated continuations, and general typed messages
-are not implemented here yet.
+Source syntax covers fallible `I64` channel creation and explicit endpoint
+close. Compiler-generated continuations and general typed messages are not
+implemented yet.
 
 `Scheduler` owns bounded tables of task records, channels, and reply slots.
 The caller supplies all three limits. Each task has
@@ -46,7 +47,7 @@ Rust tasks. All capacity reservations precede publication of either new
 right, so an error creates no partial endpoint pair. Core lowers hand-built
 `channel.new.i64` edges through `channel_typed` in its interpreter, and its
 verifier checks the success/failure ownership graph. Source syntax and native
-code generation still need this bridge. The current Core interpreter uses one
+code generation use this bridge for creation and close. The current Core interpreter uses one
 root task; send, receive, child tasks, and suspension are not yet executable
 through Core.
 
@@ -87,8 +88,14 @@ suspension; its capability slots are included in failure cleanup metadata.
 Typed channel slots need a compiler-provided layout and structural cleanup
 table before arbitrary source-language messages can carry `ReplyTo` or other
 capabilities. The current request layout is hard-coded to an `I64` payload and
-an `I64` reply. The native ABI currently covers only scalar channel creation and
-endpoint close. The C ABI creation call publishes both output tokens only on
+an `I64` reply. The native ABI also exports `phoebe_rt_v1_send_i64` and
+`phoebe_rt_v1_receive_i64`. Send reports `Sent`, `Pending`, or `Closed`;
+receive reports `Value`, `Pending`, or `End` and writes its output word only
+on `Value`. Both calls retain the endpoint. Runtime tests exercise pending
+sends and receives across scheduler wakeups. Cranelift-generated code does
+not call these shims yet: it needs a retained frame and a return to the
+scheduler on `Pending`, followed by a retry on wake.
+The C ABI creation call publishes both output tokens only on
 success; native generated code loads them only on that edge. Standalone builds
 link `libphoebe.a` beside the compiler binary. A development build can produce
 the archive once with `cargo build --lib` when it is missing; a distributed

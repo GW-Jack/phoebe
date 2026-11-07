@@ -4,6 +4,7 @@ use std::task::Poll;
 use phoebe::runtime::{
     CompleteResult, Context, NativeCallContext, Receiver, ReplyReceiveResult, Request,
     ResourceError, Scheduler, Sender, Task, phoebe_channel_new_i64, phoebe_close_handle_i64,
+    phoebe_receive_i64, phoebe_send_i64,
 };
 
 struct UnstartedChild {
@@ -145,12 +146,38 @@ impl Task for NativeAbiRoot {
         let accepted =
             unsafe { phoebe_channel_new_i64(&mut bridge, 1, &mut sender, &mut receiver) };
         assert_eq!(accepted, 0);
+        assert_eq!(unsafe { phoebe_send_i64(&mut bridge, sender, 41) }, 0);
+        let mut value = -1;
+        assert_eq!(
+            unsafe { phoebe_receive_i64(&mut bridge, receiver, &mut value) },
+            0
+        );
+        assert_eq!(value, 41);
         assert_eq!(
             unsafe { phoebe_close_handle_i64(&mut bridge, sender, 0) },
             0
         );
+        value = -1;
+        assert_eq!(
+            unsafe { phoebe_receive_i64(&mut bridge, receiver, &mut value) },
+            2
+        );
+        assert_eq!(value, -1);
         assert_eq!(
             unsafe { phoebe_close_handle_i64(&mut bridge, receiver, 1) },
+            0
+        );
+        assert_eq!(
+            unsafe { phoebe_channel_new_i64(&mut bridge, 1, &mut sender, &mut receiver) },
+            0
+        );
+        assert_eq!(
+            unsafe { phoebe_close_handle_i64(&mut bridge, receiver, 1) },
+            0
+        );
+        assert_eq!(unsafe { phoebe_send_i64(&mut bridge, sender, 42) }, 2);
+        assert_eq!(
+            unsafe { phoebe_close_handle_i64(&mut bridge, sender, 0) },
             0
         );
         assert!(!fault);
@@ -160,7 +187,7 @@ impl Task for NativeAbiRoot {
 
 #[test]
 fn native_abi_publishes_both_handles_only_on_success() {
-    let mut scheduler = Scheduler::new(NativeAbiRoot, 1, 1, 0).unwrap();
+    let mut scheduler = Scheduler::new(NativeAbiRoot, 1, 2, 0).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.open_handles(), 0);
     scheduler.verify().unwrap();

@@ -172,6 +172,79 @@ pub unsafe extern "C" fn phoebe_close_handle_i64(
     }
 }
 
+/// Send status: 0 sent, 1 pending, 2 closed, 255 runtime fault. The sender
+/// remains owned by the caller on every edge; a pending send retains its
+/// message in the generated task frame and retries after a wake.
+///
+/// # Safety
+///
+/// `bridge` must satisfy the lifetime and exclusive-borrow contract of
+/// `phoebe_channel_new_i64`; `sender_token` must be a checked sender token.
+#[unsafe(export_name = "phoebe_rt_v1_send_i64")]
+pub unsafe extern "C" fn phoebe_send_i64(
+    bridge: *mut NativeCallContext,
+    sender_token: i64,
+    message: i64,
+) -> i64 {
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let bridge = unsafe { &mut *bridge };
+        let context = unsafe { &mut *(bridge.context as *mut Context<'_>) };
+        let token = usize::try_from(sender_token)
+            .map(Token)
+            .map_err(|_| "negative sender token")?;
+        context.send(&Sender { token }, message)
+    }));
+    match outcome {
+        Ok(Ok(SendResult::Sent)) => 0,
+        Ok(Ok(SendResult::Pending(_))) => 1,
+        Ok(Ok(SendResult::Closed(_))) => 2,
+        _ => {
+            if !bridge.is_null() {
+                unsafe { *(*bridge).fault = true };
+            }
+            255
+        }
+    }
+}
+
+/// Receive status: 0 value, 1 pending, 2 end, 255 runtime fault. `value_out`
+/// is written only on the value edge. The receiver stays owned by the caller.
+///
+/// # Safety
+///
+/// `bridge` must satisfy the lifetime and exclusive-borrow contract of
+/// `phoebe_channel_new_i64`; `receiver_token` must be a checked receiver
+/// token, and `value_out` must be aligned and writable on a value edge.
+#[unsafe(export_name = "phoebe_rt_v1_receive_i64")]
+pub unsafe extern "C" fn phoebe_receive_i64(
+    bridge: *mut NativeCallContext,
+    receiver_token: i64,
+    value_out: *mut i64,
+) -> i64 {
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let bridge = unsafe { &mut *bridge };
+        let context = unsafe { &mut *(bridge.context as *mut Context<'_>) };
+        let token = usize::try_from(receiver_token)
+            .map(Token)
+            .map_err(|_| "negative receiver token")?;
+        context.receive(&Receiver { token })
+    }));
+    match outcome {
+        Ok(Ok(ReceiveResult::Value(value))) => {
+            unsafe { *value_out = value };
+            0
+        }
+        Ok(Ok(ReceiveResult::Pending)) => 1,
+        Ok(Ok(ReceiveResult::End)) => 2,
+        _ => {
+            if !bridge.is_null() {
+                unsafe { *(*bridge).fault = true };
+            }
+            255
+        }
+    }
+}
+
 struct StandaloneRootTask {
     entry: extern "C" fn(*mut NativeCallContext) -> i64,
 }
@@ -1371,5 +1444,163 @@ impl Context<'_> {
             self.wait = Some(Wait::Join);
             Ok(Poll::Pending)
         }
+    }
+}
+
+#[cfg(test)]
+mod native_poll_tests {
+    use super::*;
+
+    struct Drain {
+        receiver: Option<Receiver>,
+        values: Vec<i64>,
+    }
+
+    impl Task for Drain {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            loop {
+                match context.receive(self.receiver.as_ref().expect("retained receiver"))? {
+                    ReceiveResult::Value(value) => self.values.push(value),
+                    ReceiveResult::Pending => return Ok(Poll::Pending),
+                    ReceiveResult::End => {
+                        context.close_receiver(self.receiver.take().expect("retained receiver"))?;
+                        assert_eq!(self.values, [11, 22]);
+                        return Ok(Poll::Ready(0));
+                    }
+                }
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct AbiSender {
+        sender: Option<Sender>,
+        phase: u8,
+    }
+
+    impl Task for AbiSender {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            if self.phase == 0 {
+                let (sender, receiver) = context.channel(1)?;
+                let token = receiver.token();
+                context.spawn(
+                    Drain {
+                        receiver: Some(receiver),
+                        values: Vec::new(),
+                    },
+                    &[token],
+                )?;
+                self.sender = Some(sender);
+                self.phase = 1;
+            }
+            let mut fault = false;
+            let mut bridge = NativeCallContext {
+                context: context as *mut _ as *mut c_void,
+                fault: &mut fault,
+            };
+            if self.phase == 1 {
+                let token = self.sender.as_ref().expect("retained sender").token.0 as i64;
+                assert_eq!(unsafe { phoebe_send_i64(&mut bridge, token, 11) }, 0);
+                self.phase = 2;
+            }
+            if self.phase == 2 {
+                let token = self.sender.as_ref().expect("retained sender").token.0 as i64;
+                match unsafe { phoebe_send_i64(&mut bridge, token, 22) } {
+                    1 => return Ok(Poll::Pending),
+                    0 => {
+                        self.phase = 3;
+                        context.close_sender(self.sender.take().expect("retained sender"))?;
+                    }
+                    code => return Err(format!("unexpected send status {code}")),
+                }
+            }
+            assert!(!fault);
+            match context.join()? {
+                Poll::Pending => Ok(Poll::Pending),
+                Poll::Ready(()) => Ok(Poll::Ready(42)),
+            }
+        }
+    }
+
+    #[test]
+    fn native_send_pending_retries_after_scheduler_wake() {
+        let mut scheduler = Scheduler::new(AbiSender::default(), 2, 1, 0).unwrap();
+        assert_eq!(scheduler.run().unwrap(), 42);
+        assert!(scheduler.stats().parks >= 2);
+        assert!(scheduler.stats().wakes >= 2);
+        scheduler.verify().unwrap();
+    }
+
+    struct Producer {
+        sender: Option<Sender>,
+    }
+
+    impl Task for Producer {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            match context.send(self.sender.as_ref().expect("retained sender"), 33)? {
+                SendResult::Sent => {
+                    context.close_sender(self.sender.take().expect("retained sender"))?;
+                    Ok(Poll::Ready(0))
+                }
+                SendResult::Pending(_) => Ok(Poll::Pending),
+                SendResult::Closed(_) => Err("receiver closed early".into()),
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct AbiReceiver {
+        receiver: Option<Receiver>,
+        received: bool,
+    }
+
+    impl Task for AbiReceiver {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            if self.receiver.is_none() && !self.received {
+                let (sender, receiver) = context.channel(1)?;
+                let token = sender.token();
+                context.spawn(
+                    Producer {
+                        sender: Some(sender),
+                    },
+                    &[token],
+                )?;
+                self.receiver = Some(receiver);
+            }
+            if let Some(receiver) = &self.receiver {
+                let mut fault = false;
+                let mut bridge = NativeCallContext {
+                    context: context as *mut _ as *mut c_void,
+                    fault: &mut fault,
+                };
+                let mut value = -1;
+                match unsafe {
+                    phoebe_receive_i64(&mut bridge, receiver.token.0 as i64, &mut value)
+                } {
+                    1 => {
+                        assert_eq!(value, -1);
+                        return Ok(Poll::Pending);
+                    }
+                    0 => assert_eq!(value, 33),
+                    code => return Err(format!("unexpected receive status {code}")),
+                }
+                assert!(!fault);
+                context.close_receiver(self.receiver.take().expect("retained receiver"))?;
+                self.received = true;
+            }
+            match context.join()? {
+                Poll::Pending => Ok(Poll::Pending),
+                Poll::Ready(()) => Ok(Poll::Ready(33)),
+            }
+        }
+    }
+
+    #[test]
+    fn native_receive_pending_writes_only_after_scheduler_wake() {
+        let mut scheduler = Scheduler::new(AbiReceiver::default(), 2, 1, 0).unwrap();
+        assert_eq!(scheduler.run().unwrap(), 33);
+        assert!(scheduler.stats().parks >= 1);
+        assert!(scheduler.stats().wakes >= 1);
+        scheduler.verify().unwrap();
     }
 }

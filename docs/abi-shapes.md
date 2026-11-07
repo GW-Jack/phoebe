@@ -25,6 +25,14 @@ only on success. `close.handle` calls a separate shim. Standalone builds link
 the same shim and scheduler from `libphoebe.a`, so this Core slice has one
 runtime implementation across interpreter, JIT, and object code.
 
+The runtime archive now exports versioned scalar send and receive shims.
+Their statuses distinguish successful transfer, a parked operation, and
+closed/end. A pending send leaves its message and sender with the caller; a
+pending receive leaves its receiver with the caller and does not write the
+output value. Generated code must retain those operands in a task frame and
+return to the scheduler before it can use the shims. The current Cranelift
+lowering does not emit these calls.
+
 For a product, `product` gathers existing SSA components and `field` selects
 the complete component range of one field. Neither operation creates a native
 heap object or a Core IR place. A
