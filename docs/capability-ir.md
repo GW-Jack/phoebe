@@ -80,6 +80,12 @@ same edge form handles `spawn_owned`: success transfers the child frame's
 slots to the new task; failure returns the intact frame and retains its slots
 with the parent.
 
+The preparatory flow checker has an atomic `CreatePair` edge action and tests
+the resulting success and failure ownership states. It rejects aliased or
+already-live result slots. It does not yet know which Core successor is the
+resource failure successor; that association must be generated and checked
+when the typed creation terminator enters Core IR.
+
 | Operation | Required task ownership | Success transition | Other edge |
 | --- | --- | --- | --- |
 | `scope.enter` | Parent scope live | Create child scope budget | Resource failure |

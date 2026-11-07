@@ -36,6 +36,15 @@ recoverable source-language failure edge. Runtime validation still cannot
 inspect arbitrary fields of a handwritten Rust child frame; checked Core IR
 must supply and verify its transfer list.
 
+Channel and reply creation now also have typed kernel entry points:
+`channel_typed`, `request_channel_typed`, and `reply_typed` return
+`ResourceError` variants for invalid capacity, table limits, and allocation
+failure. The existing string-returning calls are wrappers for handwritten
+Rust tasks. All capacity reservations precede publication of either new
+right, so an error creates no partial endpoint pair. The compiler still needs
+to lower these calls as two-successor Core terminators and connect them to
+the capability-flow verifier.
+
 `reply()` creates a one-shot right and receiver. A `Request` holds an `I64`
 value and that right. `send_request` on a full or closed queue returns the
 intact request to its task; a successful send changes the right's owner to the

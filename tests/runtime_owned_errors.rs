@@ -1,7 +1,8 @@
 use std::task::Poll;
 
 use phoebe::runtime::{
-    CompleteResult, Context, Receiver, ReplyReceiveResult, Request, Scheduler, Sender, Task,
+    CompleteResult, Context, Receiver, ReplyReceiveResult, Request, ResourceError, Scheduler,
+    Sender, Task,
 };
 
 struct UnstartedChild {
@@ -79,6 +80,43 @@ impl Task for SendFailureRoot {
 #[test]
 fn failed_request_send_returns_intact_reply_right() {
     let mut scheduler = Scheduler::new(SendFailureRoot, 1, 1, 1).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
+    assert_eq!(scheduler.open_handles(), 0);
+    scheduler.verify().unwrap();
+}
+
+struct CreationFailureRoot;
+
+impl Task for CreationFailureRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        assert_eq!(
+            context.channel_typed(0).unwrap_err(),
+            ResourceError::InvalidChannelCapacity
+        );
+        assert_eq!(
+            context.channel_typed(usize::MAX).unwrap_err(),
+            ResourceError::Allocation
+        );
+        let (sender, receiver) = context
+            .channel_typed(1)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            context.request_channel_typed(1).unwrap_err(),
+            ResourceError::ChannelLimit
+        );
+        assert_eq!(
+            context.reply_typed().unwrap_err(),
+            ResourceError::ReplyLimit
+        );
+        context.close_sender(sender)?;
+        context.close_receiver(receiver)?;
+        Ok(Poll::Ready(42))
+    }
+}
+
+#[test]
+fn typed_creation_errors_preserve_resource_tables() {
+    let mut scheduler = Scheduler::new(CreationFailureRoot, 1, 1, 0).unwrap();
     assert_eq!(scheduler.run().unwrap(), 42);
     assert_eq!(scheduler.open_handles(), 0);
     scheduler.verify().unwrap();

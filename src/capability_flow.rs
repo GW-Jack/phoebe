@@ -10,6 +10,7 @@ pub struct Slot(pub usize);
 pub enum Action {
     Require(Slot),
     Create(Slot),
+    CreatePair { first: Slot, second: Slot },
     Move { from: Slot, to: Slot },
     Close(Slot),
     Transfer(Slot),
@@ -95,6 +96,30 @@ fn apply(actions: &[Action], state: &mut [bool], block: usize) -> Result<(), Str
                 }
                 None => return Err(format!("block {block}: invalid capability slot {}", slot.0)),
             },
+            Action::CreatePair { first, second } => {
+                if first == second {
+                    return Err(format!("block {block}: paired creation aliases a slot"));
+                }
+                for slot in [first, second] {
+                    match state.get(slot.0) {
+                        Some(false) => {}
+                        Some(true) => {
+                            return Err(format!(
+                                "block {block}: capability slot {} is already live",
+                                slot.0
+                            ));
+                        }
+                        None => {
+                            return Err(format!(
+                                "block {block}: invalid capability slot {}",
+                                slot.0
+                            ));
+                        }
+                    }
+                }
+                state[first.0] = true;
+                state[second.0] = true;
+            }
             Action::Move { from, to } => {
                 require(from)?;
                 if from == to || state.get(to.0) != Some(&false) {

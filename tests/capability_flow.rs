@@ -177,3 +177,73 @@ fn capability_cannot_be_duplicated_or_consumed_twice() {
     graph.blocks[0].actions = vec![Action::Close(Slot(0)), Action::Close(Slot(0))];
     assert!(verify(&graph).unwrap_err().contains("not live"));
 }
+
+#[test]
+fn fallible_pair_creation_changes_only_the_success_edge() {
+    let pair = Action::CreatePair {
+        first: Slot(1),
+        second: Slot(2),
+    };
+    let graph = Graph {
+        slots: 3,
+        entry_live: vec![Slot(0)],
+        blocks: vec![
+            Block {
+                actions: vec![],
+                exits: vec![
+                    edge(Target::Block(1), vec![pair]),
+                    edge(Target::Block(2), vec![]),
+                ],
+            },
+            Block {
+                actions: vec![Action::Require(Slot(1)), Action::Require(Slot(2))],
+                exits: vec![edge(
+                    Target::Return,
+                    vec![
+                        Action::Close(Slot(1)),
+                        Action::Close(Slot(2)),
+                        Action::Close(Slot(0)),
+                    ],
+                )],
+            },
+            Block {
+                actions: vec![Action::Require(Slot(0))],
+                exits: vec![edge(Target::Return, vec![Action::Close(Slot(0))])],
+            },
+        ],
+    };
+    assert!(verify(&graph).is_ok());
+
+    let mut missing_endpoint = graph.clone();
+    missing_endpoint.blocks[0].exits[0].actions = vec![Action::Create(Slot(1))];
+    assert!(verify(&missing_endpoint).unwrap_err().contains("not live"));
+
+    let mut partial_failure = graph;
+    partial_failure.blocks[0].exits[1].actions = vec![Action::Create(Slot(1))];
+    assert!(
+        verify(&partial_failure)
+            .unwrap_err()
+            .contains("normal return leaks")
+    );
+}
+
+#[test]
+fn paired_creation_requires_distinct_empty_slots() {
+    let mut graph = Graph {
+        slots: 2,
+        entry_live: vec![Slot(0)],
+        blocks: vec![Block {
+            actions: vec![Action::CreatePair {
+                first: Slot(1),
+                second: Slot(1),
+            }],
+            exits: vec![edge(Target::Return, vec![Action::Close(Slot(0))])],
+        }],
+    };
+    assert!(verify(&graph).unwrap_err().contains("aliases a slot"));
+    graph.blocks[0].actions[0] = Action::CreatePair {
+        first: Slot(0),
+        second: Slot(1),
+    };
+    assert!(verify(&graph).unwrap_err().contains("already live"));
+}

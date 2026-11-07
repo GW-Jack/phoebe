@@ -93,6 +93,8 @@ handle transfer, reply transfer through a request queue, rejected sends,
 queued request discard, cancellation, close, failure cleanup, and deadlock
 cleanup. Recoverable runtime calls return the original frame or request on
 pre-commit failure; source lowering does not use them yet.
+Typed resource creation errors now distinguish invalid capacity, table
+limits, and allocation failure without publishing partial endpoint pairs.
 `docs/runtime-kernel.md` describes the kernel and the compiler,
 general typed-message, and native-runtime integration still required.
 `src/capability_flow.rs` separately checks exact slot ownership in abstract

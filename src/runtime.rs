@@ -2,6 +2,7 @@
 //! Compiler-generated continuations and typed message layouts are future work.
 
 use std::collections::VecDeque;
+use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::task::Poll;
 
@@ -49,6 +50,28 @@ pub struct OwnedError<T> {
     pub message: String,
     pub value: T,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResourceError {
+    InvalidChannelCapacity,
+    ChannelLimit,
+    ReplyLimit,
+    Allocation,
+}
+
+impl fmt::Display for ResourceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidChannelCapacity | Self::ChannelLimit => {
+                f.write_str("channel capacity or scope channel limit exceeded")
+            }
+            Self::ReplyLimit => f.write_str("scope reply limit exceeded"),
+            Self::Allocation => f.write_str("scope allocation failed"),
+        }
+    }
+}
+
+impl std::error::Error for ResourceError {}
 
 #[derive(Debug)]
 pub enum RequestReceiveResult {
@@ -655,17 +678,21 @@ impl Scheduler {
 
 impl Context<'_> {
     pub fn reply(&mut self) -> Result<(ReplyTo, ReplyReceiver), String> {
+        self.reply_typed().map_err(|error| error.to_string())
+    }
+
+    pub fn reply_typed(&mut self) -> Result<(ReplyTo, ReplyReceiver), ResourceError> {
         if self.scheduler.reply_rights.len() >= self.scheduler.max_replies {
-            return Err("scope reply limit exceeded".into());
+            return Err(ResourceError::ReplyLimit);
         }
         self.scheduler
             .reply_rights
             .try_reserve(1)
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| ResourceError::Allocation)?;
         self.scheduler
             .reply_slots
             .try_reserve(1)
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| ResourceError::Allocation)?;
         let slot = self.scheduler.reply_slots.len();
         let token = ReplyToken(self.scheduler.reply_rights.len());
         self.scheduler.reply_rights.push(ReplyRight {
@@ -892,10 +919,23 @@ impl Context<'_> {
     }
 
     pub fn channel(&mut self, capacity: usize) -> Result<(Sender, Receiver), String> {
-        self.create_channel(capacity, ChannelKind::Scalar)
+        self.channel_typed(capacity)
+            .map_err(|error| error.to_string())
     }
 
     pub fn request_channel(&mut self, capacity: usize) -> Result<(Sender, Receiver), String> {
+        self.request_channel_typed(capacity)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn channel_typed(&mut self, capacity: usize) -> Result<(Sender, Receiver), ResourceError> {
+        self.create_channel(capacity, ChannelKind::Scalar)
+    }
+
+    pub fn request_channel_typed(
+        &mut self,
+        capacity: usize,
+    ) -> Result<(Sender, Receiver), ResourceError> {
         self.create_channel(capacity, ChannelKind::Request)
     }
 
@@ -903,22 +943,25 @@ impl Context<'_> {
         &mut self,
         capacity: usize,
         kind: ChannelKind,
-    ) -> Result<(Sender, Receiver), String> {
-        if capacity == 0 || self.scheduler.channels.len() >= self.scheduler.max_channels {
-            return Err("channel capacity or scope channel limit exceeded".into());
+    ) -> Result<(Sender, Receiver), ResourceError> {
+        if capacity == 0 {
+            return Err(ResourceError::InvalidChannelCapacity);
+        }
+        if self.scheduler.channels.len() >= self.scheduler.max_channels {
+            return Err(ResourceError::ChannelLimit);
         }
         let mut queue = VecDeque::new();
         queue
             .try_reserve_exact(capacity)
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| ResourceError::Allocation)?;
         self.scheduler
             .channels
             .try_reserve(1)
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| ResourceError::Allocation)?;
         self.scheduler
             .handles
             .try_reserve(2)
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| ResourceError::Allocation)?;
         let channel = self.scheduler.channels.len();
         self.scheduler.channels.push(Channel {
             queue,
