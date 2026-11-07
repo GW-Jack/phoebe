@@ -141,10 +141,21 @@ fn physical_frame_words_reserve_flattened_result_and_only_live_payload() {
     assert_eq!(layouts.len(), 3);
     assert_eq!(layouts[0].result, 1..2);
     assert_eq!(layouts[0].total_words, 5);
+    assert_eq!(layouts[0].resumes.len(), 2);
+    assert_eq!(layouts[0].resumes[0].pc, 1);
+    assert_eq!(layouts[0].resumes[1].pc, 2);
+    assert!(
+        layouts[0]
+            .resumes
+            .iter()
+            .all(|slot| slot.instruction.is_none())
+    );
     assert_eq!(layouts[1].result, 1..3);
     assert_eq!(layouts[1].total_words, 6);
     assert_eq!(layouts[2].result, 1..2);
     assert_eq!(layouts[2].total_words, 2);
+    assert_eq!(layouts[2].resumes.len(), 1);
+    assert!(layouts[2].resumes[0].instruction.is_some());
     let frames = frame_layout::analyze(&program).unwrap();
     assert!(
         frame_layout::word_layout(&program, &frames[0], |_| 0)
@@ -163,4 +174,32 @@ fn physical_frame_words_reserve_flattened_result_and_only_live_payload() {
             .unwrap_err()
             .contains("invalid frame value slot")
     );
+}
+
+#[test]
+fn entry_parameters_have_homes_even_when_dead_at_retry() {
+    let source = r#"
+fn wait(receiver: Receiver<I64>, seed: I64) -> I64 {
+  val discarded = seed + 1;
+  val item = receiver.receive();
+  receiver.close();
+  when (item) {
+    Receive<I64>.Value(value) -> { value },
+    Receive<I64>.End -> { 0 }
+  }
+}
+
+fn main() -> I64 = 0
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let frames = frame_layout::analyze(&program).unwrap();
+    let layout = &native::frame_word_layouts(&program).unwrap()[0];
+    let params = &program.functions[0].blocks[0].params;
+    assert_eq!(layout.entry_params.len(), 2);
+    assert_eq!(layout.entry_params[0].id, params[0]);
+    assert_eq!(layout.entry_params[1].id, params[1]);
+    assert_eq!(frames[0].value_slots, vec![params[0]]);
+    assert_eq!(layout.entry_params[0].words, layout.values[0].words);
+    assert_ne!(layout.entry_params[1].words, layout.values[0].words);
+    assert_eq!(layout.total_words, 4);
 }

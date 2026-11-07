@@ -35,12 +35,24 @@ pub struct WordSlot<T> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResumeSlot {
+    /// Zero is reserved for first entry; retries start at one.
+    pub pc: i64,
+    pub block: BlockId,
+    pub instruction: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrameWords {
     pub function: FunctionId,
     /// Word 0 is the program counter; this range starts at word 1.
     pub result: Range<usize>,
+    /// All entry parameters have an initial home. A parameter that also
+    /// crosses a suspension shares its retained value slot.
+    pub entry_params: Vec<WordSlot<ValueId>>,
     pub values: Vec<WordSlot<ValueId>>,
     pub places: Vec<WordSlot<PlaceId>>,
+    pub resumes: Vec<ResumeSlot>,
     pub total_words: usize,
 }
 
@@ -84,6 +96,25 @@ pub fn word_layout(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
+    let entry_params = function
+        .blocks
+        .first()
+        .ok_or("frame function has no entry block")?
+        .params
+        .iter()
+        .map(|id| {
+            let words = match values.iter().find(|slot| slot.id == *id) {
+                Some(slot) => slot.words.clone(),
+                None => reserve(
+                    *function
+                        .value_types
+                        .get(id.0)
+                        .ok_or("invalid frame entry parameter")?,
+                )?,
+            };
+            Ok(WordSlot { id: *id, words })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let places = frame
         .place_slots
         .iter()
@@ -105,11 +136,26 @@ pub fn word_layout(
     {
         return Err("native frame exceeds addressable fixed offsets".into());
     }
+    let resumes = frame
+        .points
+        .iter()
+        .enumerate()
+        .map(|(index, point)| {
+            Ok(ResumeSlot {
+                pc: i64::try_from(index.checked_add(1).ok_or("native resume count overflow")?)
+                    .map_err(|_| "native resume count overflow")?,
+                block: point.block,
+                instruction: point.instruction,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(FrameWords {
         function: frame.function,
         result,
+        entry_params,
         values,
         places,
+        resumes,
         total_words: next,
     })
 }

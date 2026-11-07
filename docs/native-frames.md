@@ -51,7 +51,11 @@ layout, not yet native code generation.
 The v1 poll ABI uses status `0` for Ready, `1` for Pending, and `255` for fault.
 The frame is a stable array of `I64` words: word 0 is the program counter,
 words starting at 1 hold the flattened result, and later words hold the
-generated payload. A root task returns `I64`, so its result is word 1.
+generated payload. Each entry parameter has a frame address before first
+execution; a parameter live across a suspension shares its retained value
+slot. Entry parameters that die before the first retry still need an initial
+address, but do not enter the spill set. A root task returns `I64`, so its
+result is word 1.
 The compiler's physical layout uses the existing ABI shape widths for each
 live value and place, and rejects a layout beyond fixed address offsets.
 For the source exchange, `exchange` reserves two result words for
@@ -62,6 +66,13 @@ keeps it in the task record across Pending. The standalone entry point
 scope. A synthetic poll test yields and resumes at the same frame address;
 another parks in the versioned receive ABI, wakes from a transferred sender,
 retries receive, and closes its endpoint.
+
+The physical layout reserves PC 0 for first entry and assigns positive PCs
+to suspension points in stable `(block, instruction)` order. These IDs are
+compiler-internal to one build; persisted frames or cross-version resume are
+outside the v1 ABI. A generated retry must start at the pending terminator or
+call continuation, using only that point's retained slots, without replaying
+earlier instructions in the block.
 
 Generated code still needs a program counter that distinguishes
 first entry from each retry or child continuation. The scheduler owns a
