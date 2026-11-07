@@ -21,7 +21,7 @@ use cranelift_native::builder as native_builder;
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use crate::core::{self, CallArg, MatchBinding, Operation, Program, Terminator, Type};
-use crate::frame_layout::{self, FrameWords};
+use crate::frame_layout::{self, FrameWords, FunctionFrame};
 use crate::runtime::{self, Context, NativeCallContext, Scheduler, ScopeLimits, Task};
 use crate::syntax::ParamMode;
 
@@ -72,6 +72,10 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
         jit.symbol(
             "phoebe_rt_v1_close_handle_i64",
             runtime::phoebe_close_handle_i64 as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_spawn_poll",
+            runtime::phoebe_spawn_poll as *const u8,
         );
     }
     let mut module = JITModule::new(jit);
@@ -450,7 +454,21 @@ fn compile_functions<M: Module>(
                 &close_signature,
             )
             .map_err(|error| error.to_string())?;
-        Some((create, close))
+        let mut spawn_signature = module.make_signature();
+        spawn_signature.params.extend([
+            AbiParam::new(pointer_type),
+            AbiParam::new(pointer_type),
+            AbiParam::new(types::I64),
+            AbiParam::new(pointer_type),
+            AbiParam::new(types::I64),
+            AbiParam::new(pointer_type),
+            AbiParam::new(types::I64),
+        ]);
+        spawn_signature.returns.push(AbiParam::new(types::I64));
+        let spawn = module
+            .declare_function("phoebe_rt_v1_spawn_poll", Linkage::Import, &spawn_signature)
+            .map_err(|error| error.to_string())?;
+        Some((create, close, spawn))
     } else {
         None
     };
@@ -490,6 +508,36 @@ fn compile_functions<M: Module>(
             .declare_function(&symbol, linkage, &signature)
             .map_err(|e| e.to_string())?;
         ids.push((id, signature));
+    }
+    let mut spawn_wrappers: Vec<Option<(FuncId, FrameWords)>> = vec![None; program.functions.len()];
+    for function in &program.functions {
+        for block in &function.blocks {
+            if let Terminator::Spawn { child, .. } = block.terminator
+                && spawn_wrappers[child.0].is_none()
+            {
+                let empty_frame = FunctionFrame {
+                    function: child,
+                    points: Vec::new(),
+                    value_slots: Vec::new(),
+                    place_slots: Vec::new(),
+                };
+                let layout =
+                    frame_layout::word_layout(program, &empty_frame, |ty| shapes.types(ty).len())?;
+                let mut signature = module.make_signature();
+                signature
+                    .params
+                    .extend([AbiParam::new(pointer_type), AbiParam::new(pointer_type)]);
+                signature.returns.push(AbiParam::new(types::I64));
+                let id = module
+                    .declare_function(
+                        &format!("phoebe_spawn_poll_{}", child.0),
+                        Linkage::Local,
+                        &signature,
+                    )
+                    .map_err(|error| error.to_string())?;
+                spawn_wrappers[child.0] = Some((id, layout));
+            }
+        }
     }
     let mut ctx = module.make_context();
     let mut builder_context = FunctionBuilderContext::new();
@@ -694,7 +742,7 @@ fn compile_functions<M: Module>(
                             None
                         }
                         Operation::CloseHandle(value) => {
-                            let (_, close) = runtime_imports.expect("channel runtime imports");
+                            let (_, close, _) = runtime_imports.expect("channel runtime imports");
                             let callee = module.declare_func_in_func(close, builder.func);
                             let kind = match function.value_types[value.0] {
                                 Type::SenderI64 => 0,
@@ -806,7 +854,7 @@ fn compile_functions<M: Module>(
                         success,
                         failure,
                     } => {
-                        let (create, _) = runtime_imports.expect("channel runtime imports");
+                        let (create, _, _) = runtime_imports.expect("channel runtime imports");
                         let callee = module.declare_func_in_func(create, builder.func);
                         let sender_slot = builder.create_sized_stack_slot(StackSlotData::new(
                             StackSlotKind::ExplicitSlot,
@@ -854,12 +902,145 @@ fn compile_functions<M: Module>(
                             .ins()
                             .jump(blocks[success.0], &[sender.into(), receiver.into()]);
                     }
-                    Terminator::ChannelSend { .. }
-                    | Terminator::ChannelReceive { .. }
-                    | Terminator::Spawn { .. } => {
-                        return Err(
-                            "native channel traffic and spawn require retained task frames".into(),
+                    Terminator::Spawn {
+                        child,
+                        args,
+                        success,
+                        failure,
+                    } => {
+                        let (_, _, spawn) = runtime_imports.expect("spawn runtime import");
+                        let (wrapper, layout) = spawn_wrappers[child.0]
+                            .as_ref()
+                            .expect("declared spawn wrapper");
+                        let wrapper_ref = module.declare_func_in_func(*wrapper, builder.func);
+                        let entry = builder.ins().func_addr(pointer_type, wrapper_ref);
+                        let mut initial = Vec::new();
+                        for (arg, slot) in args.iter().zip(&layout.entry_params) {
+                            for (part, (value, ty)) in get(*arg)
+                                .into_iter()
+                                .zip(shapes.types(function.value_types[arg.0]))
+                                .enumerate()
+                            {
+                                let word = if ty == types::I8 {
+                                    builder.ins().uextend(types::I64, value)
+                                } else {
+                                    value
+                                };
+                                initial.push((slot.words.start + part, word));
+                            }
+                        }
+                        let initial_ptr = if initial.is_empty() {
+                            builder.ins().iconst(pointer_type, 0)
+                        } else {
+                            let bytes = u32::try_from(
+                                initial
+                                    .len()
+                                    .checked_mul(16)
+                                    .ok_or("spawn frame arguments overflow")?,
+                            )
+                            .map_err(|_| "spawn frame arguments exceed stack slot")?;
+                            let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                                StackSlotKind::ExplicitSlot,
+                                bytes,
+                                3,
+                            ));
+                            for (index, (word, value)) in initial.iter().enumerate() {
+                                let word = builder.ins().iconst(
+                                    types::I64,
+                                    i64::try_from(*word)
+                                        .map_err(|_| "spawn frame offset overflow")?,
+                                );
+                                builder.ins().stack_store(
+                                    pointer_type,
+                                    word,
+                                    slot,
+                                    i32::try_from(index * 16)
+                                        .map_err(|_| "spawn argument offset overflow")?,
+                                );
+                                builder.ins().stack_store(
+                                    pointer_type,
+                                    *value,
+                                    slot,
+                                    i32::try_from(index * 16 + 8)
+                                        .map_err(|_| "spawn argument offset overflow")?,
+                                );
+                            }
+                            builder.ins().stack_addr(pointer_type, slot, 0)
+                        };
+                        let transfers = args
+                            .iter()
+                            .filter_map(|arg| match function.value_types[arg.0] {
+                                Type::SenderI64 | Type::ReceiverI64 => Some(get(*arg)[0]),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
+                        let transfers_ptr = if transfers.is_empty() {
+                            builder.ins().iconst(pointer_type, 0)
+                        } else {
+                            let bytes = u32::try_from(
+                                transfers
+                                    .len()
+                                    .checked_mul(8)
+                                    .ok_or("spawn transfer list overflow")?,
+                            )
+                            .map_err(|_| "spawn transfer list exceeds stack slot")?;
+                            let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                                StackSlotKind::ExplicitSlot,
+                                bytes,
+                                3,
+                            ));
+                            for (index, value) in transfers.iter().enumerate() {
+                                builder.ins().stack_store(
+                                    pointer_type,
+                                    *value,
+                                    slot,
+                                    i32::try_from(index * 8)
+                                        .map_err(|_| "spawn transfer offset overflow")?,
+                                );
+                            }
+                            builder.ins().stack_addr(pointer_type, slot, 0)
+                        };
+                        let words = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(layout.total_words)
+                                .map_err(|_| "spawn frame size overflow")?,
                         );
+                        let initial_count = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(initial.len())
+                                .map_err(|_| "spawn argument count overflow")?,
+                        );
+                        let transfer_count = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(transfers.len())
+                                .map_err(|_| "spawn transfer count overflow")?,
+                        );
+                        let callee = module.declare_func_in_func(spawn, builder.func);
+                        let call = builder.ins().call(
+                            callee,
+                            &[
+                                runtime_context.expect("runtime context"),
+                                entry,
+                                words,
+                                initial_ptr,
+                                initial_count,
+                                transfers_ptr,
+                                transfer_count,
+                            ],
+                        );
+                        let status = builder.inst_results(call)[0];
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        let admitted = builder.ins().icmp(IntCC::Equal, status, zero);
+                        builder.ins().brif(
+                            admitted,
+                            blocks[success.0],
+                            &[],
+                            blocks[failure.0],
+                            &[status.into()],
+                        );
+                    }
+                    Terminator::ChannelSend { .. } | Terminator::ChannelReceive { .. } => {
+                        return Err("native channel traffic requires retained task frames".into());
                     }
                 }
             }
@@ -877,6 +1058,67 @@ fn compile_functions<M: Module>(
         }
         module
             .define_function(*id, &mut ctx)
+            .map_err(|e| e.to_string())?;
+        module.clear_context(&mut ctx);
+    }
+    for (child, wrapper) in spawn_wrappers.iter().enumerate() {
+        let Some((wrapper_id, layout)) = wrapper else {
+            continue;
+        };
+        let mut signature = module.make_signature();
+        signature
+            .params
+            .extend([AbiParam::new(pointer_type), AbiParam::new(pointer_type)]);
+        signature.returns.push(AbiParam::new(types::I64));
+        ctx.func.signature = signature;
+        ctx.func.name = UserFuncName::user(0, wrapper_id.as_u32());
+        {
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_context);
+            let entry = builder.create_block();
+            builder.append_block_params_for_function_params(entry);
+            builder.switch_to_block(entry);
+            let bridge = builder.block_params(entry)[0];
+            let frame = builder.block_params(entry)[1];
+            let mut args = Vec::new();
+            if context_functions[child] {
+                args.push(bridge);
+            }
+            let function = &program.functions[child];
+            for slot in &layout.entry_params {
+                for (part, ty) in shapes
+                    .types(function.value_types[slot.id.0])
+                    .into_iter()
+                    .enumerate()
+                {
+                    let offset = i32::try_from((slot.words.start + part) * 8)
+                        .map_err(|_| "spawn frame argument offset overflow")?;
+                    args.push(builder.ins().load(ty, MemFlagsData::new(), frame, offset));
+                }
+            }
+            let target = module.declare_func_in_func(ids[child].0, builder.func);
+            let call = builder.ins().call(target, &args);
+            let result = builder.inst_results(call)[0];
+            let offset = i32::try_from(layout.result.start * 8)
+                .map_err(|_| "spawn result offset overflow")?;
+            builder
+                .ins()
+                .store(MemFlagsData::new(), result, frame, offset);
+            let ready = builder.ins().iconst(types::I64, 0);
+            builder.ins().return_(&[ready]);
+            builder.seal_all_blocks();
+            builder.finalize(module.target_config());
+        }
+        if let Some(output) = clif.as_deref_mut() {
+            writeln!(
+                output,
+                "; Phoebe spawn poll wrapper for {}\n{}",
+                program.functions[child].name,
+                ctx.func.display()
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        module
+            .define_function(*wrapper_id, &mut ctx)
             .map_err(|e| e.to_string())?;
         module.clear_context(&mut ctx);
     }

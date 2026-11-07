@@ -1,6 +1,7 @@
 use phoebe::core::{Operation, Terminator};
 use phoebe::runtime::ScopeLimits;
 use phoebe::{core, native, syntax};
+use std::process::Command;
 
 fn source() -> &'static str {
     r#"
@@ -73,11 +74,31 @@ fn source_spawn_transfers_endpoint_and_failure_closes_parent_rights() {
             .unwrap(),
         0
     );
-    assert!(
-        native::run(&program, "main", &[])
-            .unwrap_err()
-            .contains("retained task frames")
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 7);
+    let native_main = native::compile_jit(&program, "main").unwrap();
+    assert_eq!(
+        native_main
+            .run_with_limits(
+                &[],
+                ScopeLimits {
+                    tasks: 1,
+                    channels: 1,
+                    replies: 0
+                }
+            )
+            .unwrap(),
+        0
     );
+    let path = std::env::temp_dir().join(format!("phoebe-spawn-aot-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"7\n");
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]
@@ -143,6 +164,7 @@ fn main() -> I64 {
 "#;
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
     assert_eq!(program.interpret("main", &[]).unwrap(), 1);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 1);
 
     let invalid = source.replace(
         "  Result<I64, ResourceError>.Ok(1)",
