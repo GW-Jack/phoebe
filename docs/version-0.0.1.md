@@ -53,6 +53,10 @@ Recursion is rejected until task stacks have safe growth limits. Arithmetic
 wraps at 64 bits in both interpreter and native execution. `phoebe check`,
 `phoebe ir`, `phoebe cost`, `phoebe run`, and
 `phoebe build <file> -o <output>` work on that subset.
+`phoebe clif <file>` prints the pre-legalization Cranelift IR. The scalar
+`identity` cost fixture is an executable acceptance test; the other cost
+fixtures remain design sketches. `docs/performance-baseline.md` records a
+local phase-timing snapshot without a general speed claim.
 Native execution uses Cranelift JIT or Cranelift object emission linked with
 the host `cc`; `--interp` selects the reference interpreter. The built
 executable runs without the compiler process and prints the I64 returned by

@@ -83,7 +83,10 @@ instructions for one event or eliminate instructions when semantics allow it.
 ## 3. Acceptance examples
 
 The source programs and pseudo IR in `examples/cost/` are design fixtures.
-They are **not executable tests yet**. A future compiler test will compare
+Only `identity.phoebe` is executable today: `tests/cost_acceptance.rs` checks
+its Core IR and the pre-legalization Cranelift IR exposed by
+`phoebe clif <file>`. The remaining fixtures are **not executable tests yet**.
+A future compiler test will compare
 checked-IR events and selected Cranelift IR shapes, then use runtime counters
 and disassembly for representative programs. Counts are per executed path,
 not static instruction totals; machine-level register moves are not counted.
@@ -113,6 +116,8 @@ when user programs compile. Differential tests compare the IR interpreter and
 native code's observable results. Microbenchmarks and generated-code
 inspection test whether runtime and backend implementations meet the intended
 cost shape.
+`docs/performance-baseline.md` records the first local phase-timing snapshot
+and its narrow interpretation.
 
 The existing Maude models check safety properties only. A later costed
 transition model could check that source operations and IR traces agree on

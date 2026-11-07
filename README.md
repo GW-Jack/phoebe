@@ -44,6 +44,7 @@ cargo run -- run examples/nested_variant.phoebe
 cargo run -- run examples/copy.phoebe
 cargo run -- run examples/multi_module
 cargo run -- cost examples/copy.phoebe
+cargo run -- clif examples/cost/identity.phoebe
 cargo run -- run examples/hello.phoebe --interp
 cargo run -- ir examples/hello.phoebe
 cargo run -- build examples/borrow.phoebe -o /tmp/phoebe-borrow
@@ -82,3 +83,5 @@ python3 formal/check_models.py
 ```
 
 The script checks the expected safety-search and witness results from Maude.
+`docs/performance-baseline.md` records initial release-mode compiler phase
+measurements and their limits.

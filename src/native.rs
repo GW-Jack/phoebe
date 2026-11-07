@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::io::Write;
 use std::mem;
@@ -21,18 +22,19 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 use crate::core::{self, CallArg, MatchBinding, Operation, Program, Terminator, Type};
 use crate::syntax::ParamMode;
 
-pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
+pub struct JitExecutable {
+    module: JITModule,
+    entry: FuncId,
+    arity: usize,
+    name: String,
+}
+
+pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, String> {
     core::verify(program)?;
     let (_, entry) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
-    if args.len() != entry.blocks[0].params.len() {
-        return Err(format!(
-            "`{name}` expects {} arguments, got {}",
-            entry.blocks[0].params.len(),
-            args.len()
-        ));
-    }
+    let arity = entry.blocks[0].params.len();
     if entry.param_modes.iter().any(|mode| *mode != ParamMode::Own) {
         return Err("borrowed parameters require a Phoebe caller".into());
     }
@@ -54,27 +56,53 @@ pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
         .finish(settings::Flags::new(flags))
         .map_err(|e| e.to_string())?;
     let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
-    let ids = compile_functions(&mut module, program, false)?;
+    let ids = compile_functions(&mut module, program, false, None)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
     let (entry_id, _) = program.function(name).expect("checked above");
-    let pointer = module.get_finalized_function(ids[entry_id.0].0);
-    // The verifier and arity check establish the I64 signature. The module
-    // remains alive while we invoke the host-ABI function pointer.
-    let result = unsafe {
-        match args {
-            [] => mem::transmute::<*const u8, extern "C" fn() -> i64>(pointer)(),
-            [a] => mem::transmute::<*const u8, extern "C" fn(i64) -> i64>(pointer)(*a),
-            [a, b] => mem::transmute::<*const u8, extern "C" fn(i64, i64) -> i64>(pointer)(*a, *b),
-            [a, b, c] => mem::transmute::<*const u8, extern "C" fn(i64, i64, i64) -> i64>(pointer)(
-                *a, *b, *c,
-            ),
-            [a, b, c, d] => mem::transmute::<*const u8, extern "C" fn(i64, i64, i64, i64) -> i64>(
-                pointer,
-            )(*a, *b, *c, *d),
-            _ => return Err("at most four arguments are supported".into()),
+    Ok(JitExecutable {
+        module,
+        entry: ids[entry_id.0].0,
+        arity,
+        name: name.to_owned(),
+    })
+}
+
+impl JitExecutable {
+    pub fn run(&self, args: &[i64]) -> Result<i64, String> {
+        if args.len() != self.arity {
+            return Err(format!(
+                "`{}` expects {} arguments, got {}",
+                self.name,
+                self.arity,
+                args.len()
+            ));
         }
-    };
-    Ok(result)
+        let pointer = self.module.get_finalized_function(self.entry);
+        // The checked I64 signature and owning module make this invocation valid.
+        let result = unsafe {
+            match args {
+                [] => mem::transmute::<*const u8, extern "C" fn() -> i64>(pointer)(),
+                [a] => mem::transmute::<*const u8, extern "C" fn(i64) -> i64>(pointer)(*a),
+                [a, b] => {
+                    mem::transmute::<*const u8, extern "C" fn(i64, i64) -> i64>(pointer)(*a, *b)
+                }
+                [a, b, c] => mem::transmute::<*const u8, extern "C" fn(i64, i64, i64) -> i64>(
+                    pointer,
+                )(*a, *b, *c),
+                [a, b, c, d] => {
+                    mem::transmute::<*const u8, extern "C" fn(i64, i64, i64, i64) -> i64>(pointer)(
+                        *a, *b, *c, *d,
+                    )
+                }
+                _ => unreachable!("verifier permits at most four parameters"),
+            }
+        };
+        Ok(result)
+    }
+}
+
+pub fn run(program: &Program, name: &str, args: &[i64]) -> Result<i64, String> {
+    compile_jit(program, name)?.run(args)
 }
 
 pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
@@ -100,8 +128,26 @@ pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
     let builder =
         ObjectBuilder::new(isa, "phoebe", default_libcall_names()).map_err(|e| e.to_string())?;
     let mut module = ObjectModule::new(builder);
-    compile_functions(&mut module, program, true)?;
+    compile_functions(&mut module, program, true, None)?;
     module.finish().emit().map_err(|e| e.to_string())
+}
+
+/// Print the pre-legalization Cranelift IR that Phoebe submits for each function.
+pub fn clif(program: &Program) -> Result<String, String> {
+    core::verify(program)?;
+    let mut flags = settings::builder();
+    flags
+        .set("use_colocated_libcalls", "false")
+        .map_err(|e| e.to_string())?;
+    flags.set("is_pic", "false").map_err(|e| e.to_string())?;
+    let isa = native_builder()
+        .map_err(|e| format!("unsupported native host: {e}"))?
+        .finish(settings::Flags::new(flags))
+        .map_err(|e| e.to_string())?;
+    let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
+    let mut output = String::new();
+    compile_functions(&mut module, program, false, Some(&mut output))?;
+    Ok(output)
 }
 
 pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> {
@@ -185,6 +231,7 @@ fn compile_functions<M: Module>(
     module: &mut M,
     program: &Program,
     export_main: bool,
+    mut clif: Option<&mut String>,
 ) -> Result<Vec<(FuncId, Signature)>, String> {
     let pointer_type = module.target_config().pointer_type();
     let shapes = AbiShapes::new(program, pointer_type);
@@ -507,6 +554,15 @@ fn compile_functions<M: Module>(
             }
             builder.seal_all_blocks();
             builder.finalize(module.target_config());
+        }
+        if let Some(output) = clif.as_deref_mut() {
+            writeln!(
+                output,
+                "; Phoebe function {}\n{}",
+                function.name,
+                ctx.func.display()
+            )
+            .map_err(|error| error.to_string())?;
         }
         module
             .define_function(*id, &mut ctx)
