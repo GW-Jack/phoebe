@@ -49,6 +49,11 @@ system demo toolchains. No remote cache is configured. Build inputs and
 toolchain versions must be pinned before treating cache hits across machines
 as reproducibility evidence. Buck2 ignores Cargo's `target/` tree so running
 Cargo checks does not churn its file watcher.
+`rust-toolchain.toml` selects Rust 1.95.0. The Linux CI workflow downloads
+Buck2 2026-09-15 and Maude 3.5.1 from fixed release assets and verifies their
+SHA-256 digests. It runs workspace Cargo checks, all Buck2 tests, and the
+bounded formal suite. These pins constrain CI tools, but the system C linker
+and Buck2 demo toolchains are not yet hermetic across hosts.
 
 `third-party/rust/Cargo.toml` and its lockfile pin third-party Rust versions.
 Reindeer generates `third-party/rust/BUCK` and sha256-checked archive rules.

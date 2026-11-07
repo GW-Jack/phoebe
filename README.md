@@ -105,8 +105,9 @@ stateful and asynchronous workloads and records the resulting design gates.
 `formal/two_task.maude` explores parent and child tasks, explicit handle fork,
 transfer at spawn, channel delivery, close, and child failure.
 `formal/reply_capability.maude` explores a one-shot reply right moving through
-a request, cancellation, discard, and failure. All three models have finite
-state spaces. See `formal/README.md` for the exact
+a request, cancellation, discard, and failure. `formal/retained_borrow.maude`
+explores a nested call that forwards a borrow across a channel wait. All four
+models have finite state spaces. See `formal/README.md` for the exact
 models and their limits. These checks do not prove the full language, compiler,
 or native runtime safe.
 

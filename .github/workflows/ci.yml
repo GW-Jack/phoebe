@@ -1,0 +1,58 @@
+name: CI
+
+"on":
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust 1.95.0
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.95.0
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
+  formal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Maude 3.5.1
+        run: |
+          curl --fail --location --retry 3 --output maude.zip https://github.com/maude-lang/Maude/releases/download/Maude3.5.1/Maude-3.5.1-linux-x86_64.zip
+          printf '%s  %s\n' 72ed1ca87e3b3d0dfc6ee1436baf154bf04c45ff97d521bec040c5e8dfc8f92c maude.zip | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/maude"
+          unzip -j maude.zip maude -d "$RUNNER_TEMP/maude"
+          chmod +x "$RUNNER_TEMP/maude/maude"
+          echo "$RUNNER_TEMP/maude" >> "$GITHUB_PATH"
+      - run: python3 formal/check_models.py
+
+  buck2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust 1.95.0
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+      - name: Install pinned Buck2 2026-09-15
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes zstd
+          curl --fail --location --retry 3 --output buck2.zst https://github.com/meta/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-musl.zst
+          printf '%s  %s\n' 631eb84a8925d19146e0f5d594b9f2d0b1f0864e63f24e0d5914a75a6a0a4dea buck2.zst | sha256sum --check
+          zstd --decompress --output "$RUNNER_TEMP/buck2" buck2.zst
+          chmod +x "$RUNNER_TEMP/buck2"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - run: buck2 build //:phoebe_dist
+      - run: buck2 test //...
