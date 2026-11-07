@@ -35,7 +35,9 @@ fn main() -> I64 = math.add(20, relay(math.wrap()))
 
 Unqualified calls, data constructors, and `when` patterns resolve within
 their defining module. A qualified type name such as `math.Maybe` requires an
-import. Modules are loaded in dependency order, so a data declaration may
+import. Public imported nominal variants may be constructed as
+`math.Maybe.None` or `math.Maybe.Some(22)` and matched with qualified `when`
+arms. Modules are loaded in dependency order, so a data declaration may
 contain a nominal type from an imported module. Import cycles and unknown
 imports are rejected. A qualified reference to a private function or type
 gets a source-located diagnostic. The compiler maps
@@ -72,8 +74,7 @@ Cached ASTs are cloned and qualified again when a project is loaded. The
 small warm-session baseline in `docs/performance-baseline.md` shows only a
 marginal difference on a six-function project.
 
-Current limitations are explicit: imported modules cannot construct another
-module's variants directly, the root module cannot be imported, and imports
+Current limitations are explicit: the root module cannot be imported, and imports
 are module-wide rather than item-level. There is no cached typed interface or registry
 dependency graph. `docs/packages.md` describes pinned local path dependencies.
 A standalone `.phoebe` file still works without a manifest,

@@ -475,21 +475,28 @@ fn qualify_type(
         TypeName::Named(name) if local_data.contains(name) => {
             *name = format!("{module}.{name}");
         }
-        TypeName::Named(name) => {
-            if let Some((prefix, member)) = name.split_once('.') {
-                if let Some(import) = imports.get(prefix) {
-                    if !import.exports.data.contains(member) {
-                        return Err(format!("type `{prefix}.{member}` is not public"));
-                    }
-                    *name = format!("{}.{member}", import.target);
-                } else if available.contains_key(prefix) {
-                    return Err(format!("module `{prefix}` is not imported"));
-                }
-            }
-        }
+        TypeName::Named(name) => qualify_imported_data_name(name, imports, available)?,
         TypeName::Result(ok, err) => {
             qualify_type(ok, module, local_data, imports, available)?;
             qualify_type(err, module, local_data, imports, available)?;
+        }
+    }
+    Ok(())
+}
+
+fn qualify_imported_data_name(
+    name: &mut String,
+    imports: &HashMap<String, ResolvedImport>,
+    available: &HashMap<String, String>,
+) -> Result<(), String> {
+    if let Some((prefix, member)) = name.split_once('.') {
+        if let Some(import) = imports.get(prefix) {
+            if !import.exports.data.contains(member) {
+                return Err(format!("type `{prefix}.{member}` is not public"));
+            }
+            *name = format!("{}.{member}", import.target);
+        } else if available.contains_key(prefix) {
+            return Err(format!("module `{prefix}` is not imported"));
         }
     }
     Ok(())
@@ -638,6 +645,9 @@ fn rewrite_expr(
                 *name = format!("{module}.{name}");
             } else if let Some(qualified) = results.get(name) {
                 *name = qualified.clone();
+            } else {
+                qualify_imported_data_name(name, imports, available)
+                    .map_err(|message| (span, message))?;
             }
             if let ExprKind::VariantCall(_, _, payload) = &mut expr.kind {
                 nested(payload)?;
@@ -648,6 +658,9 @@ fn rewrite_expr(
                 *name = format!("{module}.{name}");
             } else if let Some(qualified) = results.get(name) {
                 *name = qualified.clone();
+            } else if name.contains('.') {
+                qualify_imported_data_name(name, imports, available)
+                    .map_err(|message| (span, message))?;
             } else if let Some(import) = imports.get(name.as_str()) {
                 if !import.exports.functions.contains(member) {
                     return Err((span, format!("function `{name}.{member}` is not public")));
@@ -675,6 +688,9 @@ fn rewrite_expr(
                     arm.type_name = format!("{module}.{}", arm.type_name);
                 } else if let Some(qualified) = results.get(&arm.type_name) {
                     arm.type_name = qualified.clone();
+                } else {
+                    qualify_imported_data_name(&mut arm.type_name, imports, available)
+                        .map_err(|message| (arm.span, message))?;
                 }
                 rewrite_body(
                     &mut arm.body,

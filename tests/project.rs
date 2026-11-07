@@ -190,6 +190,33 @@ fn private_declarations_cannot_cross_module_boundary() {
         error.contains("type `math.Secret` is not public"),
         "{error}"
     );
+    std::fs::write(
+        &app,
+        format!("{source}\nfn reveal() -> I64 = math.Secret.Value\n"),
+    )
+    .unwrap();
+    let error = project::load(&path).err().unwrap();
+    assert!(
+        error.contains("type `math.Secret` is not public"),
+        "{error}"
+    );
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn public_imported_nullary_variant_can_be_constructed() {
+    let path = temp_project();
+    let app = path.join("app.phoebe");
+    let source = std::fs::read_to_string(&app).unwrap();
+    std::fs::write(
+        &app,
+        format!("{source}\nfn missing() -> I64 = math.unwrap(math.Maybe.None)\n"),
+    )
+    .unwrap();
+    let loaded = project::load(&path).unwrap();
+    let program = core::lower(&loaded.ast).unwrap();
+    assert_eq!(program.interpret("app.missing", &[]).unwrap(), 0);
+    assert_eq!(native::run(&program, "app.missing", &[]).unwrap(), 0);
     std::fs::remove_dir_all(path).unwrap();
 }
 

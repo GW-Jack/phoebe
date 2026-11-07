@@ -92,7 +92,8 @@ root modules and their transitive calls compile and run in the interpreter,
 Cranelift JIT, and standalone executable; see `examples/package_graph/app/`.
 Project declarations are private by default; `pub` exports functions and data
 types, and the interface tracks private nominal layouts exposed by public
-signatures.
+signatures. Public imported nominal variants can be constructed and matched
+with qualified names.
 Registry dependencies, cached typed
 interfaces, and incremental native object rebuilds remain open. The
 `examples/cost/` files other than scalar `identity` remain

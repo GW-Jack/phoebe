@@ -36,7 +36,9 @@ the alias `math` names that dependency's root module. A dependency may in turn
 import one of its own dependencies. Internal symbols carry the complete alias
 route, such as `math__util.add`, so unrelated packages cannot collide. The
 working example is `examples/package_graph/app/`; it runs as 42 through the
-interpreter, Cranelift JIT, and standalone executable.
+interpreter, Cranelift JIT, and standalone executable. Public data variants
+can be constructed and matched across the boundary with qualified names such
+as `math.Boxed.Value(0)` and `math.Boxed.Value(number)`.
 
 `phoebe deps` rejects a missing or stale lock, mismatched versions, cycles,
 duplicate lock entries, missing source files, and module paths that escape a

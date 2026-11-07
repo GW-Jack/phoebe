@@ -892,7 +892,7 @@ impl Parser {
                 let mut arms = Vec::new();
                 loop {
                     let (type_name, start) = self.name()?;
-                    let type_name =
+                    let mut type_name =
                         if type_name == "Result" && self.current().kind == TokenKind::Less {
                             self.result_type_after_name(start)?.key()
                         } else if matches!(type_name.as_str(), "Send" | "Receive") {
@@ -902,7 +902,13 @@ impl Parser {
                             type_name
                         };
                     self.expect(&TokenKind::Dot, ".")?;
-                    let (variant, end) = self.name()?;
+                    let (first, first_end) = self.name()?;
+                    let (variant, end) = if self.eat(&TokenKind::Dot).is_some() {
+                        type_name = format!("{type_name}.{first}");
+                        self.name()?
+                    } else {
+                        (first, first_end)
+                    };
                     let binding = if self.eat(&TokenKind::LParen).is_some() {
                         let name = self.name()?;
                         self.expect(&TokenKind::RParen, ")")?;
@@ -947,7 +953,13 @@ impl Parser {
                     name
                 };
                 if self.eat(&TokenKind::Dot).is_some() {
-                    let (variant, end) = self.name()?;
+                    let (first, first_end) = self.name()?;
+                    let (name, variant, end) = if self.eat(&TokenKind::Dot).is_some() {
+                        let (variant, end) = self.name()?;
+                        (format!("{name}.{first}"), variant, end)
+                    } else {
+                        (name, first, first_end)
+                    };
                     if self.eat(&TokenKind::LParen).is_some() {
                         let (args, close) = self.call_arguments()?;
                         if variant == "send" {

@@ -1,4 +1,7 @@
 import math
 
-fn unwrap(value: math.Boxed) -> I64 = math.unbox(value)
-fn main() -> I64 = math.answer(20) + unwrap(math.boxed())
+fn unwrap(value: math.Boxed) -> I64 = when (value) {
+  math.Boxed.Value(number) -> { number },
+}
+
+fn main() -> I64 = math.answer(20) + unwrap(math.Boxed.Value(0)) + math.unbox(math.boxed())
