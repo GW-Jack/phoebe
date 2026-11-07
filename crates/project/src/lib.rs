@@ -22,6 +22,7 @@ struct SourceFile {
 pub struct Loaded {
     pub ast: syntax::Program,
     pub interfaces: Vec<ModuleInterface>,
+    pub function_modules: Vec<String>,
     sources: Vec<SourceFile>,
 }
 
@@ -190,6 +191,7 @@ fn load_with_cache(
     };
     let mut sources = Vec::new();
     let mut interfaces = Vec::new();
+    let mut function_modules = Vec::new();
     let mut offset = 0;
     for mut module in modules {
         let path = &module.path;
@@ -265,6 +267,10 @@ fn load_with_cache(
             function.name = symbol(&module.name, &function.name, root);
         }
         interfaces.push(interface::from_program(&module.name, &module.ast));
+        function_modules.extend(std::iter::repeat_n(
+            module.name.clone(),
+            module.ast.functions.len(),
+        ));
         shift_program(&mut module.ast, offset);
         combined.data.extend(module.ast.data);
         combined.functions.extend(module.ast.functions);
@@ -289,6 +295,7 @@ fn load_with_cache(
         loaded: Loaded {
             ast: combined,
             interfaces,
+            function_modules,
             sources,
         },
         modules: raw_modules,

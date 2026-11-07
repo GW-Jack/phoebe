@@ -1,8 +1,8 @@
 # Local project modules
 
-Status: executable local modules with an in-process parsed-module session and
-exact source-level interfaces. External packages, lockfiles, visibility, and
-incremental Core/object rebuilds are not implemented yet.
+Status: executable local modules with in-process parsed-module and checked-Core
+function reuse sessions. External packages, lockfiles, visibility, and
+incremental native object rebuilds are not implemented yet.
 
 `phoebe.toml` uses this form:
 
@@ -50,19 +50,26 @@ of modules affected through imports. A failed load leaves the previous session
 state intact. Exact structural equality, rather than a truncated hash, decides
 whether an interface changed.
 
-The current CLI starts a fresh load for each command, and Core still lowers
-the combined AST on every invocation. The report records source-level
-invalidation; a future per-module Core cache must additionally prove that its
-stored units were checked successfully against the corresponding interfaces.
-It is not a claim of incremental type checking or native code generation yet.
-Cached ASTs are cloned and qualified again when a project is loaded, so the
-session has no measured speed benefit.
+`phoebe::ProjectCompilerSession` extends this with in-process checked-Core
+function-body reuse. The compiler compares the old and new function ASTs,
+allowing a uniform source-span shift. It also requires every nominal data
+shape and function signature to retain its position and ABI. If the global
+layout changes, it lowers all functions afresh. A body edit recompiles its
+module's functions while unchanged modules can reuse verified bodies. Core
+reruns its program-wide verifiers before publishing the new session state;
+failed compilation preserves the old state. `CompileReport` counts reused
+functions. Cached spans are rebased to the new combined source positions.
+
+The current CLI starts a fresh session for each command. This API does not
+provide incremental type checking, persistent caches, or native object reuse.
+Cached ASTs are cloned and qualified again when a project is loaded, and the
+session has no measured speed benefit yet.
 
 Current limitations are explicit: imported modules cannot construct another
 module's variants directly, the root module cannot be imported, imports are
 module-wide rather than item-level, and all declarations in an imported
-module are currently visible. Modules are compiled together on every run;
-there is no cached typed interface or pinned external dependency graph. A
+module are currently visible. There is no cached typed interface or pinned
+external dependency graph. A
 `[dependencies]` table is rejected so it cannot be mistaken for a resolved
 package graph. A standalone `.phoebe` file still works without a manifest,
 but `import` in that mode produces a diagnostic.

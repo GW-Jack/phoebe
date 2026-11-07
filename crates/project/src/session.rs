@@ -15,7 +15,7 @@ pub struct LoadReport {
     pub affected: Vec<String>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ProjectSession {
     modules: BTreeMap<String, Module>,
     interfaces: BTreeMap<String, ModuleInterface>,

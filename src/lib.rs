@@ -9,3 +9,6 @@ pub use phoebe_project as project;
 pub use phoebe_runtime as runtime;
 pub use phoebe_syntax as syntax;
 pub use phoebe_syntax::{Diagnostic, Span};
+
+mod project_session;
+pub use project_session::{CompileReport, ProjectCompilerSession};

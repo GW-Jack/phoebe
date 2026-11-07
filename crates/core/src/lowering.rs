@@ -1152,6 +1152,56 @@ fn register_result_application(
 }
 
 pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
+    lower_internal(ast, None).map(|(program, _)| program)
+}
+
+/// Reuse verified function bodies when their ASTs match under a source offset.
+/// The caller supplies reuse hints and span offsets. Core checks those hints,
+/// every global data shape, and every function signature before accepting a
+/// cached body. An unsafe hint falls back to lowering that body afresh.
+pub fn lower_reusing(
+    ast: &syntax::Program,
+    previous_ast: &syntax::Program,
+    previous: &Program,
+    reusable: &[bool],
+    span_deltas: &[isize],
+) -> Result<(Program, usize), Diagnostic> {
+    if reusable.len() != ast.functions.len() || span_deltas.len() != ast.functions.len() {
+        return Err(Diagnostic::new(
+            Span { start: 0, end: 0 },
+            "incremental function map length mismatch",
+        ));
+    }
+    lower_internal(ast, Some((previous_ast, previous, reusable, span_deltas)))
+}
+
+fn rebase_function(function: &mut Function, delta: isize) -> Result<(), Diagnostic> {
+    let rebase = |span: &mut Span| -> Result<(), Diagnostic> {
+        span.start = span
+            .start
+            .checked_add_signed(delta)
+            .ok_or_else(|| Diagnostic::new(*span, "incremental source span overflow"))?;
+        span.end = span
+            .end
+            .checked_add_signed(delta)
+            .ok_or_else(|| Diagnostic::new(*span, "incremental source span overflow"))?;
+        Ok(())
+    };
+    for block in &mut function.blocks {
+        for instruction in &mut block.instructions {
+            rebase(&mut instruction.span)?;
+        }
+        if let Terminator::Yield { span, .. } = &mut block.terminator {
+            rebase(span)?;
+        }
+    }
+    Ok(())
+}
+
+fn lower_internal(
+    ast: &syntax::Program,
+    reuse: Option<(&syntax::Program, &Program, &[bool], &[isize])>,
+) -> Result<(Program, usize), Diagnostic> {
     if let Some(import) = ast.imports.first() {
         return Err(Diagnostic::new(
             import.span,
@@ -1339,9 +1389,58 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
             ));
         }
     }
+    let stable_environment = reuse.is_some_and(|(previous_ast, previous, _, _)| {
+        previous_ast.functions.len() == ast.functions.len()
+            && previous.data == data
+            && previous.functions.len() == ast.functions.len()
+            && ast.functions.iter().enumerate().all(|(index, source)| {
+                let signature = &functions[&source.name];
+                let cached = &previous.functions[index];
+                cached.name == source.name
+                    && cached.return_type == signature.return_type
+                    && cached.param_modes
+                        == signature
+                            .params
+                            .iter()
+                            .map(|(mode, _)| *mode)
+                            .collect::<Vec<_>>()
+                    && cached.blocks[0].params.len() == signature.params.len()
+                    && cached.blocks[0].params.iter().zip(&signature.params).all(
+                        |(value, (mode, ty))| {
+                            cached.value_types[value.0]
+                                == match mode {
+                                    ParamMode::Own => *ty,
+                                    ParamMode::Shared => Type::RefI64,
+                                    ParamMode::Exclusive => Type::RefMutI64,
+                                }
+                        },
+                    )
+            })
+    });
+    let mut reused = 0;
     let mut lowered = Vec::with_capacity(ast.functions.len());
     let mut cleanup_sites = Vec::with_capacity(ast.functions.len());
-    for function in &ast.functions {
+    for (index, function) in ast.functions.iter().enumerate() {
+        if stable_environment
+            && let Some((previous_ast, previous, reusable, deltas)) = reuse
+            && reusable[index]
+            && phoebe_syntax::same_function_with_shift(
+                &previous_ast.functions[index],
+                function,
+                deltas[index],
+            )
+        {
+            let mut cached = previous.functions[index].clone();
+            if rebase_function(&mut cached, deltas[index]).is_ok() {
+                lowered.push(cached);
+                cleanup_sites.push(CleanupSites {
+                    returns: Vec::new(),
+                    scopes: Vec::new(),
+                });
+                reused += 1;
+                continue;
+            }
+        }
         let mut lowerer = Lowerer::new(
             &functions,
             &data,
@@ -1467,5 +1566,5 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
             .unwrap_or(Span { start: 0, end: 0 });
         Diagnostic::new(span, message)
     })?;
-    Ok(program)
+    Ok((program, reused))
 }

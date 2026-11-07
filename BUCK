@@ -2,7 +2,7 @@ rust_library(
     name = "phoebe_lib",
     crate = "phoebe",
     crate_root = "src/lib.rs",
-    srcs = ["src/lib.rs"],
+    srcs = ["src/lib.rs", "src/project_session.rs"],
     edition = "2024",
     deps = [
         "//crates/capability:phoebe_capability",

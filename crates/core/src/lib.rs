@@ -210,7 +210,7 @@ pub struct CostEvent {
     pub reason: &'static str,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataDef {
     pub name: String,
     pub variants: Vec<String>,
@@ -222,6 +222,6 @@ mod interpreter;
 mod lowering;
 mod verification;
 
-pub use lowering::lower;
+pub use lowering::{lower, lower_reusing};
 use verification::{capability_graph, verify_capability_edges, verify_ownership, verify_structure};
 pub use verification::{operands, verify};

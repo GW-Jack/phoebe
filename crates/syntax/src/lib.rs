@@ -1,6 +1,9 @@
 pub mod syntax;
 pub use syntax::*;
 
+mod equality;
+pub use equality::same_function_with_shift;
+
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

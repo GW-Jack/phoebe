@@ -85,9 +85,10 @@ It does not yet implement general ownership, concurrency, or all release
 gates above. A local `phoebe.toml` manifest and explicit imports now compile
 multiple modules together; `examples/multi_module/` runs in both engines and
 builds a standalone executable. `docs/modules.md` describes that path and
-the in-process parsed-module session with exact source-level interfaces.
-External dependencies, cached typed interfaces, and incremental Core/object
-rebuilds remain open. The `examples/cost/` files other than scalar `identity` remain
+the in-process parsed-module session with exact source-level interfaces and
+checked-Core function-body reuse. External dependencies, cached typed
+interfaces, and incremental native object rebuilds remain open. The
+`examples/cost/` files other than scalar `identity` remain
 design fixtures, not executable acceptance tests.
 
 `crates/runtime` implements a cooperative scheduler

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use phoebe::{core, native, project};
+use phoebe::{ProjectCompilerSession, core, native, project, syntax};
 
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -142,6 +142,87 @@ fn project_interface_invalidation_reaches_transitive_importers() {
     assert_eq!(report.changed_interfaces, ["util"]);
     assert_eq!(report.affected, ["app", "math", "util"]);
     std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn compiler_session_reuses_checked_core_bodies_and_rebases_spans() {
+    let path = temp_project();
+    let mut session = ProjectCompilerSession::new();
+    let (first, initial) = session.compile(&path).unwrap();
+    assert_eq!(initial.reused_core_functions, 0);
+    let count = first.functions.len();
+    let (unchanged, report) = session.compile(&path).unwrap();
+    assert_eq!(report.reused_core_functions, count);
+    assert_eq!(unchanged.interpret("main", &[]).unwrap(), 42);
+
+    let math = path.join("math.phoebe");
+    let source = std::fs::read_to_string(&math).unwrap();
+    std::fs::write(&math, source.replace("a + b", "a + b + 0")).unwrap();
+    let (edited, report) = session.compile(&path).unwrap();
+    assert_eq!(report.load.affected, ["math"]);
+    assert_eq!(report.reused_core_functions, 2);
+    assert_eq!(edited.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&edited, "main", &[]).unwrap(), 42);
+    let old_span = first
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap()
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .next()
+        .unwrap()
+        .span;
+    let new_span = edited
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap()
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .next()
+        .unwrap()
+        .span;
+    assert_eq!(new_span.start - old_span.start, 4);
+    assert_eq!(new_span.end - old_span.end, 4);
+
+    let invalid = std::fs::read_to_string(&math)
+        .unwrap()
+        .replace("fn add(a: I64, b: I64)", "fn add(a: I64, b: Bool)");
+    std::fs::write(&math, invalid).unwrap();
+    assert!(session.compile(&path).is_err());
+    std::fs::write(&math, source.replace("a + b", "a + b + 0")).unwrap();
+    let (restored, report) = session.compile(&path).unwrap();
+    assert!(report.load.parsed.is_empty());
+    assert_eq!(report.reused_core_functions, count);
+    assert_eq!(restored.interpret("main", &[]).unwrap(), 42);
+
+    let source = std::fs::read_to_string(&math).unwrap();
+    std::fs::write(&math, format!("{source}\ndata Extra {{ A }}\n")).unwrap();
+    let (layout, report) = session.compile(&path).unwrap();
+    assert_eq!(report.load.affected, ["app", "math"]);
+    assert_eq!(report.reused_core_functions, 0);
+    assert_eq!(layout.interpret("main", &[]).unwrap(), 42);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn core_rejects_stale_reuse_hints() {
+    let old_ast = syntax::parse("fn main() -> I64 = 1\n").unwrap();
+    let old_core = core::lower(&old_ast).unwrap();
+    let changed_ast = syntax::parse("fn main() -> I64 = 2\n").unwrap();
+    let (changed, reused) =
+        core::lower_reusing(&changed_ast, &old_ast, &old_core, &[true], &[0]).unwrap();
+    assert_eq!(reused, 0);
+    assert_eq!(changed.interpret("main", &[]).unwrap(), 2);
+
+    let shifted_ast = syntax::parse("  fn main() -> I64 = 1\n").unwrap();
+    let (shifted, reused) =
+        core::lower_reusing(&shifted_ast, &old_ast, &old_core, &[true], &[2]).unwrap();
+    assert_eq!(reused, 1);
+    assert_eq!(shifted.interpret("main", &[]).unwrap(), 1);
 }
 
 #[test]
