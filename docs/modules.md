@@ -34,7 +34,9 @@ fn main() -> I64 = math.add(20, relay(math.wrap()))
 
 Unqualified calls, data constructors, and `when` patterns resolve within
 their defining module. A qualified type name such as `math.Maybe` requires an
-import. Import cycles and unknown imports are rejected. The compiler maps
+import. Modules are loaded in dependency order, so a data declaration may
+contain a nominal type from an imported module. Import cycles and unknown
+imports are rejected. The compiler maps
 Core lowering diagnostics back to the defining file and local line/column.
 The working example is `examples/multi_module/`.
 

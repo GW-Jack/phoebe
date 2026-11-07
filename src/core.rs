@@ -414,6 +414,10 @@ impl<'a> Lowerer<'a> {
                     let field_type = self.data[id.0].fields[index].1;
                     let operation = match binding {
                         Binding::Val(value) => Operation::Field(value, index),
+                        Binding::Var(place) if matches!(field_type, Type::Data(_)) => {
+                            let whole = self.emit(Operation::Take(place), ty, expr.span);
+                            Operation::Field(whole, index)
+                        }
                         Binding::Var(place) => Operation::ReadField(place, index),
                         Binding::Ref(_, _) => unreachable!("data reference is unsupported"),
                     };
@@ -938,10 +942,22 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
                 None => None,
                 Some(TypeName::I64) => Some(Type::I64),
                 Some(TypeName::Bool) => Some(Type::Bool),
-                Some(TypeName::Named(_) | TypeName::Result(_, _)) => {
+                Some(TypeName::Named(name)) => Some(
+                    data_names
+                        .get(name)
+                        .copied()
+                        .map(Type::Data)
+                        .ok_or_else(|| {
+                            Diagnostic::new(
+                                variant.span,
+                                format!("variant payload type `{name}` must be declared earlier"),
+                            )
+                        })?,
+                ),
+                Some(TypeName::Result(_, _)) => {
                     return Err(Diagnostic::new(
                         variant.span,
-                        "nested variant payloads are not implemented",
+                        "Result variant payloads are not implemented",
                     ));
                 }
             };
@@ -953,16 +969,27 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
             if fields.iter().any(|(name, _)| name == &field.name) {
                 return Err(Diagnostic::new(field.span, "duplicate field"));
             }
-            let ty = match field.ty {
-                TypeName::I64 => Type::I64,
-                TypeName::Bool => Type::Bool,
-                TypeName::Named(_) | TypeName::Result(_, _) => {
-                    return Err(Diagnostic::new(
-                        field.span,
-                        "nested product fields are not implemented",
-                    ));
-                }
-            };
+            let ty =
+                match &field.ty {
+                    TypeName::I64 => Type::I64,
+                    TypeName::Bool => Type::Bool,
+                    TypeName::Named(name) => data_names
+                        .get(name)
+                        .copied()
+                        .map(Type::Data)
+                        .ok_or_else(|| {
+                            Diagnostic::new(
+                                field.span,
+                                format!("product field type `{name}` must be declared earlier"),
+                            )
+                        })?,
+                    TypeName::Result(_, _) => {
+                        return Err(Diagnostic::new(
+                            field.span,
+                            "Result product fields are not implemented",
+                        ));
+                    }
+                };
             fields.push((field.name.clone(), ty));
         }
         data_names.insert(declaration.name.clone(), DataId(data.len()));
@@ -1167,11 +1194,15 @@ fn op_type(
             else {
                 return Err("place field access requires a product".into());
             };
-            program.data[id.0]
+            let field_type = program.data[id.0]
                 .fields
                 .get(*index)
-                .map(|(_, ty)| Some(*ty))
-                .ok_or_else(|| "invalid place field access".into())
+                .map(|(_, ty)| *ty)
+                .ok_or_else(|| "invalid place field access".to_owned())?;
+            if matches!(field_type, Type::Data(_)) {
+                return Err("nominal place field requires an owning projection".into());
+            }
+            Ok(Some(field_type))
         }
         Operation::Neg(a) => {
             if ty(*a) != Type::I64 {
@@ -1434,6 +1465,18 @@ fn verify_ownership(program: &Program) -> Result<(), OwnershipError> {
                             });
                         }
                     }
+                    Operation::Field(owner, index) => {
+                        let Type::Data(id) = function.value_types[owner.0] else {
+                            unreachable!("structure verifier checked field owner")
+                        };
+                        let field_type = program.data[id.0].fields[*index].1;
+                        value_use(
+                            &mut state,
+                            *owner,
+                            matches!(field_type, Type::Data(_)),
+                            span,
+                        )?;
+                    }
                     other => {
                         for value in operands(other) {
                             value_use(&mut state, value, false, span)?;
@@ -1521,7 +1564,13 @@ fn verify_structure(program: &Program) -> Result<(), String> {
         }
         let mut fields = std::collections::HashSet::new();
         for (name, ty) in &definition.fields {
-            if !fields.insert(name) || !matches!(ty, Type::I64 | Type::Bool) {
+            if !fields.insert(name)
+                || match ty {
+                    Type::I64 | Type::Bool => false,
+                    Type::Data(id) => id.0 >= index,
+                    Type::RefI64 | Type::RefMutI64 => true,
+                }
+            {
                 return Err("invalid product field".into());
             }
         }

@@ -1,0 +1,29 @@
+data Pair { number: I64, positive: Bool }
+data Layer { Empty, PairValue(value: Pair) }
+data Outer { Missing, LayerValue(value: Layer) }
+data Wrapper { inner: Outer, marker: I64 }
+
+fn extract(outer: Outer) -> I64 = when (outer) {
+  Outer.Missing -> { -1 },
+  Outer.LayerValue(layer) -> {
+    when (layer) {
+      Layer.Empty -> { 0 },
+      Layer.PairValue(pair) -> {
+        if (pair.positive) { pair.number } else { -pair.number }
+      },
+    }
+  },
+}
+
+fn unpack(wrapper: Wrapper) -> I64 {
+  val marker = wrapper.marker;
+  extract(wrapper.inner) + marker
+}
+
+fn unpack_mutable() -> I64 {
+  var wrapper = Wrapper(Outer.LayerValue(Layer.PairValue(Pair(42, true))), 0);
+  val marker = wrapper.marker;
+  extract(wrapper.inner) + marker
+}
+
+fn main() -> I64 = unpack_mutable() + unpack(Wrapper(Outer.Missing, 1))

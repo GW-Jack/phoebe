@@ -154,11 +154,7 @@ impl AbiShapes {
                 definition
                     .fields
                     .iter()
-                    .map(|(_, ty)| match ty {
-                        Type::I64 => types::I64,
-                        Type::Bool => types::I8,
-                        _ => unreachable!("verified primitive product field"),
-                    })
+                    .flat_map(|(_, ty)| shapes.types(*ty))
                     .collect()
             } else {
                 let words = definition
@@ -340,13 +336,32 @@ fn compile_functions<M: Module>(
                         Operation::Product(_, fields) => {
                             Some(fields.iter().flat_map(|field| get(*field)).collect())
                         }
-                        Operation::Field(owner, index) => Some(vec![get(*owner)[*index]]),
+                        Operation::Field(owner, index) => {
+                            let Type::Data(id) = function.value_types[owner.0] else {
+                                unreachable!("verified field owner")
+                            };
+                            let fields = &program.data[id.0].fields;
+                            let start = fields[..*index]
+                                .iter()
+                                .map(|(_, ty)| shapes.types(*ty).len())
+                                .sum::<usize>();
+                            let width = shapes.types(fields[*index].1).len();
+                            Some(get(*owner)[start..start + width].to_vec())
+                        }
                         Operation::ReadField(place, index) => {
-                            let ty = shapes.types(function.place_types[place.0])[*index];
+                            let Type::Data(id) = function.place_types[place.0] else {
+                                unreachable!("verified place field owner")
+                            };
+                            let fields = &program.data[id.0].fields;
+                            let offset = fields[..*index]
+                                .iter()
+                                .map(|(_, ty)| shapes.types(*ty).len())
+                                .sum::<usize>();
+                            let ty = shapes.types(fields[*index].1)[0];
                             Some(vec![builder.ins().stack_load(
                                 pointer_type,
                                 ty,
-                                places[place.0][*index],
+                                places[place.0][offset],
                                 0,
                             )])
                         }

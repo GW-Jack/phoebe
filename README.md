@@ -14,7 +14,7 @@ bounded `I64` and request channels, and one-shot `ReplyTo<I64>` rights;
 
 `docs/version-0.0.1.md` states the release gates and the exact subset that
 currently runs. The Rust crate parses functions over I64, Bool, nominal sums
-with optional primitive payloads, and nominal products with primitive fields.
+and products with primitive or earlier nominal fields.
 It supports arithmetic, conditions, exhaustive `when`, mutable locals, loops,
 call-site scalar borrows, and `?` on concrete `Result<T, E>` applications
 with primitive or existing nominal payloads. Nominal values have affine move
@@ -40,6 +40,7 @@ cargo run -- run examples/product.phoebe
 cargo run -- run examples/payload.phoebe
 cargo run -- run examples/try.phoebe
 cargo run -- run examples/nested_result.phoebe
+cargo run -- run examples/nested_variant.phoebe
 cargo run -- run examples/copy.phoebe
 cargo run -- run examples/multi_module
 cargo run -- cost examples/copy.phoebe

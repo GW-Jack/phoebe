@@ -1,5 +1,10 @@
 import math
 
-fn relay(value: math.Maybe) -> I64 = math.unwrap(value)
+data Envelope { Missing, Item(value: math.Maybe) }
 
-fn main() -> I64 = math.add(20, relay(math.wrap()))
+fn relay(envelope: Envelope) -> I64 = when (envelope) {
+  Envelope.Missing -> { 0 },
+  Envelope.Item(value) -> { math.unwrap(value) },
+}
+
+fn main() -> I64 = math.add(20, relay(Envelope.Item(math.wrap())))

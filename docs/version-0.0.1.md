@@ -35,16 +35,19 @@ only by prose at release.
 ## Current executable slice
 
 The Rust crate currently parses functions over I64, Bool, nominal sums with
-at most one primitive payload per variant, and nominal products with I64/Bool
-fields. It supports up to four owned parameters (I64 borrows only), `val` and
+at most one payload per variant, and nominal products with finite fields.
+User-declared payloads and fields may contain earlier nominal types; recursive
+data and concrete `Result` fields in user declarations remain unsupported.
+It supports up to four owned parameters (I64 borrows only), `val` and
 `var` bindings, assignment, `while`, integer and boolean literals, unary
 negation, `+`, `-`, `*`, `==`, `<`, `if` expressions with block arms, exhaustive
 `when` expressions, acyclic direct calls, call-site `&I64` and `&mut I64`
 arguments, `?` on concrete built-in `Result<T, E>` applications with
 primitive or existing nominal payloads, and a matching tail expression.
 Nominal values have affine move checking:
-owning uses consume them, product field reads preserve them, and CFG joins
-reject later reuse when any incoming path has moved the owner. `copy(x)` makes
+owning uses and nominal field projections consume them; primitive product
+field reads preserve them. CFG joins reject later reuse when any incoming path
+has moved the owner. `copy(x)` makes
 an explicit independent nominal copy and records a `copy.value` cost site.
 Recursion is rejected until task stacks have safe growth limits. Arithmetic
 wraps at 64 bits in both interpreter and native execution. `phoebe check`,
@@ -55,7 +58,7 @@ the host `cc`; `--interp` selects the reference interpreter. The built
 executable runs without the compiler process and prints the I64 returned by
 zero-argument `main`. External JIT and interpreter entries also require I64
 signatures; calls within Phoebe can pass and return Bool or nominal data.
-Primitive-field products also cross calls and returns by flattened scalar
+Finite products also cross calls and returns by flattened scalar
 components, without native heap allocation. `docs/abi-shapes.md` records the
 current internal calling convention and its missing cost threshold. Core IR
 has typed values, conditional branches, variant matches, block parameters,
@@ -67,8 +70,8 @@ types. Source spans survive parsing and lowering. `docs/core-ir.md` and
 `docs/call-borrows.md` explain the current operations and their evidence
 boundary. Borrows are confined to synchronous calls; general reference
 lifetimes and regions are not implemented. `docs/result-try.md` states the
-current `?` rule and its missing user-declared nested payload, generic function, and
-cleanup work.
+current `?` rule and its missing user-declared `Result` fields, generic
+functions, and cleanup work.
 
 This slice establishes the parser → checked IR → interpreter/Cranelift path.
 It does not yet implement general ownership, concurrency, or all release
@@ -103,6 +106,7 @@ cargo run -- run examples/product.phoebe
 cargo run -- run examples/payload.phoebe
 cargo run -- run examples/try.phoebe
 cargo run -- run examples/nested_result.phoebe
+cargo run -- run examples/nested_variant.phoebe
 cargo run -- run examples/copy.phoebe
 cargo run -- cost examples/copy.phoebe
 cargo run -- run examples/hello.phoebe --interp

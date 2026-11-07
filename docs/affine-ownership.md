@@ -7,6 +7,10 @@ tasks, channels, or references.
 `I64` and `Bool` are copyable. Every nominal `Data(id)` value is currently
 affine, even if its fields are small. The source can read primitive product
 fields without consuming the owner. An owning use transfers the whole value.
+A nested nominal field projection consumes the product owner and returns the
+field; other closed fields are discarded. Reading a nominal field from a
+mutable place first takes the whole product. A second access requires an
+explicit `copy(x)` before the first owning projection.
 There is no implicit copy of a nominal value. `copy(x)` explicitly creates a
 second owned closed value and leaves `x` live; a scalar `copy(x)` is an identity
 use. Every nominal copy appears as `copy.value` in Core IR and the cost ledger.
@@ -21,7 +25,8 @@ order:
 | `move v` | `v ∈ L_v` | Remove `v`; add the result |
 | `place.take p` | `p ∈ L_p` | Remove `p`; add the result |
 | `copy.value v` or `copy.value p` | Owner live | Keep the owner; add the independent result |
-| `field v, i` or `place.field p, i` | Owner live | State unchanged |
+| Primitive `field v, i` or `place.field p, i` | Owner live | State unchanged |
+| Nominal `field v, i` | `v ∈ L_v` | Remove `v`; add the projected field |
 | Owning call, construction, store, jump, return | Each nominal operand live | Remove transferred operands; store makes its destination place live |
 | `match v` | `v ∈ L_v` | Remove `v`; each edge introduces its explicit payload or whole-subject block parameter |
 

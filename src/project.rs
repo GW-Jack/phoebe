@@ -137,7 +137,13 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
             }
         }
     }
-    check_import_cycles(&modules)?;
+    let order = check_import_cycles(&modules)?;
+    let positions = order
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| (name, index))
+        .collect::<HashMap<_, _>>();
+    modules.sort_by_key(|module| positions[&module.name]);
 
     let mut combined = syntax::Program {
         imports: Vec::new(),
@@ -252,7 +258,7 @@ fn source_error(path: &Path, source: &str, span: Span, message: String) -> Strin
     )
 }
 
-fn check_import_cycles(modules: &[Module]) -> Result<(), String> {
+fn check_import_cycles(modules: &[Module]) -> Result<Vec<String>, String> {
     let graph = modules
         .iter()
         .map(|module| {
@@ -272,6 +278,7 @@ fn check_import_cycles(modules: &[Module]) -> Result<(), String> {
         graph: &BTreeMap<&'a str, Vec<&'a str>>,
         visiting: &mut HashSet<&'a str>,
         done: &mut HashSet<&'a str>,
+        order: &mut Vec<String>,
     ) -> Result<(), String> {
         if done.contains(name) {
             return Ok(());
@@ -280,18 +287,20 @@ fn check_import_cycles(modules: &[Module]) -> Result<(), String> {
             return Err(format!("module import cycle includes `{name}`"));
         }
         for import in &graph[name] {
-            visit(import, graph, visiting, done)?;
+            visit(import, graph, visiting, done, order)?;
         }
         visiting.remove(name);
         done.insert(name);
+        order.push(name.to_owned());
         Ok(())
     }
     let mut visiting = HashSet::new();
     let mut done = HashSet::new();
+    let mut order = Vec::new();
     for name in graph.keys() {
-        visit(name, &graph, &mut visiting, &mut done)?;
+        visit(name, &graph, &mut visiting, &mut done, &mut order)?;
     }
-    Ok(())
+    Ok(order)
 }
 
 fn symbol(module: &str, name: &str, root: &str) -> String {

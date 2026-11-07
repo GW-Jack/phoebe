@@ -19,7 +19,7 @@ bounds and the edge binding against its target's parameter type and count.
 Payload access therefore
 does not need a separate unchecked field operation or path-sensitive proof
 search. Native lowering expands the match into a tag dispatch; the interpreter
-selects the matching arm directly. Primitive-field products have `product` and
+selects the matching arm directly. Finite products have `product` and
 `field` operations. Their fields remain separate SSA components through native
 calls, returns, and joins; `docs/abi-shapes.md` specifies the current shape.
 
@@ -32,7 +32,7 @@ receives and returns the original sum value through a block parameter; its
 place operations are `place.init`, `place.load`, `place.take`, `place.field`,
 and `place.store`. An
 initializer dominates every use, including on a loop backedge. A place can
-hold `I64`, `Bool`, sums, or primitive-field products. A synchronous call can
+hold `I64`, `Bool`, sums, or finite products. A synchronous call can
 borrow an `I64` place through
 `&I64` or `&mut I64`; the callee uses `ref.load` and, for an exclusive loan,
 `ref.store`. The interpreter stores a value per place and resolves the call
@@ -45,12 +45,14 @@ use emits `move`; reading a nominal `var` emits `place.take`. A primitive
 `copy(x)` emits `copy.value` for a nominal owner and preserves the source.
 That IR operation is also an on-demand static cost event. A primitive
 product field read uses `field` on a live SSA owner or `place.field` on a live
-place, leaving the owner available. The ownership verifier propagates live
+place, leaving the owner available. A nominal product field uses an owning
+`field` projection; a `var` first emits `place.take`. The other closed fields
+are discarded. The ownership verifier propagates live
 value and place states through the CFG, consumes them at owning calls,
 constructions, jumps, returns, and matches, and intersects them at joins.
 Using an owner after a move receives a source-located diagnostic. The native
 `move` reuses the same scalar components; `place.field` loads only the selected
-component. The interpreter's boxed values remain a reference implementation,
+primitive component. The interpreter's boxed values remain a reference implementation,
 not a native allocation model. `affine-ownership.md` gives the abstract
 transition rules and their evidence boundary.
 
