@@ -44,7 +44,8 @@ numeric negation, Boolean `!`, `+`, `-`, `*`, `==`, `!=`, `<`, `<=`, `>`, `>=`, 
 and `||`, `if` expressions with block arms, exhaustive `when` expressions,
 acyclic direct calls, call-site `&I64` and `&mut I64`
 arguments, `?` on concrete built-in `Result<T, E>` applications with
-primitive or existing nominal payloads, and a matching tail expression.
+primitive or existing nominal payloads and the same error type as the
+enclosing function's `Result<U, E>`, and a matching tail expression.
 Boolean operators require `Bool` on both sides even when the right side is
 skipped at runtime. Their precedence is `||` below `&&`, below comparisons;
 the right side is a separate Core CFG branch and may contain `?`.

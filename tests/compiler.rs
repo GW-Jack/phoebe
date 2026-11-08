@@ -797,7 +797,7 @@ fn question_mark_checks_result_shape_and_return_type() {
         ),
         (
             "fn use(x: Result<I64,I64>) -> I64 = x? fn main() -> I64 = 1",
-            "same Result type",
+            "same error type",
         ),
         (
             "fn use(x: Result<Unknown,I64>) -> Result<Unknown,I64> = x fn main() -> I64 = 1",
@@ -809,7 +809,7 @@ fn question_mark_checks_result_shape_and_return_type() {
         ),
         (
             "fn use(x: Result<I64,Bool>) -> Result<I64,I64> { val y = x?; Result<I64,I64>.Ok(y) } fn main() -> I64 = 1",
-            "same Result type",
+            "same error type",
         ),
     ];
     for (source, expected) in cases {
@@ -818,6 +818,57 @@ fn question_mark_checks_result_shape_and_return_type() {
             .unwrap_err();
         assert!(error.message.contains(expected), "{error:?}");
     }
+}
+
+#[test]
+fn question_mark_rewraps_shared_error_across_different_success_types() {
+    let source = r#"
+data Problem { Missing, Invalid }
+fn read(x: I64) -> Result<I64, Problem> = if (x < 0) {
+  Result<I64, Problem>.Err(Problem.Missing)
+} else {
+  Result<I64, Problem>.Ok(x)
+}
+fn positive(x: I64) -> Result<Bool, Problem> {
+  val number = read(x)?;
+  Result<Bool, Problem>.Ok(number > 0)
+}
+fn score(x: I64) -> I64 = when (positive(x)) {
+  Result<Bool, Problem>.Ok(value) -> { if (value) { 40 } else { 0 } },
+  Result<Bool, Problem>.Err(error) -> { when (error) {
+    Problem.Missing -> { 2 },
+    Problem.Invalid -> { 0 },
+  } },
+}
+fn main() -> I64 { yield; score(1) + score(-1) }
+"#;
+    let program = compile(source);
+    let (_, positive) = program.function("positive").unwrap();
+    let (subject, arms) = positive
+        .blocks
+        .iter()
+        .find_map(|block| match &block.terminator {
+            core::Terminator::Match { subject, arms } => Some((*subject, arms)),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(arms[1].binding, core::MatchBinding::Payload);
+    let failure = &positive.blocks[arms[1].target.0];
+    assert_eq!(failure.params.len(), 1);
+    assert_ne!(positive.value_types[subject.0], positive.return_type);
+    assert!(matches!(
+        failure.instructions.as_slice(),
+        [core::Instruction { operation: core::Operation::Variant(_, 1, Some(value)), .. }]
+            if *value == failure.params[0]
+    ));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-try-rewrap-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
 }
 
 #[test]

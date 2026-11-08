@@ -141,3 +141,39 @@ fn expression_with_retains_owner_across_receive_park() {
     );
     assert_eq!(output.stdout, b"42\n");
 }
+
+#[test]
+fn changed_success_type_propagates_error_and_closes_lexical_rights() {
+    let source = r#"
+fn probe(capacity: I64) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = capacity)?;
+  sender.close();
+  receiver.close();
+  Result<I64, ResourceError>.Ok(1)
+}
+fn convert(capacity: I64) -> Result<Bool, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  val result = with output = sender {
+    with input = receiver {
+      val value = probe(capacity)?;
+      Result<Bool, ResourceError>.Ok(value == 1)
+    }
+  };
+  result
+}
+fn inspect(capacity: I64) -> I64 = when (convert(capacity)) {
+  Result<Bool, ResourceError>.Ok(value) -> { if (value) { 40 } else { 0 } },
+  Result<Bool, ResourceError>.Err(error) -> { 2 },
+}
+fn main() -> I64 = inspect(1) + inspect(0)
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-try-with-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+}

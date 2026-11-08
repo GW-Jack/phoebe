@@ -302,23 +302,47 @@ impl Lowerer<'_> {
                     })?;
                 let ok_ty = data.payloads[ok_tag]
                     .ok_or_else(|| Diagnostic::new(inner.span, "Result.Ok requires a payload"))?;
-                if data.payloads[err_tag].is_none() {
-                    return Err(Diagnostic::new(inner.span, "Result.Err requires a payload"));
-                }
-                if self.return_type != ty {
+                let err_ty = data.payloads[err_tag]
+                    .ok_or_else(|| Diagnostic::new(inner.span, "Result.Err requires a payload"))?;
+                let Type::Data(return_id) = self.return_type else {
                     return Err(Diagnostic::new(
                         expr.span,
-                        "? requires the function to return the same Result type",
+                        "? requires the function to return Result with the same error type",
+                    ));
+                };
+                let return_data = &self.data[return_id.0];
+                let return_error_tag = return_data
+                    .variants
+                    .iter()
+                    .position(|name| name == "Err")
+                    .ok_or_else(|| {
+                    Diagnostic::new(
+                        expr.span,
+                        "? requires the function to return Result with the same error type",
+                    )
+                })?;
+                if !return_data.name.starts_with("Result<")
+                    || return_data.variants.len() != 2
+                    || return_data.payloads[return_error_tag] != Some(err_ty)
+                {
+                    return Err(Diagnostic::new(
+                        expr.span,
+                        "? requires the function to return Result with the same error type",
                     ));
                 }
                 let success = self.block();
                 let payload = self.block_param(success, ok_ty);
                 let failure = self.block();
-                let original = self.block_param(failure, ty);
+                let passthrough = self.return_type == ty;
+                let error = self.block_param(failure, if passthrough { ty } else { err_ty });
                 let mut arms = vec![
                     MatchArm {
                         target: failure,
-                        binding: MatchBinding::Whole,
+                        binding: if passthrough {
+                            MatchBinding::Whole
+                        } else {
+                            MatchBinding::Payload
+                        },
                     };
                     2
                 ];
@@ -331,7 +355,16 @@ impl Lowerer<'_> {
                     arms,
                 });
                 self.current = failure;
-                self.implicit_return(original, expr.span);
+                let failed = if passthrough {
+                    error
+                } else {
+                    self.emit(
+                        Operation::Variant(return_id, return_error_tag, Some(error)),
+                        self.return_type,
+                        expr.span,
+                    )
+                };
+                self.implicit_return(failed, expr.span);
                 self.current = success;
                 return Ok((payload, ok_ty));
             }
