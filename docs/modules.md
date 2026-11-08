@@ -81,10 +81,15 @@ including `spawn` and `scope.join`. The native direct-object cache removes
 those spans from its function key, so moving unchanged source text does not
 force code emission solely because locations changed.
 
-The current CLI starts a fresh session for each command. The in-process
-`NativeBuildSession` can reuse direct function objects, but the CLI does not
-persist those objects or provide incremental type checking.
-Cached ASTs are cloned and qualified again when a project is loaded. The
+The current CLI starts a fresh parse and Core session for each command.
+`phoebe build <project> -o <output> --cache-dir <directory>` can persist
+direct function objects across compiler invocations. The cache is versioned,
+bound to the exact compiler executable, checked against exact Core/ABI keys,
+and discarded on truncation or checksum failure. The linker still runs on
+every build. The cache is optional and does not persist typed interfaces or
+incremental type checking. Suspendable poll objects are still emitted afresh.
+Cached ASTs are cloned and qualified again when an in-process project session
+is loaded. The
 small warm-session baseline in `docs/performance-baseline.md` shows only a
 marginal difference on a six-function project.
 

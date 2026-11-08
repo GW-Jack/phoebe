@@ -25,6 +25,7 @@ use phoebe_frame::{self as frame_layout, FrameWords, FunctionFrame};
 use phoebe_runtime::{self as runtime, Context, NativeCallContext, Scheduler, ScopeLimits, Task};
 use phoebe_syntax::syntax::ParamMode;
 
+mod cache;
 mod poll;
 mod reachability;
 mod runtime_imports;

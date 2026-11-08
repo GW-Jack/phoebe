@@ -38,6 +38,7 @@ buck2 build //:phoebe_dist
 buck2 run //:phoebe -- run examples/hello.phoebe
 buck2 build //crates/runtime:runtime_archive
 buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
+buck2 run //:phoebe -- build examples/multi_module -o /tmp/phoebe-app --cache-dir /tmp/phoebe-objects
 buck2 run //:phoebe -- build examples/package_graph/app -o /tmp/phoebe-app
 buck2 build //crates/core:phoebe_core
 buck2 test //crates/core:unit_tests //crates/runtime:unit_tests //crates/native:unit_tests

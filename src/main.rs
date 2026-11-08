@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use phoebe::{core, frame_layout, native, package, project, syntax};
 
 fn usage() -> &'static str {
-    "usage: phoebe lock <project> | phoebe deps <project> | phoebe check <file|project> | phoebe ir <file|project> | phoebe frames <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable>"
+    "usage: phoebe lock <project> | phoebe deps <project> | phoebe check <file|project> | phoebe ir <file|project> | phoebe frames <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable> [--cache-dir <directory>]"
 }
 
 fn command() -> Result<(), String> {
@@ -111,15 +111,29 @@ fn command() -> Result<(), String> {
             println!("{result}");
         }
         "build" => {
-            if args.next().as_deref() != Some("-o") {
-                return Err(usage().into());
+            let mut output = None;
+            let mut cache_dir = None;
+            while let Some(option) = args.next() {
+                let value = args.next().ok_or_else(|| usage().to_owned())?;
+                match option.as_str() {
+                    "-o" if output.is_none() => output = Some(value),
+                    "--cache-dir" if cache_dir.is_none() => cache_dir = Some(value),
+                    _ => return Err(usage().into()),
+                }
             }
-            let output = args.next().ok_or_else(|| usage().to_owned())?;
-            if args.next().is_some() {
-                return Err(usage().into());
+            let output = output.ok_or_else(|| usage().to_owned())?;
+            if let Some(directory) = cache_dir {
+                let directory = Path::new(&directory);
+                let mut session = native::NativeBuildSession::load_cache(directory);
+                let reused = session.build_executable(&program, Path::new(&output))?;
+                if let Err(error) = session.save_cache(directory) {
+                    eprintln!("native object cache not saved: {error}");
+                }
+                println!("built {output} (reused {reused} native object(s))");
+            } else {
+                native::build_executable(&program, Path::new(&output))?;
+                println!("built {output}");
             }
-            native::build_executable(&program, Path::new(&output))?;
-            println!("built {output}");
         }
         _ => unreachable!(),
     }

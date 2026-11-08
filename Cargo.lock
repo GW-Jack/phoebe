@@ -455,6 +455,7 @@ dependencies = [
  "phoebe-frame",
  "phoebe-runtime",
  "phoebe-syntax",
+ "sha2",
 ]
 
 [[package]]

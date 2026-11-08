@@ -15,6 +15,7 @@ rust_library(
         "//third-party/rust:cranelift-module",
         "//third-party/rust:cranelift-native",
         "//third-party/rust:cranelift-object",
+        "//third-party/rust:sha2",
     ],
     visibility = ["PUBLIC"],
     tests = [":unit_tests"],
@@ -37,5 +38,6 @@ rust_test(
         "//third-party/rust:cranelift-module",
         "//third-party/rust:cranelift-native",
         "//third-party/rust:cranelift-object",
+        "//third-party/rust:sha2",
     ],
 )

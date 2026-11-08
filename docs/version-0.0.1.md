@@ -116,9 +116,10 @@ still compares exact structures. Public imported nominal variants can be constru
 with qualified names. An in-process `NativeBuildSession` now emits separate
 objects for direct functions and reuses them after checked Core edits when
 their body and ABI inputs are unchanged; standalone one-shot builds retain
-single-object emission. This is an object-level rebuild witness, not yet a
-persistent command-line build cache. Registry dependencies and cached typed
-interfaces remain open. Core reuse now rebases source spans on `spawn` and
+single-object emission. The optional CLI `--cache-dir` now persists direct
+function objects between builds, but still parses and lowers each invocation;
+poll objects and the final link are rebuilt. Registry dependencies and cached
+typed interfaces remain open. Core reuse now rebases source spans on `spawn` and
 `scope.join` as well as instructions and `yield`; direct-object keys ignore
 every such span. The `examples/cost/` files other than `identity` and `empty_scope` remain
 design fixtures, not executable acceptance tests.
