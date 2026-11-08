@@ -1,6 +1,95 @@
 use super::*;
 
 #[test]
+fn capability_sum_variant_and_match_derive_envelope_transitions() {
+    let data = vec![DataDef {
+        name: "MaybeSender".into(),
+        variants: vec!["None".into(), "Some".into()],
+        payloads: vec![None, Some(Type::SenderI64)],
+        fields: vec![],
+    }];
+    let function = Function {
+        name: "consume".into(),
+        param_modes: vec![syntax::ParamMode::Own],
+        return_type: Type::I64,
+        value_types: vec![
+            Type::SenderI64,
+            Type::Data(DataId(0)),
+            Type::I64,
+            Type::SenderI64,
+            Type::I64,
+        ],
+        place_types: vec![],
+        loan_regions: vec![],
+        blocks: vec![
+            Block {
+                params: vec![ValueId(0)],
+                instructions: vec![Instruction {
+                    result: Some(ValueId(1)),
+                    operation: Operation::Variant(DataId(0), 1, Some(ValueId(0))),
+                    span: Span { start: 0, end: 0 },
+                }],
+                terminator: Terminator::Match {
+                    subject: ValueId(1),
+                    arms: vec![
+                        MatchArm {
+                            target: BlockId(1),
+                            binding: MatchBinding::Discard,
+                        },
+                        MatchArm {
+                            target: BlockId(2),
+                            binding: MatchBinding::Payload,
+                        },
+                    ],
+                },
+            },
+            Block {
+                params: vec![],
+                instructions: vec![Instruction {
+                    result: Some(ValueId(2)),
+                    operation: Operation::Const(0),
+                    span: Span { start: 0, end: 0 },
+                }],
+                terminator: Terminator::Return(ValueId(2)),
+            },
+            Block {
+                params: vec![ValueId(3)],
+                instructions: vec![
+                    Instruction {
+                        result: None,
+                        operation: Operation::CloseHandle(ValueId(3)),
+                        span: Span { start: 0, end: 0 },
+                    },
+                    Instruction {
+                        result: Some(ValueId(4)),
+                        operation: Operation::Const(1),
+                        span: Span { start: 0, end: 0 },
+                    },
+                ],
+                terminator: Terminator::Return(ValueId(4)),
+            },
+        ],
+    };
+    let (graph, owners) = capability_graph(&function, &Layout::new(&data), &[], &[]).unwrap();
+    assert_eq!(owners, vec![ValueId(0), ValueId(1), ValueId(3)]);
+    assert_eq!(
+        graph.blocks[0].actions,
+        vec![CapAction::PackSum {
+            sources: vec![capability_flow::Slot(0)],
+            envelope: capability_flow::Slot(1),
+        }]
+    );
+    assert_eq!(
+        graph.blocks[0].exits[1].actions,
+        vec![CapAction::UnpackSum {
+            envelope: capability_flow::Slot(1),
+            destinations: vec![capability_flow::Slot(2)],
+        }]
+    );
+    capability_flow::verify(&graph).unwrap();
+}
+
+#[test]
 fn product_parameter_allocates_one_flow_slot_per_right() {
     let data = vec![DataDef {
         name: "Pair".into(),

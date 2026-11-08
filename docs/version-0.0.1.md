@@ -327,6 +327,12 @@ right exists only in its `Some` variant and is transferred or closed on the
 selected branch. It is specification backpressure, not tagged ownership in
 Core; source and hand-built Core still reject sums with capability-bearing
 payloads.
+The exact slot checker now has `PackSum` and `UnpackSum` transitions and a
+unit graph that joins `Some` and `None` at one envelope slot. Core's private
+graph builder derives those actions for variant construction and matching in
+a synthetic test. Structural verification still rejects capability-bearing
+sums because native close, transfer, and tagged payload cleanup are not yet
+implemented.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
 retry across both operations. Generated send and receive leaves use retained

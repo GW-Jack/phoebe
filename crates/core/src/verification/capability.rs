@@ -81,6 +81,18 @@ pub(crate) fn capability_graph(
                         actions.push(CapAction::MoveGroup(moves));
                     }
                 }
+                Operation::Variant(_, _, payload) => {
+                    let sum = instruction.result.expect("verified variant has result");
+                    if let Some(envelope) = slots[sum.0].clone().next() {
+                        actions.push(CapAction::PackSum {
+                            sources: payload
+                                .iter()
+                                .flat_map(|value| slots[value.0].clone().map(capability_flow::Slot))
+                                .collect(),
+                            envelope: capability_flow::Slot(envelope),
+                        });
+                    }
+                }
                 Operation::Product(_, fields) => {
                     let product = instruction.result.expect("verified product has result");
                     let mut destination = slots[product.0].start;
@@ -186,9 +198,38 @@ pub(crate) fn capability_graph(
                 edge(CapTarget::Block(then_block.0), vec![]),
                 edge(CapTarget::Block(else_block.0), vec![]),
             ],
-            Terminator::Match { arms, .. } => arms
+            Terminator::Match { subject, arms } => arms
                 .iter()
-                .map(|arm| edge(CapTarget::Block(arm.target.0), vec![]))
+                .map(|arm| {
+                    let actions = if let Some(envelope) = slots[subject.0].clone().next() {
+                        let target = &function.blocks[arm.target.0];
+                        match arm.binding {
+                            MatchBinding::Whole => {
+                                vec![CapAction::Move {
+                                    from: capability_flow::Slot(envelope),
+                                    to: capability_flow::Slot(slots[target.params[0].0].start),
+                                }]
+                            }
+                            MatchBinding::Payload | MatchBinding::Discard => {
+                                let destinations = if arm.binding == MatchBinding::Payload {
+                                    slots[target.params[0].0]
+                                        .clone()
+                                        .map(capability_flow::Slot)
+                                        .collect()
+                                } else {
+                                    vec![]
+                                };
+                                vec![CapAction::UnpackSum {
+                                    envelope: capability_flow::Slot(envelope),
+                                    destinations,
+                                }]
+                            }
+                        }
+                    } else {
+                        vec![]
+                    };
+                    edge(CapTarget::Block(arm.target.0), actions)
+                })
                 .collect(),
             Terminator::ChannelNew {
                 success, failure, ..

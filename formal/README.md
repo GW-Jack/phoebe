@@ -134,6 +134,11 @@ queue transfer, allocation failure, and compiler/runtime state. It establishes
 a design obligation for Core: a sum's capability state must retain its active
 tag through joins and cleanup. The current Core verifier deliberately rejects
 capability-bearing sum payloads.
+The executable exact-slot checker separately tests an opaque envelope that
+both variants can carry through one CFG join. Core's private graph builder
+derives pack and unpack actions from a synthetic tagged sum. Structural
+verification still rejects that data type while native cleanup and transfer
+remain incomplete.
 
 ## Evidence boundary
 

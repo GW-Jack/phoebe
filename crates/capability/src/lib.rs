@@ -22,6 +22,19 @@ pub enum Action {
     /// Simultaneous SSA/block-argument assignment. A live destination may
     /// also be a source in this group, allowing permutations on backedges.
     MoveGroup(Vec<(Slot, Slot)>),
+    /// Replace the selected variant payload's live rights with one affine
+    /// sum envelope. An empty source still creates an envelope for a variant
+    /// with no rights. The typed Core producer must bind this to the tag.
+    PackSum {
+        sources: Vec<Slot>,
+        envelope: Slot,
+    },
+    /// Consume a sum envelope and expose the active variant's rights. The
+    /// typed Core producer must select destinations from that variant alone.
+    UnpackSum {
+        envelope: Slot,
+        destinations: Vec<Slot>,
+    },
     Close(Slot),
     /// Provisional lexical cleanup: close only if this scope still owns it.
     CloseIfLive(Slot),
@@ -180,6 +193,53 @@ fn apply(actions: &[Action], state: &mut [bool], block: usize) -> Result<Vec<Slo
                 }
                 for &(_, to) in moves {
                     state[to.0] = true;
+                }
+            }
+            Action::PackSum { sources, envelope } => {
+                if state.get(envelope.0) != Some(&false) {
+                    return Err(format!(
+                        "block {block}: sum envelope {} is not empty",
+                        envelope.0
+                    ));
+                }
+                let mut seen = HashSet::with_capacity(sources.len());
+                for source in sources {
+                    require(*source)?;
+                    if !seen.insert(*source) {
+                        return Err(format!(
+                            "block {block}: sum payload slot {} is packed twice",
+                            source.0
+                        ));
+                    }
+                }
+                for source in sources {
+                    state[source.0] = false;
+                }
+                state[envelope.0] = true;
+            }
+            Action::UnpackSum {
+                envelope,
+                destinations,
+            } => {
+                require(*envelope)?;
+                let mut seen = HashSet::with_capacity(destinations.len());
+                for destination in destinations {
+                    if state.get(destination.0) != Some(&false) {
+                        return Err(format!(
+                            "block {block}: sum payload destination {} is not empty",
+                            destination.0
+                        ));
+                    }
+                    if !seen.insert(*destination) {
+                        return Err(format!(
+                            "block {block}: sum payload destination {} is repeated",
+                            destination.0
+                        ));
+                    }
+                }
+                state[envelope.0] = false;
+                for destination in destinations {
+                    state[destination.0] = true;
                 }
             }
             Action::Close(slot) | Action::Transfer(slot) => {
@@ -359,5 +419,104 @@ mod lexical_group_tests {
                 .unwrap_err()
                 .contains("partial lexical capability ownership")
         );
+    }
+}
+
+#[cfg(test)]
+mod sum_envelope_tests {
+    use super::*;
+
+    fn edge(target: Target, actions: Vec<Action>) -> Edge {
+        Edge { target, actions }
+    }
+
+    fn optional_right_graph() -> Graph {
+        Graph {
+            slots: 3,
+            entry_live: vec![],
+            blocks: vec![
+                Block {
+                    actions: vec![],
+                    exits: vec![
+                        edge(Target::Block(1), vec![]),
+                        edge(Target::Block(2), vec![]),
+                    ],
+                },
+                Block {
+                    actions: vec![
+                        Action::Create(Slot(0)),
+                        Action::PackSum {
+                            sources: vec![Slot(0)],
+                            envelope: Slot(1),
+                        },
+                    ],
+                    exits: vec![edge(Target::Block(3), vec![])],
+                },
+                Block {
+                    actions: vec![Action::PackSum {
+                        sources: vec![],
+                        envelope: Slot(1),
+                    }],
+                    exits: vec![edge(Target::Block(3), vec![])],
+                },
+                Block {
+                    actions: vec![],
+                    exits: vec![
+                        edge(
+                            Target::Block(4),
+                            vec![Action::UnpackSum {
+                                envelope: Slot(1),
+                                destinations: vec![Slot(2)],
+                            }],
+                        ),
+                        edge(
+                            Target::Block(5),
+                            vec![Action::UnpackSum {
+                                envelope: Slot(1),
+                                destinations: vec![],
+                            }],
+                        ),
+                        edge(Target::Failure, vec![]),
+                    ],
+                },
+                Block {
+                    actions: vec![Action::Close(Slot(2))],
+                    exits: vec![edge(Target::Return, vec![])],
+                },
+                Block {
+                    actions: vec![],
+                    exits: vec![edge(Target::Return, vec![])],
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn optional_right_has_one_exact_envelope_at_join() {
+        let graph = optional_right_graph();
+        let facts = verify(&graph).unwrap();
+        assert_eq!(facts.failures.len(), 1);
+        assert_eq!(facts.failures[0].live, vec![Slot(1)]);
+
+        let mut leaked = graph;
+        leaked.blocks[4].actions.clear();
+        assert!(verify(&leaked).unwrap_err().contains("normal return leaks"));
+    }
+
+    #[test]
+    fn sum_pack_and_unpack_reject_aliases() {
+        let mut graph = optional_right_graph();
+        graph.blocks[1].actions[1] = Action::PackSum {
+            sources: vec![Slot(0), Slot(0)],
+            envelope: Slot(1),
+        };
+        assert!(verify(&graph).unwrap_err().contains("packed twice"));
+
+        let mut graph = optional_right_graph();
+        graph.blocks[3].exits[0].actions[0] = Action::UnpackSum {
+            envelope: Slot(1),
+            destinations: vec![Slot(2), Slot(2)],
+        };
+        assert!(verify(&graph).unwrap_err().contains("repeated"));
     }
 }
