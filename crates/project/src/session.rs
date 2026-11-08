@@ -1,6 +1,6 @@
 //! Reuses parsed modules and computes conservative interface invalidation.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
 use super::{Loaded, Module, ModuleInterface, load_with_cache};
@@ -50,24 +50,29 @@ impl ProjectSession {
             .map(|(name, _)| name.clone())
             .collect::<Vec<_>>();
         let mut affected = parsed.iter().cloned().collect::<BTreeSet<_>>();
-        let mut frontier = changed_interfaces.iter().cloned().collect::<BTreeSet<_>>();
-        loop {
-            let mut added = false;
-            for module in modules.values() {
-                if !frontier.contains(&module.name)
-                    && module
-                        .ast
-                        .imports
-                        .iter()
-                        .any(|import| frontier.contains(&module.available[&import.name]))
-                {
-                    frontier.insert(module.name.clone());
-                    affected.insert(module.name.clone());
-                    added = true;
-                }
+        let mut importers = BTreeMap::<&str, Vec<&str>>::new();
+        for module in modules.values() {
+            for import in &module.ast.imports {
+                importers
+                    .entry(&module.available[&import.name])
+                    .or_default()
+                    .push(&module.name);
             }
-            if !added {
-                break;
+        }
+        let mut frontier = changed_interfaces
+            .iter()
+            .map(String::as_str)
+            .collect::<VecDeque<_>>();
+        let mut visited = changed_interfaces
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        while let Some(changed) = frontier.pop_front() {
+            for &importer in importers.get(changed).into_iter().flatten() {
+                if visited.insert(importer) {
+                    affected.insert(importer.to_owned());
+                    frontier.push_back(importer);
+                }
             }
         }
         self.modules = modules;

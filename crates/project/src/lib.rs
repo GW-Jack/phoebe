@@ -429,32 +429,38 @@ fn check_import_cycles(modules: &[Module]) -> Result<Vec<String>, String> {
             )
         })
         .collect::<BTreeMap<_, _>>();
-    fn visit<'a>(
-        name: &'a str,
-        graph: &BTreeMap<&'a str, Vec<&'a str>>,
-        visiting: &mut HashSet<&'a str>,
-        done: &mut HashSet<&'a str>,
-        order: &mut Vec<String>,
-    ) -> Result<(), String> {
-        if done.contains(name) {
-            return Ok(());
-        }
-        if !visiting.insert(name) {
-            return Err(format!("module import cycle includes `{name}`"));
-        }
-        for import in &graph[name] {
-            visit(import, graph, visiting, done, order)?;
-        }
-        visiting.remove(name);
-        done.insert(name);
-        order.push(name.to_owned());
-        Ok(())
-    }
+    // An explicit DFS stack keeps a long but valid import chain from using
+    // the compiler's process stack. Preserve the old dependency-first order:
+    // roots are sorted, and each module's imports retain source order.
     let mut visiting = HashSet::new();
     let mut done = HashSet::new();
     let mut order = Vec::new();
-    for name in graph.keys() {
-        visit(name, &graph, &mut visiting, &mut done, &mut order)?;
+    for &root in graph.keys() {
+        if done.contains(root) {
+            continue;
+        }
+        visiting.insert(root);
+        let mut stack = vec![(root, 0usize)];
+        while let Some((name, next)) = stack.last_mut() {
+            let imports = &graph[name];
+            if *next == imports.len() {
+                let name = *name;
+                stack.pop();
+                visiting.remove(name);
+                done.insert(name);
+                order.push(name.to_owned());
+                continue;
+            }
+            let child = imports[*next];
+            *next += 1;
+            if done.contains(child) {
+                continue;
+            }
+            if !visiting.insert(child) {
+                return Err(format!("module import cycle includes `{child}`"));
+            }
+            stack.push((child, 0));
+        }
     }
     Ok(order)
 }
@@ -905,5 +911,55 @@ fn shift_expr(expr: &mut Expr, offset: usize) {
                 shift_body(&mut arm.body, offset);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod import_graph_tests {
+    use super::*;
+
+    #[test]
+    fn long_import_chain_orders_dependencies_without_recursive_stack_use() {
+        const COUNT: usize = 8_192;
+        let empty = syntax::parse("fn value() -> I64 = 0").unwrap();
+        let mut modules = Vec::with_capacity(COUNT);
+        for index in 0..COUNT {
+            let name = format!("m{index:05}");
+            let mut ast = empty.clone();
+            let mut available = HashMap::new();
+            if index + 1 < COUNT {
+                let next = format!("m{:05}", index + 1);
+                ast.imports.push(syntax::Import {
+                    name: next.clone(),
+                    span: Span { start: 0, end: 0 },
+                });
+                available.insert(next.clone(), next);
+            }
+            modules.push(Module {
+                name,
+                package_root: "m00000".into(),
+                available,
+                path: PathBuf::new(),
+                source: String::new(),
+                ast,
+            });
+        }
+        let order = check_import_cycles(&modules).unwrap();
+        assert_eq!(order.len(), COUNT);
+        assert_eq!(order.first().unwrap(), "m08191");
+        assert_eq!(order.last().unwrap(), "m00000");
+
+        modules[COUNT - 1].ast.imports.push(syntax::Import {
+            name: "m00000".into(),
+            span: Span { start: 0, end: 0 },
+        });
+        modules[COUNT - 1]
+            .available
+            .insert("m00000".into(), "m00000".into());
+        assert!(
+            check_import_cycles(&modules)
+                .unwrap_err()
+                .contains("module import cycle")
+        );
     }
 }

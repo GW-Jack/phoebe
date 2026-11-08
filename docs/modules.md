@@ -43,6 +43,9 @@ contain a nominal type from an imported module. Import cycles and unknown
 imports are rejected. A qualified reference to a private function or type
 gets a source-located diagnostic. The compiler maps
 Core lowering diagnostics back to the defining file and local line/column.
+Module ordering uses an explicit DFS stack, so a long import chain does not
+consume the compiler's call stack. A bounded 8,192-module graph test checks
+ordering and cycle rejection; it is not a measured project-size limit.
 The local module example is `examples/multi_module/`. A package may import a
 direct dependency's root module by its alias; see `docs/packages.md` and
 `examples/package_graph/app/`.
@@ -59,6 +62,9 @@ lists parsed and reused modules, changed interfaces, and a conservative set
 of modules affected through imports. A failed load leaves the previous session
 state intact. Exact structural equality, rather than a truncated hash, decides
 whether an interface changed.
+The session constructs reverse import edges once per load and walks them from
+changed interfaces. A body-only edit affects its defining module without
+invalidating importers.
 `ModuleInterface::canonical_bytes()` now encodes the ordered source-visible
 facts with length prefixes and a format version; `fingerprint()` returns its
 SHA-256 digest. Body text, local parameter names, and source spans are absent.
