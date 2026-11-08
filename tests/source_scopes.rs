@@ -38,6 +38,44 @@ fn source_scope_joins_spawned_child_in_both_backends() {
 }
 
 #[test]
+fn shifted_source_reuses_core_with_current_spawn_and_join_spans() {
+    let source = include_str!("../examples/scoped_spawn.phoebe");
+    let before_ast = syntax::parse(source).unwrap();
+    let before = core::lower(&before_ast).unwrap();
+    let shifted_ast = syntax::parse(&format!("\n{source}")).unwrap();
+    let hints = vec![true; before_ast.functions.len()];
+    let deltas = vec![1; before_ast.functions.len()];
+    let (reused, count) =
+        core::lower_reusing(&shifted_ast, &before_ast, &before, &hints, &deltas).unwrap();
+    assert_eq!(count, hints.len());
+    let fresh = core::lower(&shifted_ast).unwrap();
+    let mut seen_spawn = 0;
+    let mut seen_join = 0;
+    for (reused_function, fresh_function) in reused.functions.iter().zip(&fresh.functions) {
+        for (reused_block, fresh_block) in reused_function.blocks.iter().zip(&fresh_function.blocks)
+        {
+            match (&reused_block.terminator, &fresh_block.terminator) {
+                (Terminator::Spawn { span: reused, .. }, Terminator::Spawn { span: fresh, .. }) => {
+                    seen_spawn += 1;
+                    assert_eq!(reused, fresh);
+                }
+                (
+                    Terminator::ScopeJoin { span: reused, .. },
+                    Terminator::ScopeJoin { span: fresh, .. },
+                ) => {
+                    seen_join += 1;
+                    assert_eq!(reused, fresh);
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(seen_spawn > 0);
+    assert!(seen_join > 0);
+    assert_eq!(reused.cost_events(), fresh.cost_events());
+}
+
+#[test]
 fn scope_capacity_failure_faults_both_backends() {
     let program = lower(include_str!("../examples/scoped_spawn.phoebe"));
     let no_scopes = ScopeLimits {

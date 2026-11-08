@@ -316,26 +316,19 @@ pub fn lower_reusing(
 }
 
 fn rebase_function(function: &mut Function, delta: isize) -> Result<(), Diagnostic> {
-    let rebase = |span: &mut Span| -> Result<(), Diagnostic> {
-        span.start = span
-            .start
-            .checked_add_signed(delta)
-            .ok_or_else(|| Diagnostic::new(*span, "incremental source span overflow"))?;
-        span.end = span
-            .end
-            .checked_add_signed(delta)
-            .ok_or_else(|| Diagnostic::new(*span, "incremental source span overflow"))?;
-        Ok(())
-    };
-    for block in &mut function.blocks {
-        for instruction in &mut block.instructions {
-            rebase(&mut instruction.span)?;
-        }
-        if let Terminator::Yield { span, .. } = &mut block.terminator {
-            rebase(span)?;
-        }
-    }
-    Ok(())
+    let mut error = None;
+    function.for_each_source_span_mut(|span| {
+        let Some(start) = span.start.checked_add_signed(delta) else {
+            error.get_or_insert_with(|| Diagnostic::new(*span, "incremental source span overflow"));
+            return;
+        };
+        let Some(end) = span.end.checked_add_signed(delta) else {
+            error.get_or_insert_with(|| Diagnostic::new(*span, "incremental source span overflow"));
+            return;
+        };
+        *span = Span { start, end };
+    });
+    error.map_or(Ok(()), Err)
 }
 
 fn lower_internal(

@@ -118,8 +118,9 @@ objects for direct functions and reuses them after checked Core edits when
 their body and ABI inputs are unchanged; standalone one-shot builds retain
 single-object emission. This is an object-level rebuild witness, not yet a
 persistent command-line build cache. Registry dependencies and cached typed
-interfaces remain open. The
-`examples/cost/` files other than `identity` and `empty_scope` remain
+interfaces remain open. Core reuse now rebases source spans on `spawn` and
+`scope.join` as well as instructions and `yield`; direct-object keys ignore
+every such span. The `examples/cost/` files other than `identity` and `empty_scope` remain
 design fixtures, not executable acceptance tests.
 Standalone emission starts at `main` and omits unreachable direct functions
 and their spawned poll children. A dead runtime-using function cannot change

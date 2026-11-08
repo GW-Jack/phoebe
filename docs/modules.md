@@ -76,6 +76,10 @@ function while unchanged functions can reuse verified bodies, even within
 the edited module. Core reruns its program-wide verifiers before publishing the new session state;
 failed compilation preserves the old state. `CompileReport` counts reused
 functions. Cached spans are rebased to the new combined source positions.
+Core uses one traversal for every instruction and terminator source span,
+including `spawn` and `scope.join`. The native direct-object cache removes
+those spans from its function key, so moving unchanged source text does not
+force code emission solely because locations changed.
 
 The current CLI starts a fresh session for each command. The in-process
 `NativeBuildSession` can reuse direct function objects, but the CLI does not

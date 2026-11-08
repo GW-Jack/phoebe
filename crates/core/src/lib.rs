@@ -272,6 +272,38 @@ pub struct Function {
     pub loan_regions: Vec<LoanRegion>,
 }
 
+impl Function {
+    /// Visit every source span stored in a checked function. Incremental
+    /// rebasing and native cache keys must use the same complete traversal.
+    pub fn for_each_source_span_mut(&mut self, mut visit: impl FnMut(&mut Span)) {
+        for block in &mut self.blocks {
+            for instruction in &mut block.instructions {
+                visit(&mut instruction.span);
+            }
+            match &mut block.terminator {
+                Terminator::Yield { span, .. }
+                | Terminator::ScopeJoin { span, .. }
+                | Terminator::Spawn { span, .. } => visit(span),
+                Terminator::Return(_)
+                | Terminator::Jump(_, _)
+                | Terminator::Branch { .. }
+                | Terminator::Match { .. }
+                | Terminator::ChannelNew { .. }
+                | Terminator::ReplyNew { .. }
+                | Terminator::RequestChannelNew { .. }
+                | Terminator::RequestUnpack { .. }
+                | Terminator::RequestSend { .. }
+                | Terminator::RequestReceive { .. }
+                | Terminator::Fork { .. }
+                | Terminator::ChannelSend { .. }
+                | Terminator::ChannelReceive { .. }
+                | Terminator::ReplyComplete { .. }
+                | Terminator::ReplyReceive { .. } => {}
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Program {
     pub data: Vec<DataDef>,

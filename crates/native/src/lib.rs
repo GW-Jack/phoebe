@@ -438,16 +438,8 @@ fn emit_object_with_poll_layout(
             continue;
         }
         let mut function_key = program.functions[index].clone();
-        for block in &mut function_key.blocks {
-            for instruction in &mut block.instructions {
-                instruction.span.start = 0;
-                instruction.span.end = 0;
-            }
-            if let Terminator::Yield { span, .. } = &mut block.terminator {
-                span.start = 0;
-                span.end = 0;
-            }
-        }
+        function_key
+            .for_each_source_span_mut(|span| *span = phoebe_syntax::Span { start: 0, end: 0 });
         let key = format!("{function_key:?}");
         if let Some((_, object)) = cache
             .as_deref()
