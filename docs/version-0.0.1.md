@@ -133,14 +133,17 @@ failure. Source programs now expose `reply<I64>()?`, `ReplyTo<I64>.complete`,
 returns `Complete<I64>.Delivered | Closed(value)`; receive returns
 `Reply<I64>.Value(value) | End`. Source tests compare interpreter, JIT, and
 standalone execution for delivery, cancellation, and lexical close. General
-request messages containing reply rights remain open.
+request payload shapes beyond `I64` remain open.
 Hand-built checked Core now models the runtime's concrete `Request<I64>`
 shape with explicit pack, unpack, request-channel, send, receive, and
 structural close operations. Its verifier tracks the nested reply right as
 one owned slot across each move and queue boundary; interpreter tests cover
 delivery and rejected-send recovery across the interpreter, JIT, and standalone
-executable. Source syntax for request messages remains open, as do general
-capability-bearing aggregates.
+executable. Source now has `request_channel<I64>(capacity)?`,
+`request(value, right)`, request send and receive in exhaustive `when` arms,
+`unpack()`, and explicit or lexical close. Source tests compare interpreter,
+JIT, and standalone execution for delivery, closed-send recovery, cleanup,
+and resource limits. General capability-bearing aggregates remain open.
 The runtime also has native ABI shims for this concrete request layout.
 Native poll tests cover atomic creation, enqueue/dequeue transfer, closed-send
 retention, and pending receive wakeup. Cranelift lowering uses these shims for

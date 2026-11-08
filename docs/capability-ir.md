@@ -111,8 +111,9 @@ Checked Core also has a concrete `RequestI64` value containing one reply
 right. Pack and unpack move its one capability slot, request send transfers
 it only on `Sent`, and receive creates it only on `Value`. A closed send
 passes an intact request slot to its successor. This layout is a first
-executable nested-capability case; general aggregate slot paths, native
-request code generation, and source request syntax remain separate work.
+executable nested-capability case. The concrete `I64` request now runs through
+native code and the source surface in `docs/request-source-design.md`;
+general aggregate slot paths remain separate work.
 
 | Operation | Required task ownership | Success transition | Other edge |
 | --- | --- | --- | --- |

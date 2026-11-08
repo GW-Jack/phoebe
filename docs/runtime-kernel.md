@@ -136,11 +136,12 @@ success and task-limit rejection. Checked Core and source lowering use the
 Rust kernel operations through the interpreter and generated Cranelift code.
 Source tests cover reply delivery across a spawned task, cancellation,
 lexical close, and resource failure in the interpreter, JIT, and standalone
-executable. Hand-built checked Core now interprets the runtime's concrete
+executable. Checked Core now executes the runtime's concrete
 request channel and request value, transferring the nested `ReplyTo` through
 enqueue, dequeue, and unpack. The interpreter, JIT, and standalone executable
-agree on the concrete request layout. Arbitrary source messages carrying
-`ReplyTo` remain open.
+agree on the concrete request layout. Source programs expose the `I64`
+request layout through structural send and receive arms; arbitrary messages
+carrying `ReplyTo` remain open.
 The native ABI now exports `request_channel_new_i64`, `send_request_i64`,
 and `receive_request_i64`. The concrete request is two I64 words: value and
 reply-right token. Send returns `Sent`, `Pending`, or `Closed`; only `Sent`

@@ -1,5 +1,7 @@
 use super::*;
 
+mod request;
+
 struct DraftBlock {
     params: Vec<ValueId>,
     instructions: Vec<Instruction>,
@@ -162,7 +164,13 @@ impl<'a> Lowerer<'a> {
         let (owner, ty) = self.expr(value, locals)?;
         if !matches!(
             ty,
-            Type::SenderI64 | Type::ReceiverI64 | Type::ReplyToI64 | Type::ReplyReceiverI64
+            Type::SenderI64
+                | Type::ReceiverI64
+                | Type::ReplyToI64
+                | Type::ReplyReceiverI64
+                | Type::RequestI64
+                | Type::RequestSenderI64
+                | Type::RequestReceiverI64
         ) {
             return Err(Diagnostic::new(
                 value.span,
@@ -180,7 +188,13 @@ impl<'a> Lowerer<'a> {
         if let Some((_, ty)) = result
             && matches!(
                 ty,
-                Type::SenderI64 | Type::ReceiverI64 | Type::ReplyToI64 | Type::ReplyReceiverI64
+                Type::SenderI64
+                    | Type::ReceiverI64
+                    | Type::ReplyToI64
+                    | Type::ReplyReceiverI64
+                    | Type::RequestI64
+                    | Type::RequestSenderI64
+                    | Type::RequestReceiverI64
             )
         {
             return Err(Diagnostic::new(
@@ -286,6 +300,69 @@ impl<'a> Lowerer<'a> {
                     locals.insert(right.0.clone(), Binding::Val(right_value));
                     locals.insert(receiver.0.clone(), Binding::Val(receiver_value));
                 }
+                Statement::RequestChannelVal {
+                    sender,
+                    receiver,
+                    capacity,
+                    span,
+                } => {
+                    for (name, name_span) in [sender, receiver] {
+                        if locals.contains_key(name) || sender.0 == receiver.0 {
+                            return Err(Diagnostic::new(
+                                *name_span,
+                                format!("duplicate local {name}"),
+                            ));
+                        }
+                    }
+                    let result_id = self.resource_result_id(*span)?;
+                    let (value, ty) = self.expr(capacity, locals)?;
+                    self.require(ty, Type::I64, capacity.span)?;
+                    let success = self.block();
+                    let send_value = self.block_param(success, Type::RequestSenderI64);
+                    let receive_value = self.block_param(success, Type::RequestReceiverI64);
+                    let failure = self.block();
+                    let error = self.block_param(failure, Type::ResourceError);
+                    self.terminate(Terminator::RequestChannelNew {
+                        capacity: value,
+                        success,
+                        failure,
+                    });
+                    self.current = failure;
+                    let failed = self.emit(
+                        Operation::Variant(result_id, 1, Some(error)),
+                        self.return_type,
+                        *span,
+                    );
+                    self.terminate(Terminator::Return(failed));
+                    self.implicit_cleanup_returns.push((self.current, *span));
+                    self.current = success;
+                    locals.insert(sender.0.clone(), Binding::Val(send_value));
+                    locals.insert(receiver.0.clone(), Binding::Val(receive_value));
+                }
+                Statement::RequestUnpackVal {
+                    value,
+                    right,
+                    request,
+                    span,
+                } => {
+                    for (name, name_span) in [value, right] {
+                        if locals.contains_key(name) || value.0 == right.0 {
+                            return Err(Diagnostic::new(
+                                *name_span,
+                                format!("duplicate local {name}"),
+                            ));
+                        }
+                    }
+                    let (request, ty) = self.expr(request, locals)?;
+                    self.require(ty, Type::RequestI64, *span)?;
+                    let next = self.block();
+                    let value_param = self.block_param(next, Type::I64);
+                    let right_param = self.block_param(next, Type::ReplyToI64);
+                    self.terminate(Terminator::RequestUnpack { request, next });
+                    self.current = next;
+                    locals.insert(value.0.clone(), Binding::Val(value_param));
+                    locals.insert(right.0.clone(), Binding::Val(right_param));
+                }
                 Statement::Spawn { child, args, span } => {
                     let result_id = self.resource_result_id(*span)?;
                     let signature = self.functions.get(child).cloned().ok_or_else(|| {
@@ -319,6 +396,9 @@ impl<'a> Lowerer<'a> {
                                             | Type::ReceiverI64
                                             | Type::ReplyToI64
                                             | Type::ReplyReceiverI64
+                                            | Type::RequestI64
+                                            | Type::RequestSenderI64
+                                            | Type::RequestReceiverI64
                                     ) =>
                                 {
                                     return Err(Diagnostic::new(
@@ -339,6 +419,9 @@ impl<'a> Lowerer<'a> {
                                 | Type::ReceiverI64
                                 | Type::ReplyToI64
                                 | Type::ReplyReceiverI64
+                                | Type::RequestI64
+                                | Type::RequestSenderI64
+                                | Type::RequestReceiverI64
                         ) && !matches!(expr.kind, ExprKind::Name(_))
                         {
                             return Err(Diagnostic::new(
@@ -503,7 +586,10 @@ impl<'a> Lowerer<'a> {
                         && let Some(Binding::Val(value)) = locals.get(name).copied()
                         && matches!(
                             self.value_types[value.0],
-                            Type::SenderI64 | Type::ReceiverI64
+                            Type::SenderI64
+                                | Type::ReceiverI64
+                                | Type::RequestSenderI64
+                                | Type::RequestReceiverI64
                         )
                     {
                         self.emit_effect(Operation::CloseHandle(value), expr.span);
@@ -517,6 +603,13 @@ impl<'a> Lowerer<'a> {
                         )
                     {
                         self.emit_effect(Operation::CloseReply(value), expr.span);
+                    } else if let ExprKind::QualifiedCall(name, method, args) = &expr.kind
+                        && method == "close"
+                        && args.is_empty()
+                        && let Some(Binding::Val(value)) = locals.get(name).copied()
+                        && self.value_types[value.0] == Type::RequestI64
+                    {
+                        self.emit_effect(Operation::CloseRequest(value), expr.span);
                     } else {
                         self.expr(expr, locals)?;
                     }
@@ -743,6 +836,19 @@ impl<'a> Lowerer<'a> {
                             self.current = join;
                             return Ok((result, Type::Data(outcome)));
                         }
+                        (Type::RequestSenderI64, "send")
+                        | (Type::RequestReceiverI64, "receive") => {
+                            return Err(Diagnostic::new(
+                                expr.span,
+                                "request traffic requires an exhaustive when with SendRequest or ReceiveRequest arms",
+                            ));
+                        }
+                        (Type::RequestI64, "unpack") => {
+                            return Err(Diagnostic::new(
+                                expr.span,
+                                "unpack a request with val (value, right) = request.unpack();",
+                            ));
+                        }
                         _ => {}
                     }
                 }
@@ -955,6 +1061,28 @@ impl<'a> Lowerer<'a> {
                 (Operation::Lt(a, b), Type::Bool)
             }
             ExprKind::Call(name, args) => {
+                if name == "request" {
+                    let [CallArgument::Value(value), CallArgument::Value(right)] = args.as_slice()
+                    else {
+                        return Err(Diagnostic::new(
+                            expr.span,
+                            "request requires an I64 value and one owned ReplyTo<I64>",
+                        ));
+                    };
+                    let (value_id, value_type) = self.expr(value, locals)?;
+                    self.require(value_type, Type::I64, value.span)?;
+                    let (right_id, right_type) = self.expr(right, locals)?;
+                    self.require(right_type, Type::ReplyToI64, right.span)?;
+                    let request = self.emit(
+                        Operation::PackRequest {
+                            value: value_id,
+                            right: right_id,
+                        },
+                        Type::RequestI64,
+                        expr.span,
+                    );
+                    return Ok((request, Type::RequestI64));
+                }
                 if let Some(id) = self.data_names.get(name).copied() {
                     let fields = &self.data[id.0].fields;
                     if fields.is_empty() {
@@ -1103,6 +1231,9 @@ impl<'a> Lowerer<'a> {
                     .ok_or_else(|| Diagnostic::new(expr.span, "with expression requires a value"));
             }
             ExprKind::When(subject, arms) => {
+                if let Some(result) = self.request_when(expr, subject, arms, locals)? {
+                    return Ok(result);
+                }
                 let (subject_value, subject_type) = self.expr(subject, locals)?;
                 let Type::Data(data_id) = subject_type else {
                     return Err(Diagnostic::new(subject.span, "when requires a data value"));
@@ -1256,7 +1387,10 @@ fn register_result_application(
             TypeName::SenderI64
             | TypeName::ReceiverI64
             | TypeName::ReplyToI64
-            | TypeName::ReplyReceiverI64 => Err(Diagnostic::new(
+            | TypeName::ReplyReceiverI64
+            | TypeName::RequestI64
+            | TypeName::RequestSenderI64
+            | TypeName::RequestReceiverI64 => Err(Diagnostic::new(
                 span,
                 "Result cannot carry communication capabilities yet",
             )),
@@ -1356,6 +1490,13 @@ fn lower_internal(
                 | "Receive"
                 | "ReplyTo"
                 | "ReplyReceiver"
+                | "Request"
+                | "RequestSender"
+                | "RequestReceiver"
+                | "SendRequest"
+                | "ReceiveRequest"
+                | "request"
+                | "request_channel"
                 | "Complete"
                 | "Reply"
         ) || data_names.contains_key(&declaration.name)
@@ -1376,7 +1517,10 @@ fn lower_internal(
                     TypeName::SenderI64
                     | TypeName::ReceiverI64
                     | TypeName::ReplyToI64
-                    | TypeName::ReplyReceiverI64,
+                    | TypeName::ReplyReceiverI64
+                    | TypeName::RequestI64
+                    | TypeName::RequestSenderI64
+                    | TypeName::RequestReceiverI64,
                 ) => {
                     return Err(Diagnostic::new(
                         variant.span,
@@ -1418,7 +1562,10 @@ fn lower_internal(
                     TypeName::SenderI64
                     | TypeName::ReceiverI64
                     | TypeName::ReplyToI64
-                    | TypeName::ReplyReceiverI64 => {
+                    | TypeName::ReplyReceiverI64
+                    | TypeName::RequestI64
+                    | TypeName::RequestSenderI64
+                    | TypeName::RequestReceiverI64 => {
                         return Err(Diagnostic::new(
                             field.span,
                             "channel endpoints cannot be stored in data yet",
@@ -1500,6 +1647,9 @@ fn lower_internal(
             TypeName::ReceiverI64 => Ok(Type::ReceiverI64),
             TypeName::ReplyToI64 => Ok(Type::ReplyToI64),
             TypeName::ReplyReceiverI64 => Ok(Type::ReplyReceiverI64),
+            TypeName::RequestI64 => Ok(Type::RequestI64),
+            TypeName::RequestSenderI64 => Ok(Type::RequestSenderI64),
+            TypeName::RequestReceiverI64 => Ok(Type::RequestReceiverI64),
             TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
             TypeName::Named(name) => data_names
                 .get(name)
@@ -1515,6 +1665,12 @@ fn lower_internal(
     };
     let mut functions = HashMap::new();
     for (index, function) in ast.functions.iter().enumerate() {
+        if matches!(function.name.as_str(), "request" | "request_channel") {
+            return Err(Diagnostic::new(
+                function.name_span,
+                "function name is reserved for request operations",
+            ));
+        }
         if data_names.contains_key(&function.name) {
             return Err(Diagnostic::new(
                 function.name_span,
@@ -1678,6 +1834,7 @@ fn lower_internal(
             let value = values[slot.0];
             let operation = match function.value_types[value.0] {
                 Type::ReplyToI64 | Type::ReplyReceiverI64 => Operation::CloseReply(value),
+                Type::RequestI64 => Operation::CloseRequest(value),
                 _ => Operation::CloseHandle(value),
             };
             function.blocks[block].instructions.push(Instruction {
@@ -1715,6 +1872,7 @@ fn lower_internal(
                     let value = values[slot.0];
                     let operation = match function.value_types[value.0] {
                         Type::ReplyToI64 | Type::ReplyReceiverI64 => Operation::CloseReply(value),
+                        Type::RequestI64 => Operation::CloseRequest(value),
                         _ => Operation::CloseHandle(value),
                     };
                     function.blocks[exit.block].instructions.push(Instruction {

@@ -20,6 +20,8 @@ Source programs can create `reply<I64>()?`, transfer `ReplyTo<I64>` to a
 spawned task, complete it once, and receive or cancel the reply. The
 `examples/reply_exchange.phoebe` fixture runs in the interpreter, JIT, and
 standalone executable.
+`examples/request_exchange.phoebe` transfers a reply right through an owned
+request channel across the same three backends.
 
 ## Current milestone
 
@@ -51,6 +53,7 @@ buck2 build //:phoebe_dist
 buck2 run //:phoebe -- run examples/hello.phoebe
 buck2 run //:phoebe -- run examples/channel_exchange.phoebe
 buck2 run //:phoebe -- run examples/reply_exchange.phoebe
+buck2 run //:phoebe -- run examples/request_exchange.phoebe
 buck2 run //:phoebe -- run examples/multi_module
 buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 /tmp/phoebe-exchange

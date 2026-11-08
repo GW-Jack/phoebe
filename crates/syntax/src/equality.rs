@@ -70,6 +70,48 @@ fn statement(a: &Statement, b: &Statement, delta: isize) -> bool {
                 && span(*asp, *bsp, delta)
         }
         (
+            Statement::RequestChannelVal {
+                sender: asend,
+                receiver: arecv,
+                capacity: ac,
+                span: asp,
+            },
+            Statement::RequestChannelVal {
+                sender: bsend,
+                receiver: brecv,
+                capacity: bc,
+                span: bsp,
+            },
+        ) => {
+            asend.0 == bsend.0
+                && span(asend.1, bsend.1, delta)
+                && arecv.0 == brecv.0
+                && span(arecv.1, brecv.1, delta)
+                && expr(ac, bc, delta)
+                && span(*asp, *bsp, delta)
+        }
+        (
+            Statement::RequestUnpackVal {
+                value: av,
+                right: ar,
+                request: aq,
+                span: asp,
+            },
+            Statement::RequestUnpackVal {
+                value: bv,
+                right: br,
+                request: bq,
+                span: bsp,
+            },
+        ) => {
+            av.0 == bv.0
+                && span(av.1, bv.1, delta)
+                && ar.0 == br.0
+                && span(ar.1, br.1, delta)
+                && expr(aq, bq, delta)
+                && span(*asp, *bsp, delta)
+        }
+        (
             Statement::ReplyVal {
                 right: ar,
                 receiver: av,

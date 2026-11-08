@@ -256,6 +256,9 @@ pub enum TypeName {
     ReceiverI64,
     ReplyToI64,
     ReplyReceiverI64,
+    RequestI64,
+    RequestSenderI64,
+    RequestReceiverI64,
     Named(String),
     Result(Box<TypeName>, Box<TypeName>),
 }
@@ -269,6 +272,9 @@ impl TypeName {
             Self::ReceiverI64 => "Receiver<I64>".into(),
             Self::ReplyToI64 => "ReplyTo<I64>".into(),
             Self::ReplyReceiverI64 => "ReplyReceiver<I64>".into(),
+            Self::RequestI64 => "Request<I64>".into(),
+            Self::RequestSenderI64 => "RequestSender<I64>".into(),
+            Self::RequestReceiverI64 => "RequestReceiver<I64>".into(),
             Self::Named(name) => name.clone(),
             Self::Result(ok, err) => format!("Result<{},{}>", ok.key(), err.key()),
         }
@@ -318,6 +324,18 @@ pub enum Statement {
     ReplyVal {
         right: (String, Span),
         receiver: (String, Span),
+        span: Span,
+    },
+    RequestChannelVal {
+        sender: (String, Span),
+        receiver: (String, Span),
+        capacity: Expr,
+        span: Span,
+    },
+    RequestUnpackVal {
+        value: (String, Span),
+        right: (String, Span),
+        request: Expr,
         span: Span,
     },
     Spawn {
@@ -418,7 +436,13 @@ impl Parser {
         let (name, span) = self.name()?;
         if matches!(
             name.as_str(),
-            "Sender" | "Receiver" | "ReplyTo" | "ReplyReceiver"
+            "Sender"
+                | "Receiver"
+                | "ReplyTo"
+                | "ReplyReceiver"
+                | "Request"
+                | "RequestSender"
+                | "RequestReceiver"
         ) {
             self.expect(&TokenKind::Less, "< after channel endpoint type")?;
             let (element, element_span) = self.name()?;
@@ -443,6 +467,9 @@ impl Parser {
                     self.uses_reply_outcome = true;
                     TypeName::ReplyReceiverI64
                 }
+                "Request" => TypeName::RequestI64,
+                "RequestSender" => TypeName::RequestSenderI64,
+                "RequestReceiver" => TypeName::RequestReceiverI64,
                 _ => unreachable!(),
             });
         }
@@ -719,10 +746,31 @@ impl Parser {
                     self.expect(&TokenKind::RParen, ")")?;
                     self.expect(&TokenKind::Equal, "=")?;
                     let (constructor, start) = self.name()?;
-                    if !matches!(constructor.as_str(), "channel" | "reply") {
+                    if self.eat(&TokenKind::Dot).is_some() {
+                        let (method, end) = self.name()?;
+                        if method != "unpack" {
+                            return Err(Diagnostic::new(end, "pair binding requires unpack()"));
+                        }
+                        self.expect(&TokenKind::LParen, "(")?;
+                        self.expect(&TokenKind::RParen, ")")?;
+                        self.expect(&TokenKind::Semicolon, "; after binding")?;
+                        statements.push(Statement::RequestUnpackVal {
+                            value: sender,
+                            right: receiver,
+                            request: Expr {
+                                kind: ExprKind::Name(constructor),
+                                span: start,
+                            },
+                            span: start.join(end),
+                        });
+                        continue;
+                    }
+                    if constructor != "request_channel"
+                        && !matches!(constructor.as_str(), "channel" | "reply")
+                    {
                         return Err(Diagnostic::new(
                             start,
-                            "pair binding requires channel or reply",
+                            "pair binding requires channel, reply, request_channel, or unpack",
                         ));
                     }
                     self.expect(&TokenKind::Less, "<")?;
@@ -762,12 +810,21 @@ impl Parser {
                     let question =
                         self.expect(&TokenKind::Question, "? after fallible channel creation")?;
                     self.expect(&TokenKind::Semicolon, "; after binding")?;
-                    statements.push(Statement::ChannelVal {
-                        sender,
-                        receiver,
-                        capacity,
-                        span: start.join(question.span),
-                    });
+                    if constructor == "request_channel" {
+                        statements.push(Statement::RequestChannelVal {
+                            sender,
+                            receiver,
+                            capacity,
+                            span: start.join(question.span),
+                        });
+                    } else {
+                        statements.push(Statement::ChannelVal {
+                            sender,
+                            receiver,
+                            capacity,
+                            span: start.join(question.span),
+                        });
+                    }
                     continue;
                 }
                 let (name, span) = self.name()?;

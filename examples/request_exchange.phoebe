@@ -1,0 +1,40 @@
+fn service(receiver: RequestReceiver<I64>) -> I64 {
+  when (receiver.receive()) {
+    ReceiveRequest.Value(incoming) -> {
+      val (value, right) = incoming.unpack();
+      receiver.close();
+      right.complete(value);
+      0
+    },
+    ReceiveRequest.End -> {
+      receiver.close();
+      0
+    }
+  }
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = request_channel<I64>(1)?;
+  val (right, answer) = reply<I64>()?;
+  spawn service(receiver)?;
+  val outgoing = request(42, right);
+  when (sender.send(outgoing)) {
+    SendRequest.Sent -> { 0 },
+    SendRequest.Closed(rejected) -> {
+      rejected.close();
+      0
+    }
+  };
+  sender.close();
+  when (answer.receive()) {
+    Reply<I64>.Value(value) -> { Result<I64, ResourceError>.Ok(value) },
+    Reply<I64>.End -> { Result<I64, ResourceError>.Ok(0) }
+  }
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

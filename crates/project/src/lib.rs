@@ -480,7 +480,10 @@ fn qualify_type(
         | TypeName::SenderI64
         | TypeName::ReceiverI64
         | TypeName::ReplyToI64
-        | TypeName::ReplyReceiverI64 => {}
+        | TypeName::ReplyReceiverI64
+        | TypeName::RequestI64
+        | TypeName::RequestSenderI64
+        | TypeName::RequestReceiverI64 => {}
         TypeName::Named(name) if local_data.contains(name) => {
             *name = format!("{module}.{name}");
         }
@@ -538,7 +541,9 @@ fn rewrite_body(
         match statement {
             Statement::Yield(_) => {}
             Statement::ReplyVal { .. } => {}
-            Statement::ChannelVal { capacity, .. } => rewrite(capacity)?,
+            Statement::ChannelVal { capacity, .. }
+            | Statement::RequestChannelVal { capacity, .. } => rewrite(capacity)?,
+            Statement::RequestUnpackVal { request, .. } => rewrite(request)?,
             Statement::Spawn { child, args, .. } => {
                 if local_functions.contains(child) {
                     *child = symbol(module, child, root);
@@ -784,6 +789,28 @@ fn shift_body(body: &mut Body, offset: usize) {
                 shift_span(&mut receiver.1, offset);
                 shift_span(span, offset);
                 shift_expr(capacity, offset);
+            }
+            Statement::RequestChannelVal {
+                sender,
+                receiver,
+                capacity,
+                span,
+            } => {
+                shift_span(&mut sender.1, offset);
+                shift_span(&mut receiver.1, offset);
+                shift_span(span, offset);
+                shift_expr(capacity, offset);
+            }
+            Statement::RequestUnpackVal {
+                value,
+                right,
+                request,
+                span,
+            } => {
+                shift_span(&mut value.1, offset);
+                shift_span(&mut right.1, offset);
+                shift_span(span, offset);
+                shift_expr(request, offset);
             }
             Statement::Spawn { args, span, .. } => {
                 shift_span(span, offset);

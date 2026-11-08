@@ -128,8 +128,9 @@ The implemented `I64` surface binds both rights with
 right on either path. `receiver.receive()` returns `Reply<I64>.Value(value)`
 or `Reply<I64>.End` and consumes the receiver. Either right can be explicitly
 closed; a `with` block closes an unspent right on exit. A `ReplyTo<I64>` may
-move to a spawned child. General request messages that contain reply rights
-remain a separate implementation step.
+move to a spawned child. The concrete `I64` request surface now packages a
+reply right, sends and receives it through structural `when` arms, and
+unpacks or closes it. General capability-bearing payloads remain open.
 
 Scoped tasks and channels are the concurrency core. An actor is a library or
 surface abstraction: one scoped task owns its state, reads a mailbox, and runs

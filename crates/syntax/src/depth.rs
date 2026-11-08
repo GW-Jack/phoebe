@@ -49,7 +49,9 @@ pub(crate) fn body_height(body: &Body) -> usize {
             | Statement::Var(_, _, value)
             | Statement::Assign(_, _, value)
             | Statement::Expr(value) => expr_height(value),
-            Statement::ChannelVal { capacity, .. } => expr_height(capacity),
+            Statement::ChannelVal { capacity, .. }
+            | Statement::RequestChannelVal { capacity, .. } => expr_height(capacity),
+            Statement::RequestUnpackVal { request, .. } => expr_height(request),
             Statement::ReplyVal { .. } => 0,
             Statement::Spawn { args, .. } => arguments_height(args),
             Statement::With { value, body, .. } => expr_height(value).max(body_height(body)),

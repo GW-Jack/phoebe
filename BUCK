@@ -126,6 +126,7 @@ rust_test(
         "examples/multi_module/phoebe.toml",
         "examples/multi_module/app.phoebe",
         "examples/multi_module/math.phoebe",
+        "examples/request_exchange.phoebe",
         "examples/package_graph/app/phoebe.toml",
         "examples/package_graph/app/phoebe.lock",
         "examples/package_graph/app/app.phoebe",
@@ -248,6 +249,15 @@ rust_test(
     name = "source_replies_tests",
     crate_root = "tests/source_replies.rs",
     srcs = ["tests/source_replies.rs", "examples/reply_exchange.phoebe"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
+    name = "source_requests_tests",
+    crate_root = "tests/source_requests.rs",
+    srcs = ["tests/source_requests.rs", "examples/request_exchange.phoebe"],
     edition = "2024",
     deps = [":phoebe_lib"],
     resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},

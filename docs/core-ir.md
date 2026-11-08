@@ -150,7 +150,8 @@ for the request's known single right. Hand-built Core tests across the
 interpreter, JIT, and standalone executable cover
 queue transfer, unpack and completion, closed-send recovery, a child service
 that waits for a request and completes its parent's reply, and rejected
-implicit loss. Source syntax for requests is still open. This concrete
+implicit loss. Source now exposes the concrete request through structural
+`when` outcomes and explicit pack, unpack, and close operations. This concrete
 layout does not establish the general nested aggregate
-capability rule. The proposed control-flow source surface is in
+capability rule. The control-flow source surface is in
 `docs/request-source-design.md`.
