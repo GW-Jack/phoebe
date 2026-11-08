@@ -114,7 +114,7 @@ fn disk_object_cache_reuses_exact_program_and_rejects_changes_or_corruption() {
             .reused
     );
 
-    let cache_file = cache.join("objects.v3");
+    let cache_file = cache.join("objects.v4");
     let mut bytes = std::fs::read(&cache_file).unwrap();
     // The final eight bytes are the zero child-object count.
     let root_last = bytes.len() - 9;
@@ -122,6 +122,60 @@ fn disk_object_cache_reuses_exact_program_and_rejects_changes_or_corruption() {
     std::fs::write(&cache_file, bytes).unwrap();
     assert!(
         !native::build_executable_cached(&shifted, &executable, &cache)
+            .unwrap()
+            .reused
+    );
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn disk_object_cache_ignores_only_valid_unreachable_pure_leaf_bodies() {
+    let path = std::env::temp_dir().join(format!(
+        "phoebe-dead-cache-test-{}-{}",
+        std::process::id(),
+        NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&path).unwrap();
+    let cache = path.join("cache");
+    let executable = path.join("program");
+    let compile = |source: &str| core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let first = compile("fn main() -> I64 = 42\nfn dead(x: I64) -> I64 = x + 1\n");
+    assert!(
+        !native::build_executable_cached(&first, &executable, &cache)
+            .unwrap()
+            .reused
+    );
+    let changed = compile("fn main() -> I64 = 42\nfn dead(x: I64) -> I64 = x * 3\n");
+    assert!(
+        native::build_executable_cached(&changed, &executable, &cache)
+            .unwrap()
+            .reused
+    );
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"42\n"
+    );
+
+    // Omitting the dead body from the key must never bypass Core verification.
+    let mut invalid = changed.clone();
+    let dead = invalid.function("dead").unwrap().0;
+    invalid.functions[dead.0].blocks[0].terminator = core::Terminator::Return(core::ValueId(9999));
+    assert!(native::build_executable_cached(&invalid, &executable, &cache).is_err());
+
+    // A new call or a signature change can affect declaration and analysis
+    // inputs, so both force an emitted-object rebuild.
+    let with_call = compile("fn main() -> I64 = 42\nfn dead(x: I64) -> I64 = main() + x\n");
+    assert!(
+        !native::build_executable_cached(&with_call, &executable, &cache)
+            .unwrap()
+            .reused
+    );
+    let new_signature = compile("fn main() -> I64 = 42\nfn dead(x: Bool) -> I64 = 3\n");
+    assert!(
+        !native::build_executable_cached(&new_signature, &executable, &cache)
             .unwrap()
             .reused
     );

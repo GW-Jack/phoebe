@@ -83,10 +83,13 @@ force code emission solely because locations changed.
 
 The current CLI starts a fresh parse and Core session for each command.
 `phoebe build <project> -o <output> --cache-dir <directory>` can persist
-the complete emitted object set across compiler invocations when checked Core
-is unchanged. The cache is versioned and bound to the local compiler
+the complete emitted object set across compiler invocations when its codegen
+inputs are unchanged. The cache key excludes source spans and the bodies of
+unreachable pure leaf functions; it retains their signatures and all other
+checked Core. Every hit still verifies the full Core program. The cache is
+versioned and bound to the local compiler
 executable's path, size, modification time, and file identity. It checks an
-exact span-free Core key and discards truncated or corrupt entries. The linker runs on
+exact codegen key and discards truncated or corrupt entries. The linker runs on
 every build. The cache is optional and does not persist typed interfaces or
 incremental type checking. A changed Core program recompiles its object set;
 in-process `NativeBuildSession` still reuses direct function objects after

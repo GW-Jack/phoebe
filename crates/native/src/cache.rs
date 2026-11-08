@@ -8,13 +8,13 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
-use phoebe_core::{self as core, Program};
+use phoebe_core::{self as core, Function, Operation, Program, Terminator};
 use sha2::{Digest, Sha256};
 
 use super::{ObjectEmission, emit_object_with_poll_layout, link_executable};
 
-const MAGIC: &[u8] = b"PHOEBE-NATIVE-OBJECTS\0\x03";
-const CACHE_FILE: &str = "objects.v3";
+const MAGIC: &[u8] = b"PHOEBE-NATIVE-OBJECTS\0\x04";
+const CACHE_FILE: &str = "objects.v4";
 const MAX_CACHE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_KEY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_OBJECT_BYTES: usize = 64 * 1024 * 1024;
@@ -44,15 +44,85 @@ fn compiler_stamp() -> Result<[u8; 32], String> {
     Ok(hasher.finalize().into())
 }
 
-fn program_key(program: &Program) -> String {
+/// A dead leaf with no runtime operation cannot contribute an object or
+/// change the native call graph. Keep its signature in the key because the
+/// module still declares every function, but discard its unobserved body.
+fn dead_pure_leaf(function: &Function) -> bool {
+    function.blocks.iter().all(|block| {
+        block.instructions.iter().all(|instruction| {
+            !matches!(
+                instruction.operation,
+                Operation::Call(_, _)
+                    | Operation::CloseHandle(_)
+                    | Operation::CloseReply(_)
+                    | Operation::PackRequest { .. }
+                    | Operation::CloseRequest(_)
+                    | Operation::ScopeEnter(_)
+            )
+        }) && matches!(
+            block.terminator,
+            Terminator::Return(_)
+                | Terminator::Jump(_, _)
+                | Terminator::Branch { .. }
+                | Terminator::Match { .. }
+        )
+    })
+}
+
+fn program_key(program: &Program) -> Result<String, String> {
+    let (main, _) = program
+        .function("main")
+        .ok_or("standalone executable requires `fn main() -> I64`")?;
+    let mut reachable = vec![false; program.functions.len()];
+    let mut pending = vec![main];
+    while let Some(id) = pending.pop() {
+        let Some(function) = program.functions.get(id.0) else {
+            return Err("invalid function target in native cache key".into());
+        };
+        if reachable[id.0] {
+            continue;
+        }
+        reachable[id.0] = true;
+        for block in &function.blocks {
+            for instruction in &block.instructions {
+                if let Operation::Call(target, _) = instruction.operation {
+                    pending.push(target);
+                }
+            }
+            if let Terminator::Spawn { child, .. } = block.terminator {
+                pending.push(child);
+            }
+        }
+    }
     let mut normalized = program.clone();
-    for function in &mut normalized.functions {
+    for (index, function) in normalized.functions.iter_mut().enumerate() {
+        if !reachable[index] && dead_pure_leaf(function) {
+            let entry = function
+                .blocks
+                .first()
+                .ok_or("function has no entry block")?;
+            let entry_types = entry
+                .params
+                .iter()
+                .map(|id| {
+                    function
+                        .value_types
+                        .get(id.0)
+                        .copied()
+                        .ok_or_else(|| "invalid entry parameter in native cache key".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            function.blocks.clear();
+            function.value_types = entry_types;
+            function.place_types.clear();
+            function.loan_regions.clear();
+        }
         function.for_each_source_span_mut(|span| {
             span.start = 0;
             span.end = 0;
         });
     }
-    format!("{normalized:?}")
+    Ok(format!("{normalized:?}"))
 }
 
 struct Decoder<'a> {
@@ -211,14 +281,14 @@ pub struct CachedBuildReport {
     pub cache_write_error: Option<String>,
 }
 
-/// Reuse an emitted object set only when the complete span-free Core program
-/// and local compiler file stamp match. Every build still runs the linker.
+/// Reuse an emitted object set only when its span-free Core inputs and local
+/// compiler file stamp match. Every build still verifies Core and runs the linker.
 pub fn build_executable_cached(
     program: &Program,
     output: &Path,
     directory: &Path,
 ) -> Result<CachedBuildReport, String> {
-    let key = program_key(program);
+    let key = program_key(program)?;
     if let Some(emitted) = read_cache(directory, &key) {
         core::verify(program)?;
         link_executable(program, &emitted, output)?;
