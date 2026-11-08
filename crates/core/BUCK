@@ -6,6 +6,7 @@ rust_library(
     deps = [
         "//crates/capability:phoebe_capability",
         "//crates/generic-core:phoebe_generic_core",
+        "//crates/layout:phoebe_layout",
         "//crates/runtime:phoebe_runtime",
         "//crates/syntax:phoebe_syntax",
     ],
@@ -21,6 +22,7 @@ rust_test(
     deps = [
         "//crates/capability:phoebe_capability",
         "//crates/generic-core:phoebe_generic_core",
+        "//crates/layout:phoebe_layout",
         "//crates/runtime:phoebe_runtime",
         "//crates/syntax:phoebe_syntax",
     ],

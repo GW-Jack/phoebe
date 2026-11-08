@@ -495,7 +495,7 @@ interpreter, JIT, and standalone executable paths. Retained calls now pass
 borrowed places and forwarded references to suspendable callees. The caller
 frame owns the borrowed place until the child returns; tests cover exclusive
 and shared borrows across receive. General reference regions remain open.
-Backend independent transport shapes now live in `crates/abi`; native lowering
+Backend independent transport shapes now live in `crates/layout`; native lowering
 and frame word counts use those same shapes. A parametric body with only
 opaque moves and owned calls can share a planned instance across equal ABI
 shapes. Equal shapes alone do not imply identical capability behavior.

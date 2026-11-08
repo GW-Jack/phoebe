@@ -33,7 +33,7 @@ The descriptor is shared by the channel's two endpoints and all its slots.
 It contains no task-owned values. A sum's tag selects exactly one arm before
 its payload is inspected. Padding and inactive arms never carry a right.
 `Request<I64>` is a two-word first example: payload, then `ReplyTo<I64>`.
-`phoebe_abi::Shapes` now computes a concrete type, shape, and close-plan
+`phoebe_layout::Shapes` now computes a concrete type, shape, and close-plan
 layout for eligible messages. `MessageLayout::visit_active_rights` walks the
 selected leaves without allocating on success, validates the ABI word count,
 and rejects an out-of-range active tag. The runtime has an independent
@@ -86,8 +86,9 @@ occupancy so boundedness is preserved.
 
 ## Implementation gates
 
-1. Keep the backend-independent `MessageLayout` in `phoebe_abi` as the source
-   for runtime descriptor generation. Its current tests cover nested
+1. Keep the backend-independent `MessageLayout` in `phoebe_layout` as the source
+   for runtime descriptor generation. Core and `phoebe_abi` can both use this
+   crate without a dependency cycle. Its current tests cover nested
    products, `Request<I64>`, tagged sums, references, and recursive layout
    rejection. The native adapter now creates the runtime descriptor and tests
    equal-width type distinction, active-arm offsets, and a tagged runtime

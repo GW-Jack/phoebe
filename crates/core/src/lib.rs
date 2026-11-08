@@ -5,6 +5,7 @@ use std::task::Poll;
 
 use phoebe_capability::{self as capability_flow, Action as CapAction, Target as CapTarget};
 use phoebe_generic_core::CheckedModule;
+pub use phoebe_layout::{DataDef, DataId, Type};
 use phoebe_runtime::{
     self as runtime, Context, ReplyReceiverToken, ReplyToken, ResourceError, Scheduler,
     ScopeLimits, Task, Token,
@@ -31,50 +32,6 @@ pub struct RegionId(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TaskScopeId(pub usize);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct DataId(pub usize);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Type {
-    I64,
-    Bool,
-    Unit,
-    Data(DataId),
-    RefI64,
-    RefMutI64,
-    RefBool,
-    RefMutBool,
-    SenderI64,
-    ReceiverI64,
-    ReplyToI64,
-    ReplyReceiverI64,
-    RequestI64,
-    RequestSenderI64,
-    RequestReceiverI64,
-    ResourceError,
-}
-
-impl Type {
-    fn parameter(mode: ParamMode, owner: Self) -> Option<Self> {
-        match (mode, owner) {
-            (ParamMode::Own, owner) => Some(owner),
-            (ParamMode::Shared, Self::I64) => Some(Self::RefI64),
-            (ParamMode::Exclusive, Self::I64) => Some(Self::RefMutI64),
-            (ParamMode::Shared, Self::Bool) => Some(Self::RefBool),
-            (ParamMode::Exclusive, Self::Bool) => Some(Self::RefMutBool),
-            _ => None,
-        }
-    }
-
-    fn referent(self) -> Option<Self> {
-        match self {
-            Self::RefI64 | Self::RefMutI64 => Some(Self::I64),
-            Self::RefBool | Self::RefMutBool => Some(Self::Bool),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -432,12 +389,10 @@ pub struct CostEvent {
     pub reason: &'static str,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DataDef {
-    pub name: String,
-    pub variants: Vec<String>,
-    pub payloads: Vec<Option<Type>>,
-    pub fields: Vec<(String, Type)>,
+impl phoebe_layout::DataDefinitions for Program {
+    fn definitions(&self) -> &[DataDef] {
+        &self.data
+    }
 }
 
 pub mod generic_calls;

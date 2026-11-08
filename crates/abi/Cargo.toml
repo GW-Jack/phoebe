@@ -8,6 +8,7 @@ license = "Apache-2.0"
 [dependencies]
 phoebe-core = { path = "../core" }
 phoebe-generic-core = { path = "../generic-core" }
+phoebe-layout = { path = "../layout" }
 
 [dev-dependencies]
 phoebe-syntax = { path = "../syntax" }

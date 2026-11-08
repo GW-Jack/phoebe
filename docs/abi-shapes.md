@@ -2,12 +2,14 @@
 
 Status: implementation note, not a stable external ABI.
 
-`crates/abi` now owns a backend independent `Shape` made of byte, word, and
+`crates/layout` now owns a backend independent `Shape` made of byte, word, and
 address components. Cranelift maps those components to its scalar types;
 the retained frame layout counts them as words. Distinct nominal types can
 have equal transport shapes. This establishes a reusable shape key for
 generic compilation, but shape equality alone grants no right to inspect,
-copy, or close a value. Generic bodies and dictionaries are not yet emitted.
+copy, or close a value. `crates/abi` owns generic instance planning and
+reexports these shapes for existing callers. Generic bodies and dictionaries
+are not yet emitted.
 `phoebe shapes <file|project>` prints each checked function's parameter and
 result transport parts. It omits hidden context, suspension, dictionary
 layout, and the target return convention, so its output is not a machine-code

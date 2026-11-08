@@ -420,6 +420,7 @@ version = "0.0.1"
 dependencies = [
  "phoebe-core",
  "phoebe-generic-core",
+ "phoebe-layout",
  "phoebe-syntax",
 ]
 
@@ -433,6 +434,7 @@ version = "0.0.1"
 dependencies = [
  "phoebe-capability",
  "phoebe-generic-core",
+ "phoebe-layout",
  "phoebe-runtime",
  "phoebe-syntax",
 ]
@@ -449,6 +451,13 @@ name = "phoebe-generic-core"
 version = "0.0.1"
 dependencies = [
  "phoebe-capability",
+ "phoebe-syntax",
+]
+
+[[package]]
+name = "phoebe-layout"
+version = "0.0.1"
+dependencies = [
  "phoebe-syntax",
 ]
 

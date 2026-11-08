@@ -1,10 +1,11 @@
 # Build graph
 
-Phoebe has ten library crates and a root facade/CLI. Dependencies point in
+Phoebe has eleven library crates and a root facade/CLI. Dependencies point in
 one direction:
 
 `package` and `syntax` feed `project`. `syntax`, `capability`, `runtime`, and
-`generic-core` feed `core`; `core` feeds `abi` and `frame`; `generic-core` also feeds `abi`;
+`generic-core`, and `layout` feed `core`; `core` feeds `abi` and `frame`;
+`generic-core` and `layout` also feed `abi`;
 `abi`, `core`, `frame`, `runtime`,
 and `syntax` feed `native`. `capability` and `syntax` feed the isolated
 `generic-core` verifier and source subset lowerer. The root facade and CLI
@@ -15,11 +16,13 @@ sit atop this graph.
 - `phoebe-project`: manifest and module loading.
 - `phoebe-capability`: independent capability-flow facts and verifier.
 - `phoebe-runtime`: scheduler, channels, reply rights, and native ABI.
+- `phoebe-layout`: concrete types, data declarations, flattened transport
+  shapes, and structural capability close plans shared by Core and native code.
 - `phoebe-core`: checked IR, lowering, verification, interpreter, and
   linked call verification and interpreted dispatch against checked generic modules.
 - `phoebe-generic-core`: experimental parametric IR and opaque-owner verifier.
-- `phoebe-abi`: backend independent flattened transport shapes and a transient
-  shape-shared generic instance planner.
+- `phoebe-abi`: transient shape-shared generic instance planner and a
+  compatibility reexport of shared layouts.
 - `phoebe-frame`: suspension liveness and physical frame layout.
 - `phoebe-native`: Cranelift JIT, object emission, direct and retained codegen,
   and isolated JIT/object emission for planned generic instances.
