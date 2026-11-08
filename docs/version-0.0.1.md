@@ -245,12 +245,15 @@ Core and ABI code enumerate nested capability leaves in reverse field order.
 The abstract ownership graph now transfers all leaves on return and creates
 all leaves in an owned call result; synthetic tests check that a caller must
 dispose of the result. The Core verifier rejects copying, partial field
-projection, and mutable place storage of a product with rights. Implicit `?`
+projection of a product with rights. Mutable places now accept nominal
+capability products and sums. A take empties the place; storing a new owner
+requires that empty state. Implicit `?`
 cleanup emits one structural close per live product, and interpreter, JIT,
 and standalone source tests cover nested close, owned call/return, whole
 unpack, spawn transfer, and resource failure cleanup. Interpreter and JIT
 tests also cover task-limit rejection before product transfer.
-Mutable product places remain unsupported. The
+Source and Core tests cover take, reassignment, suspension, and failure-edge
+cleanup of a live place. Bare rights in `var` remain unsupported. The
 finite models and tests do not prove
 correctness of the compiler or generated machine code.
 The bounded two-request Maude model explores both successful retry and
@@ -320,7 +323,7 @@ normal and `?` exits; `examples/with_wait.phoebe` retains the owner across
 channel suspension before cleanup. `examples/with_pair.phoebe` covers grouped
 rights on normal and `?` exits. `examples/with_product.phoebe` covers
 structural product cleanup; source tests also cover nested aliases and spawn
-transfer. Mutable product places and general failure cleanup remain open.
+transfer. General failure cleanup remains open.
 Capability-bearing sums now use one exact ownership envelope per sum value.
 `PackSum` consumes the selected payload rights, and `UnpackSum` exposes only
 the matched variant's rights. Source `Option` and `Result` values may carry
@@ -330,7 +333,8 @@ sum dispatch; the interpreter, direct Cranelift path, and retained path use
 that disposition. Examples cover `Some`/`None` joins, a two-right payload,
 owned calls and returns, lexical close after `yield`, and `?` cleanup of a
 nested sum on resource failure. The standalone path agrees on those cases.
-Copying or storing these owners in a mutable place is rejected. Spawn of a
+Copying these owners is rejected. A mutable place can hold the whole sum,
+but must be emptied before reassignment. Spawn of a
 capability-bearing sum now selects the active variant's physical rights for
 the child, including sums nested in products. Direct and retained native
 parents use a shared transfer emitter, and the runtime accepts more than four

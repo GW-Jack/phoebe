@@ -24,6 +24,7 @@ order:
 | Nominal definition | — | Add its value to `L_v` |
 | `move v` | `v ∈ L_v` | Remove `v`; add the result |
 | `place.take p` | `p ∈ L_p` | Remove `p`; add the result |
+| Capability `place.store p, v` | `v` live; `p` empty | Remove `v`; add `p` |
 | `copy.value v` or `copy.value p` | Owner live | Keep the owner; add the independent result |
 | Primitive `field v, i` or `place.field p, i` | Owner live | State unchanged |
 | Nominal `field v, i` | `v ∈ L_v` | Remove `v`; add the projected field |

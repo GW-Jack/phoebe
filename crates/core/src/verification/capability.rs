@@ -3,6 +3,12 @@
 use super::capability_layout::Layout;
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum SlotOwner {
+    Value(ValueId),
+    Place(PlaceId),
+}
+
 pub(crate) fn verify_capability_edges(program: &Program) -> Result<(), String> {
     let layout = Layout::new(&program.data);
     for function in &program.functions {
@@ -19,17 +25,30 @@ pub(crate) fn capability_graph(
     layout: &Layout,
     implicit_cleanup_returns: &[BlockId],
     scoped_cleanup_exits: &[(BlockId, ValueId, Span)],
-) -> Option<(capability_flow::Graph, Vec<ValueId>)> {
+) -> Option<(capability_flow::Graph, Vec<SlotOwner>)> {
     // Capability flow only needs ownership state for rights, not for every
     // scalar SSA value in the function. Keep this numbering separate from
     // ValueId so adding ordinary computations does not enlarge each state.
     let mut slots = Vec::with_capacity(function.value_types.len());
-    let mut values = Vec::new();
+    let mut owners = Vec::new();
     let mut slot_count = 0;
     for (value, ty) in function.value_types.iter().enumerate() {
         let end = slot_count + layout.leaves(*ty);
         slots.push(slot_count..end);
-        values.extend(std::iter::repeat_n(ValueId(value), end - slot_count));
+        owners.extend(std::iter::repeat_n(
+            SlotOwner::Value(ValueId(value)),
+            end - slot_count,
+        ));
+        slot_count = end;
+    }
+    let mut places = Vec::with_capacity(function.place_types.len());
+    for (place, ty) in function.place_types.iter().enumerate() {
+        let end = slot_count + layout.leaves(*ty);
+        places.push(slot_count..end);
+        owners.extend(std::iter::repeat_n(
+            SlotOwner::Place(PlaceId(place)),
+            end - slot_count,
+        ));
         slot_count = end;
     }
     if slot_count == 0 {
@@ -43,9 +62,7 @@ pub(crate) fn capability_graph(
         );
         capability_flow::Slot(range.start)
     };
-    let moves_between = |from: ValueId, to: ValueId| {
-        let source = slots[from.0].clone();
-        let destination = slots[to.0].clone();
+    let move_ranges = |source: std::ops::Range<usize>, destination: std::ops::Range<usize>| {
         assert_eq!(
             source.len(),
             destination.len(),
@@ -56,6 +73,8 @@ pub(crate) fn capability_graph(
             .map(|(from, to)| (capability_flow::Slot(from), capability_flow::Slot(to)))
             .collect::<Vec<_>>()
     };
+    let moves_between =
+        |from: ValueId, to: ValueId| move_ranges(slots[from.0].clone(), slots[to.0].clone());
     let mut lexical = vec![None; function.blocks.len()];
     for (block, value, _) in scoped_cleanup_exits {
         lexical[block.0] = Some(slots[value.0].clone());
@@ -80,6 +99,26 @@ pub(crate) fn capability_graph(
                     if !moves.is_empty() {
                         actions.push(CapAction::MoveGroup(moves));
                     }
+                }
+                Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
+                    let moves = move_ranges(slots[value.0].clone(), places[place.0].clone());
+                    if !moves.is_empty() {
+                        actions.push(CapAction::MoveGroup(moves));
+                    }
+                }
+                Operation::Take(place) => {
+                    let taken = instruction.result.expect("verified take has result");
+                    let moves = move_ranges(places[place.0].clone(), slots[taken.0].clone());
+                    if !moves.is_empty() {
+                        actions.push(CapAction::MoveGroup(moves));
+                    }
+                }
+                Operation::ReadField(place, _) => {
+                    actions.extend(
+                        places[place.0]
+                            .clone()
+                            .map(|slot| CapAction::Require(capability_flow::Slot(slot))),
+                    );
                 }
                 Operation::Variant(_, _, payload) => {
                     let sum = instruction.result.expect("verified variant has result");
@@ -457,7 +496,7 @@ pub(crate) fn capability_graph(
             entry_live,
             blocks,
         },
-        values,
+        owners,
     ))
 }
 

@@ -12,35 +12,38 @@ pub(super) fn close_operation(value: ValueId, ty: Type) -> Operation {
     }
 }
 
-pub(super) fn close_live_owners(
+pub(super) fn live_owners(
     value_types: &[Type],
+    place_types: &[Type],
     layout: &verification::capability_layout::Layout,
-    slot_owners: &[ValueId],
+    slot_owners: &[verification::SlotOwner],
     live: &[capability_flow::Slot],
-) -> Result<Vec<Operation>, String> {
+) -> Result<Vec<verification::SlotOwner>, String> {
     let mut owners = Vec::new();
     let mut counts = HashMap::new();
     for slot in live {
-        let value = *slot_owners
+        let owner = *slot_owners
             .get(slot.0)
             .ok_or_else(|| "invalid live capability slot".to_owned())?;
-        let count = counts.entry(value.0).or_insert_with(|| {
-            owners.push(value);
+        let count = counts.entry(owner).or_insert_with(|| {
+            owners.push(owner);
             0usize
         });
         *count += 1;
     }
     owners
         .into_iter()
-        .map(|value| {
-            let ty = value_types[value.0];
-            if counts[&value.0] != layout.leaves(ty) {
+        .map(|owner| {
+            let ty = match owner {
+                verification::SlotOwner::Value(value) => value_types[value.0],
+                verification::SlotOwner::Place(place) => place_types[place.0],
+            };
+            if counts[&owner] != layout.leaves(ty) {
                 return Err(format!(
-                    "partial ownership of capability product v{} at cleanup",
-                    value.0
+                    "partial ownership of capability owner {owner:?} at cleanup"
                 ));
             }
-            Ok(close_operation(value, ty))
+            Ok(owner)
         })
         .collect()
 }
@@ -62,23 +65,27 @@ mod tests {
         }];
         let layout = verification::capability_layout::Layout::new(&data);
         let types = [Type::Data(DataId(0)), Type::ReceiverI64];
-        let owners = [ValueId(0), ValueId(0), ValueId(1)];
+        let owners = [
+            verification::SlotOwner::Value(ValueId(0)),
+            verification::SlotOwner::Value(ValueId(0)),
+            verification::SlotOwner::Value(ValueId(1)),
+        ];
         let live = [
             capability_flow::Slot(0),
             capability_flow::Slot(1),
             capability_flow::Slot(2),
         ];
         assert!(matches!(
-            close_live_owners(&types, &layout, &owners, &live)
+            live_owners(&types, &[], &layout, &owners, &live)
                 .unwrap()
                 .as_slice(),
             [
-                Operation::CloseCaps(ValueId(0)),
-                Operation::CloseHandle(ValueId(1))
+                verification::SlotOwner::Value(ValueId(0)),
+                verification::SlotOwner::Value(ValueId(1))
             ]
         ));
         assert!(
-            close_live_owners(&types, &layout, &owners, &live[..1])
+            live_owners(&types, &[], &layout, &owners, &live[..1])
                 .unwrap_err()
                 .contains("partial ownership")
         );

@@ -518,7 +518,7 @@ fn lower_internal(
                 matches!(block.terminator, Terminator::Return(_)).then_some(BlockId(index))
             })
             .collect::<Vec<_>>();
-        let Some((graph, values)) =
+        let Some((graph, owners)) =
             capability_graph(function, &capability_layout, &returns, &exits.scopes)
         else {
             continue;
@@ -531,7 +531,9 @@ fn lower_internal(
         }
         for (block, slot) in facts.lexical_closes {
             let span = spans[block].expect("lexical close belongs to a with exit");
-            let value = values[slot.0];
+            let verification::SlotOwner::Value(value) = owners[slot.0] else {
+                unreachable!("with cleanup owns an SSA value")
+            };
             let operation = cleanup::close_operation(value, function.value_types[value.0]);
             function.blocks[block].instructions.push(Instruction {
                 result: None,
@@ -554,7 +556,7 @@ fn lower_internal(
             .iter()
             .map(|(block, _)| *block)
             .collect::<Vec<_>>();
-        if let Some((graph, values)) =
+        if let Some((graph, owners)) =
             capability_graph(function, &capability_layout, &cleanup_blocks, &[])
         {
             let facts = capability_flow::verify(&graph)
@@ -566,19 +568,42 @@ fn lower_internal(
                     .find(|(block, _)| block.0 == exit.block)
                     .map(|(_, span)| *span)
                     .expect("failure fact belongs to an implicit return");
-                let operations = cleanup::close_live_owners(
+                let live_owners = cleanup::live_owners(
                     &function.value_types,
+                    &function.place_types,
                     &capability_layout,
-                    &values,
+                    &owners,
                     &exit.live,
                 )
                 .map_err(|message| Diagnostic::new(span, message))?;
-                for operation in operations {
-                    function.blocks[exit.block].instructions.push(Instruction {
-                        result: None,
-                        operation,
-                        span,
-                    });
+                for owner in live_owners {
+                    match owner {
+                        verification::SlotOwner::Value(value) => {
+                            function.blocks[exit.block].instructions.push(Instruction {
+                                result: None,
+                                operation: cleanup::close_operation(
+                                    value,
+                                    function.value_types[value.0],
+                                ),
+                                span,
+                            });
+                        }
+                        verification::SlotOwner::Place(place) => {
+                            let ty = function.place_types[place.0];
+                            let taken = ValueId(function.value_types.len());
+                            function.value_types.push(ty);
+                            function.blocks[exit.block].instructions.push(Instruction {
+                                result: Some(taken),
+                                operation: Operation::Take(place),
+                                span,
+                            });
+                            function.blocks[exit.block].instructions.push(Instruction {
+                                result: None,
+                                operation: cleanup::close_operation(taken, ty),
+                                span,
+                            });
+                        }
+                    }
                 }
             }
         }

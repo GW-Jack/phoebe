@@ -236,6 +236,9 @@ The checked IR needs explicit `borrow_shared`, `borrow_exclusive`, `move`,
 a lexical cleanup region carries the required closes. For an owning place
 `p`, its abstract state is exactly one of `Owned`, `Moved`, or `Closed` at each
 program point; active shared or exclusive loans are tracked separately.
+An owned nominal aggregate in `var` must be taken before another owner is
+assigned to that place. A `?` exit structurally closes a live owner
+held by a place.
 Joins reject incompatible states unless control flow resolves them
 explicitly. A mutable borrow excludes all
 overlapping accesses until its last use. A `?` edge must preserve the same

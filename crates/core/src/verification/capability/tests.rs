@@ -71,7 +71,14 @@ fn capability_sum_variant_and_match_derive_envelope_transitions() {
         ],
     };
     let (graph, owners) = capability_graph(&function, &Layout::new(&data), &[], &[]).unwrap();
-    assert_eq!(owners, vec![ValueId(0), ValueId(1), ValueId(3)]);
+    assert_eq!(
+        owners,
+        vec![
+            SlotOwner::Value(ValueId(0)),
+            SlotOwner::Value(ValueId(1)),
+            SlotOwner::Value(ValueId(3))
+        ]
+    );
     assert_eq!(
         graph.blocks[0].actions,
         vec![CapAction::PackSum {
@@ -123,7 +130,10 @@ fn product_parameter_allocates_one_flow_slot_per_right() {
         graph.entry_live,
         vec![capability_flow::Slot(0), capability_flow::Slot(1)]
     );
-    assert_eq!(owners, vec![ValueId(0), ValueId(0)]);
+    assert_eq!(
+        owners,
+        vec![SlotOwner::Value(ValueId(0)), SlotOwner::Value(ValueId(0))]
+    );
     assert!(
         capability_flow::verify(&graph)
             .unwrap_err()

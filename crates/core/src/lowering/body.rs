@@ -410,10 +410,10 @@ impl Lowerer<'_> {
                     }
                     let (value, ty) = self.expr(expr, locals)?;
                     if matches!(statement, Statement::Var(..)) {
-                        if self.capability_layout.leaves(ty) > 0 {
+                        if self.capability_layout.leaves(ty) > 0 && !matches!(ty, Type::Data(_)) {
                             return Err(Diagnostic::new(
                                 *span,
-                                "capability products cannot be stored in var yet",
+                                "bare communication rights cannot be stored in var yet",
                             ));
                         }
                         let place = self.place(ty);

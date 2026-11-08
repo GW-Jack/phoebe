@@ -93,7 +93,84 @@ fn fail() -> I64 = unwrap(acquire(0))
 }
 
 #[test]
-fn capability_product_rejects_copy_projection_and_place_storage() {
+fn owned_product_place_moves_reassigns_and_closes_on_try_failure() {
+    let source = r#"
+data Pair { sender: Sender<I64>, receiver: Receiver<I64> }
+
+fn work(capacity: I64) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  var saved = Pair(sender, receiver);
+  yield;
+  val (other_sender, other_receiver) = channel<I64>(capacity = capacity)?;
+  val first = saved;
+  first.close_caps();
+  saved = Pair(other_sender, other_receiver);
+  val second = saved;
+  second.close_caps();
+  Result<I64, ResourceError>.Ok(42)
+}
+
+fn value(result: Result<I64, ResourceError>) -> I64 = when (result) {
+  Result<I64, ResourceError>.Ok(number) -> { number },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+fn main() -> I64 = value(work(1))
+fn fail() -> I64 = value(work(0))
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    core::verify(&program).unwrap();
+    assert!(program.to_string().contains("place.take"));
+    for (entry, expected) in [("main", 42), ("fail", 0)] {
+        assert_eq!(program.interpret(entry, &[]).unwrap(), expected);
+        assert_eq!(native::run(&program, entry, &[]).unwrap(), expected);
+    }
+    let path = std::env::temp_dir().join(format!("phoebe-owned-place-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn tagged_owner_in_place_closes_on_try_failure() {
+    let source = r#"
+data Pair { sender: Sender<I64>, receiver: Receiver<I64> }
+fn work(capacity: I64) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  var saved = Option<Pair>.Some(Pair(sender, receiver));
+  yield;
+  val (extra_sender, extra_receiver) = channel<I64>(capacity = capacity)?;
+  extra_sender.close();
+  extra_receiver.close();
+  val owned = saved;
+  owned.close_caps();
+  saved = Option<Pair>.None;
+  val empty = saved;
+  empty.close_caps();
+  Result<I64, ResourceError>.Ok(42)
+}
+fn value(result: Result<I64, ResourceError>) -> I64 = when (result) {
+  Result<I64, ResourceError>.Ok(number) -> { number },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+fn main() -> I64 = value(work(1))
+fn fail() -> I64 = value(work(0))
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    core::verify(&program).unwrap();
+    for (entry, expected) in [("main", 42), ("fail", 0)] {
+        assert_eq!(program.interpret(entry, &[]).unwrap(), expected);
+        assert_eq!(native::run(&program, entry, &[]).unwrap(), expected);
+    }
+}
+
+#[test]
+fn capability_product_rejects_copy_projection_and_live_place_overwrite() {
     let base = r#"
 data Pair { sender: Sender<I64>, receiver: Receiver<I64> }
 fn use_pair(pair: Pair) -> I64 {
@@ -118,15 +195,41 @@ fn main() -> I64 = 0
             ),
             "whole-product unpack",
         ),
-        (
-            base.replace(
-                "  pair.close_caps();",
-                "  var saved = pair;\n  saved.close_caps();",
-            ),
-            "cannot be stored in var",
-        ),
     ] {
         let error = core::lower(&syntax::parse(&changed).unwrap()).unwrap_err();
+        assert!(error.message.contains(message), "{error:?}");
+        assert!(error.span.start > 0, "{error:?}");
+    }
+
+    let overwrite = r#"
+data Pair { sender: Sender<I64>, receiver: Receiver<I64> }
+fn consume(first: Pair, second: Pair) -> I64 {
+  var saved = first;
+  saved = second;
+  val taken = saved;
+  taken.close_caps();
+  42
+}
+fn main() -> I64 = 0
+"#;
+    let error = core::lower(&syntax::parse(overwrite).unwrap()).unwrap_err();
+    assert!(
+        error.message.contains("destination") || error.message.contains("place"),
+        "{error:?}"
+    );
+    assert!(error.span.start > 0, "{error:?}");
+
+    for (source, message) in [
+        (
+            overwrite.replace("  saved = second;", "  copy(saved);"),
+            "copy cannot duplicate",
+        ),
+        (
+            overwrite.replace("  saved = second;", "  saved.sender;"),
+            "whole-product unpack",
+        ),
+    ] {
+        let error = core::lower(&syntax::parse(&source).unwrap()).unwrap_err();
         assert!(error.message.contains(message), "{error:?}");
         assert!(error.span.start > 0, "{error:?}");
     }

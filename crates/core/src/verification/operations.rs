@@ -84,6 +84,9 @@ pub(super) fn op_type(
             if matches!(field_type, Type::Data(_)) {
                 return Err("nominal place field requires an owning projection".into());
             }
+            if layout.leaves(field_type) > 0 {
+                return Err("capability place field requires whole-product unpack".into());
+            }
             Ok(Some(field_type))
         }
         Operation::Neg(a) => {
@@ -235,7 +238,8 @@ pub(super) fn op_type(
             None => Err("invalid place ID".into()),
         },
         Operation::CopyPlace(place) => match function.place_types.get(place.0) {
-            Some(ty @ Type::Data(_)) => Ok(Some(*ty)),
+            Some(ty @ Type::Data(_)) if layout.leaves(*ty) == 0 => Ok(Some(*ty)),
+            Some(Type::Data(_)) => Err("copy cannot duplicate communication capabilities".into()),
             Some(_) => Err("copy requires a nominal place".into()),
             None => Err("invalid place ID".into()),
         },

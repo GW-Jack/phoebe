@@ -5,7 +5,7 @@ pub(crate) mod capability_layout;
 mod operations;
 mod structure;
 
-pub(crate) use capability::{capability_graph, verify_capability_edges};
+pub(crate) use capability::{SlotOwner, capability_graph, verify_capability_edges};
 use operations::op_type;
 pub use operations::operands;
 pub(crate) use structure::{recursive_call_span, verify_structure};

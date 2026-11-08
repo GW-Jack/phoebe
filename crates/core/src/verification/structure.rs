@@ -186,16 +186,6 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
                 function.name
             ));
         }
-        if function
-            .place_types
-            .iter()
-            .any(|ty| capability_layout.leaves(*ty) > 0)
-        {
-            return Err(format!(
-                "{}: capability products cannot be stored in places yet",
-                function.name
-            ));
-        }
         let count = function.value_types.len();
         let mut definitions = vec![None; count];
         let mut place_initializers = vec![None; function.place_types.len()];
