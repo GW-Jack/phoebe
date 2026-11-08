@@ -14,6 +14,21 @@ fn raw_program_must_pass_verification_before_it_can_be_checked() {
 }
 
 #[test]
+fn nominal_sum_payload_cannot_hide_a_borrowed_reference() {
+    let ast = syntax::parse("data Box { Empty, Full(value: I64) } fn main() -> I64 = 42").unwrap();
+    let valid = core::lower(&ast).unwrap();
+    for reference_type in [core::Type::RefI64, core::Type::RefMutI64] {
+        let mut forged = valid.clone();
+        forged.data[0].payloads[1] = Some(reference_type);
+        assert!(
+            core::verify(&forged).is_err(),
+            "Core accepted a nominal sum containing {reference_type:?}"
+        );
+        assert!(core::CheckedProgram::check(forged).is_err());
+    }
+}
+
+#[test]
 fn checked_direct_program_runs_without_another_public_verification_boundary() {
     let ast = syntax::parse(include_str!("../examples/hello.phoebe")).unwrap();
     let checked = core::lower_checked(&ast).unwrap();

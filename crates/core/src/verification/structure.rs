@@ -116,12 +116,10 @@ pub(crate) fn verify_structure(
             Type::I64 | Type::Bool | Type::Unit => false,
             Type::Data(id) => id.0 >= index,
             Type::ResourceError => false,
-            Type::RefI64
-            | Type::RefMutI64
-            | Type::SenderI64
-            | Type::ReceiverI64
-            | Type::ReplyToI64
-            | Type::ReplyReceiverI64 => false,
+            Type::RefI64 | Type::RefMutI64 => true,
+            Type::SenderI64 | Type::ReceiverI64 | Type::ReplyToI64 | Type::ReplyReceiverI64 => {
+                false
+            }
             Type::RequestI64 | Type::RequestSenderI64 | Type::RequestReceiverI64 => false,
         }) {
             return Err("invalid variant payload type".into());

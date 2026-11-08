@@ -26,6 +26,8 @@ duplicate, or mismatched records. Callee reference values are confined to
 cannot be returned or stored in another place. The verifier checks call
 signature modes, alias conflicts within a call, place initialization and
 dominance, reference operation types, and reference provenance restrictions.
+It also rejects reference types in nominal product fields and sum payloads;
+otherwise a forged Core aggregate could hide a loan beyond its call region.
 The interpreter resolves references to caller-owned slots. Direct Cranelift
 calls receive addresses of caller stack slots. When a callee can suspend, the
 frame analysis retains the borrowed caller place in the stable parent frame
