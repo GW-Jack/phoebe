@@ -139,15 +139,11 @@ develops them and lists the next questions.
 communication capabilities inside rejected or discarded messages.
 `docs/concurrency-pressure-tests.md` compares scoped tasks and actors on
 stateful and asynchronous workloads and records the resulting design gates.
-`formal/core.maude` explores one task with nested regions and a reference.
-`formal/two_task.maude` explores parent and child tasks, explicit handle fork,
-transfer at spawn, channel delivery, close, and child failure.
-`formal/reply_capability.maude` explores a one-shot reply right moving through
-a request, cancellation, discard, and failure. `formal/retained_borrow.maude`
-explores a nested call that forwards a borrow across a channel wait. All four
-models have finite state spaces. See `formal/README.md` for the exact
-models and their limits. These checks do not prove the full language, compiler,
-or native runtime safe.
+The ten finite models in `formal/` explore ownership, nested borrows, task
+scopes, channel and request backpressure, reply rights, and structural
+capability cleanup. `formal/README.md` states each model's bounds and
+witnesses. These checks do not prove the full language, compiler, or native
+runtime safe.
 
 Run the checks with:
 

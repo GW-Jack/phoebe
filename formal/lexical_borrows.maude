@@ -1,0 +1,102 @@
+--- Finite region machine for one task-local nominal owner and two nested
+--- lexical regions. An exclusive reborrow freezes its parent loan. A shared
+--- outer loan admits only shared inner loans. Failure unwinds inner before
+--- outer, then releases the owner. This is a design model, not Core semantics.
+mod PHOEBE-LEXICAL-BORROWS is
+  protecting BOOL .
+
+  sorts Owner Outer Inner Phase Value State .
+  ops live moved dead : -> Owner [ctor] .
+  ops oClosed oOpen oShared oExclusive oFrozen : -> Outer [ctor] .
+  ops iClosed iOpen iShared iExclusive : -> Inner [ctor] .
+  ops run park unwindInner unwindOuter done failed : -> Phase [ctor] .
+  ops old updated : -> Value [ctor] .
+  op st : Owner Outer Inner Phase Value -> State [ctor] .
+  op initial : -> State .
+  eq initial = st(live, oClosed, iClosed, run, old) .
+
+  vars O : Owner .
+  vars R : Outer .
+  vars I : Inner .
+  vars P : Phase .
+  vars V : Value .
+
+  rl [enter-outer] : st(live, oClosed, iClosed, run, V)
+    => st(live, oOpen, iClosed, run, V) .
+  rl [borrow-outer-shared] : st(live, oOpen, iClosed, run, V)
+    => st(live, oShared, iClosed, run, V) .
+  rl [borrow-outer-exclusive] : st(live, oOpen, iClosed, run, V)
+    => st(live, oExclusive, iClosed, run, V) .
+  rl [enter-inner-unborrowed] : st(live, oOpen, iClosed, run, V)
+    => st(live, oOpen, iOpen, run, V) .
+  rl [enter-inner-shared] : st(live, oShared, iClosed, run, V)
+    => st(live, oShared, iOpen, run, V) .
+  rl [enter-inner-exclusive] : st(live, oExclusive, iClosed, run, V)
+    => st(live, oExclusive, iOpen, run, V) .
+  rl [borrow-inner-shared] : st(live, oOpen, iOpen, run, V)
+    => st(live, oOpen, iShared, run, V) .
+  rl [reborrow-inner-shared] : st(live, oShared, iOpen, run, V)
+    => st(live, oShared, iShared, run, V) .
+  rl [borrow-inner-exclusive] : st(live, oOpen, iOpen, run, V)
+    => st(live, oOpen, iExclusive, run, V) .
+  rl [reborrow-inner-exclusive] : st(live, oExclusive, iOpen, run, V)
+    => st(live, oFrozen, iExclusive, run, V) .
+
+  rl [write-unborrowed] : st(live, oOpen, iClosed, run, old)
+    => st(live, oOpen, iClosed, run, updated) .
+  rl [write-outer-exclusive] : st(live, oExclusive, iClosed, run, old)
+    => st(live, oExclusive, iClosed, run, updated) .
+  rl [write-inner-exclusive] : st(live, oOpen, iExclusive, run, old)
+    => st(live, oOpen, iExclusive, run, updated) .
+  rl [write-through-reborrow] : st(live, oFrozen, iExclusive, run, old)
+    => st(live, oFrozen, iExclusive, run, updated) .
+
+  rl [exit-inner-unborrowed] : st(live, R, iOpen, run, V)
+    => st(live, R, iClosed, run, V) .
+  rl [exit-inner-shared] : st(live, R, iShared, run, V)
+    => st(live, R, iClosed, run, V) .
+  rl [exit-inner-exclusive] : st(live, oOpen, iExclusive, run, V)
+    => st(live, oOpen, iClosed, run, V) .
+  rl [exit-inner-reborrow] : st(live, oFrozen, iExclusive, run, V)
+    => st(live, oExclusive, iClosed, run, V) .
+  rl [exit-outer] : st(live, R, iClosed, run, V)
+    => st(live, oClosed, iClosed, run, V) .
+  rl [move-owner] : st(live, oClosed, iClosed, run, V)
+    => st(moved, oClosed, iClosed, run, V) .
+  rl [finish] : st(O, oClosed, iClosed, run, V)
+    => st(dead, oClosed, iClosed, done, V) .
+
+  --- Parking retains every region; resumption restores the same authority.
+  rl [park] : st(live, R, I, run, V) => st(live, R, I, park, V) .
+  rl [wake] : st(live, R, I, park, V) => st(live, R, I, run, V) .
+  rl [begin-failure-running] : st(live, R, I, run, V)
+    => st(live, R, I, unwindInner, V) .
+  rl [begin-failure-parked] : st(live, R, I, park, V)
+    => st(live, R, I, unwindInner, V) .
+  rl [fail-after-move] : st(moved, oClosed, iClosed, run, V)
+    => st(dead, oClosed, iClosed, failed, V) .
+  rl [release-inner-unborrowed] : st(live, oOpen, I, unwindInner, V)
+    => st(live, oOpen, iClosed, unwindOuter, V) .
+  rl [release-inner-shared] : st(live, oShared, I, unwindInner, V)
+    => st(live, oShared, iClosed, unwindOuter, V) .
+  rl [release-inner-exclusive] : st(live, oExclusive, I, unwindInner, V)
+    => st(live, oExclusive, iClosed, unwindOuter, V) .
+  rl [release-inner-closed] : st(live, oClosed, iClosed, unwindInner, V)
+    => st(live, oClosed, iClosed, unwindOuter, V) .
+  rl [release-inner-reborrow] : st(live, oFrozen, iExclusive, unwindInner, V)
+    => st(live, oExclusive, iClosed, unwindOuter, V) .
+  rl [release-outer] : st(live, R, iClosed, unwindOuter, V)
+    => st(dead, oClosed, iClosed, failed, V) .
+
+  op bad : State -> Bool .
+  eq bad(st(moved, R, I, P, V)) = (R =/= oClosed) or (I =/= iClosed) .
+  eq bad(st(dead, R, I, P, V)) = (R =/= oClosed) or (I =/= iClosed) .
+  eq bad(st(live, oClosed, I, P, V)) = (I =/= iClosed) .
+  eq bad(st(live, oFrozen, I, P, V)) = (I =/= iExclusive) .
+  eq bad(st(live, oExclusive, iExclusive, P, V)) = true .
+  eq bad(st(live, oExclusive, iShared, P, V)) = true .
+  eq bad(st(live, oShared, iExclusive, P, V)) = true .
+  eq bad(st(live, R, I, done, V)) = true .
+  eq bad(st(live, R, I, failed, V)) = true .
+  eq bad(st(live, R, I, P, V)) = false [owise] .
+endm

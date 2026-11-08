@@ -1,0 +1,38 @@
+load lexical_borrows.maude
+
+--- Sanity check: a freed owner with an active nested loan is bad.
+reduce in PHOEBE-LEXICAL-BORROWS :
+  bad(st(dead, oFrozen, iExclusive, done, old)) .
+reduce in PHOEBE-LEXICAL-BORROWS :
+  bad(st(live, oExclusive, iExclusive, run, old)) .
+
+search [1] in PHOEBE-LEXICAL-BORROWS : initial =>* X:State
+  such that bad(X:State) == true .
+
+--- Normal shared nesting, exclusive reborrow and write, move after exit,
+--- parking, and failure cleanup from a parked nested reborrow.
+search [1] in PHOEBE-LEXICAL-BORROWS : initial =>*
+  st(live, oShared, iShared, run, old) .
+search [1] in PHOEBE-LEXICAL-BORROWS : initial =>*
+  st(live, oFrozen, iExclusive, run, updated) .
+search [1] in PHOEBE-LEXICAL-BORROWS : initial =>*
+  st(moved, oClosed, iClosed, run, old) .
+search [1] in PHOEBE-LEXICAL-BORROWS : initial =>*
+  st(live, oFrozen, iExclusive, park, old) .
+search [1] in PHOEBE-LEXICAL-BORROWS :
+  st(live, oFrozen, iExclusive, run, old) =>1
+  st(live, oFrozen, iExclusive, run, updated) .
+search [1] in PHOEBE-LEXICAL-BORROWS :
+  st(live, oFrozen, iExclusive, park, old) =>+
+  st(dead, oClosed, iClosed, failed, old) .
+search [1] in PHOEBE-LEXICAL-BORROWS :
+  st(moved, oClosed, iClosed, run, old) =>1
+  st(dead, oClosed, iClosed, failed, old) .
+
+--- Moving while borrowed and mutating through a shared outer loan are not
+--- reachable, although ordinary move and exclusive writes are witnessed.
+search [1] in PHOEBE-LEXICAL-BORROWS : initial =>*
+  st(moved, oShared, iClosed, run, old) .
+search [1] in PHOEBE-LEXICAL-BORROWS :
+  st(live, oShared, iShared, run, old) =>1
+  st(live, oShared, iShared, run, updated) .

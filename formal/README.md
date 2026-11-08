@@ -81,6 +81,24 @@ Four witnesses cover parking, writing, normal return, and cleanup after a
 parked failure. A deliberately freed parent with active loans is classified
 bad.
 
+## Lexical borrow regions
+
+`lexical_borrows.maude` explores one task-local owner, an outer and an inner
+region, shared and exclusive loans, exclusive reborrowing, parking, movement,
+and ordered failure unwind. An inner exclusive reborrow freezes its outer
+exclusive loan until the inner loan ends. The exhaustive search reaches 80
+states without an encoded dangling owner, orphaned inner loan, overlapping
+exclusive access, or terminal live region. Seven witnesses cover shared nesting,
+exclusive write, movement, parking, and failure cleanup. Two negative searches
+exclude movement while shared-borrowed and a one-step write through nested
+shared loans. Deliberately freed and overlapping-exclusive states are
+classified bad.
+
+This is a finite design model with one owner, two region levels, and one task.
+It does not model source lowering, CFG joins, native storage addresses, or a
+refinement relation to executable Core. `docs/lexical-regions.md` states the
+intended general invariant and the proposed Core boundary.
+
 ## Lexical task scope membership
 
 `lexical_scopes.maude` has one root task, an earlier sibling in the root
@@ -164,7 +182,7 @@ their compiler/runtime implementation to this model.
 
 ## Evidence boundary
 
-These are finite explorations of nine handwritten abstract machines. The
+These are finite explorations of ten handwritten abstract machines. The
 two-task model does not include regions or references; the one-task model
 does not include handle fork. Neither models multiple queued messages or
 blocking/parking. The reply model does not cover multiple reply rights,

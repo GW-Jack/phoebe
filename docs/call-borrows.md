@@ -40,7 +40,7 @@ exercise mutable forwarding and a shared borrow of a `val` temporary across
 the receive. This is tested behavior, not a general proof of region safety.
 
 This subset has no first-class reference variables, field or element borrows,
-region inference, or cross-task references. It does not
-establish safety for the future general borrow system. The next step is to
-model lexical region boundaries and reference lifetimes beyond one call
-before extending the source surface.
+region inference, or cross-task references. It does not establish safety for
+the future general borrow system. `docs/lexical-regions.md` records the next
+Core boundary, backed by a finite Maude design model; neither is implemented
+as a general source borrow checker yet.
