@@ -1,5 +1,5 @@
 --- Finite region machine for one task-local nominal owner and two nested
---- lexical regions. An exclusive reborrow freezes its parent loan. A shared
+--- lexical regions. Reborrowing an exclusive loan freezes its parent. A shared
 --- outer loan admits only shared inner loans. Failure unwinds inner before
 --- outer, then releases the owner. This is a design model, not Core semantics.
 mod PHOEBE-LEXICAL-BORROWS is
@@ -41,6 +41,8 @@ mod PHOEBE-LEXICAL-BORROWS is
     => st(live, oOpen, iExclusive, run, V) .
   rl [reborrow-inner-exclusive] : st(live, oExclusive, iOpen, run, V)
     => st(live, oFrozen, iExclusive, run, V) .
+  rl [reborrow-inner-shared-from-exclusive] : st(live, oExclusive, iOpen, run, V)
+    => st(live, oFrozen, iShared, run, V) .
 
   rl [write-unborrowed] : st(live, oOpen, iClosed, run, old)
     => st(live, oOpen, iClosed, run, updated) .
@@ -53,11 +55,15 @@ mod PHOEBE-LEXICAL-BORROWS is
 
   rl [exit-inner-unborrowed] : st(live, R, iOpen, run, V)
     => st(live, R, iClosed, run, V) .
-  rl [exit-inner-shared] : st(live, R, iShared, run, V)
-    => st(live, R, iClosed, run, V) .
+  rl [exit-inner-shared-unborrowed] : st(live, oOpen, iShared, run, V)
+    => st(live, oOpen, iClosed, run, V) .
+  rl [exit-inner-shared-parent] : st(live, oShared, iShared, run, V)
+    => st(live, oShared, iClosed, run, V) .
   rl [exit-inner-exclusive] : st(live, oOpen, iExclusive, run, V)
     => st(live, oOpen, iClosed, run, V) .
   rl [exit-inner-reborrow] : st(live, oFrozen, iExclusive, run, V)
+    => st(live, oExclusive, iClosed, run, V) .
+  rl [exit-inner-shared-reborrow] : st(live, oFrozen, iShared, run, V)
     => st(live, oExclusive, iClosed, run, V) .
   rl [exit-outer] : st(live, R, iClosed, run, V)
     => st(live, oClosed, iClosed, run, V) .
@@ -85,6 +91,8 @@ mod PHOEBE-LEXICAL-BORROWS is
     => st(live, oClosed, iClosed, unwindOuter, V) .
   rl [release-inner-reborrow] : st(live, oFrozen, iExclusive, unwindInner, V)
     => st(live, oExclusive, iClosed, unwindOuter, V) .
+  rl [release-inner-shared-reborrow] : st(live, oFrozen, iShared, unwindInner, V)
+    => st(live, oExclusive, iClosed, unwindOuter, V) .
   rl [release-outer] : st(live, R, iClosed, unwindOuter, V)
     => st(dead, oClosed, iClosed, failed, V) .
 
@@ -92,7 +100,7 @@ mod PHOEBE-LEXICAL-BORROWS is
   eq bad(st(moved, R, I, P, V)) = (R =/= oClosed) or (I =/= iClosed) .
   eq bad(st(dead, R, I, P, V)) = (R =/= oClosed) or (I =/= iClosed) .
   eq bad(st(live, oClosed, I, P, V)) = (I =/= iClosed) .
-  eq bad(st(live, oFrozen, I, P, V)) = (I =/= iExclusive) .
+  eq bad(st(live, oFrozen, I, P, V)) = (I =/= iExclusive) and (I =/= iShared) .
   eq bad(st(live, oExclusive, iExclusive, P, V)) = true .
   eq bad(st(live, oExclusive, iShared, P, V)) = true .
   eq bad(st(live, oShared, iExclusive, P, V)) = true .

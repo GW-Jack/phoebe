@@ -207,6 +207,23 @@ pub(super) fn op_type(
             .map(Some)
             .ok_or_else(|| "borrow requires an I64 or Bool place".into())
         }
+        Operation::BorrowReborrow(parent, exclusive) => {
+            let parent_type = ty(*parent);
+            let referent = parent_type
+                .referent()
+                .ok_or("reborrow requires a reference")?;
+            if *exclusive && !matches!(parent_type, Type::RefMutI64 | Type::RefMutBool) {
+                return Err("exclusive reborrow requires an exclusive parent".into());
+            }
+            Ok(Type::parameter(
+                if *exclusive {
+                    ParamMode::Exclusive
+                } else {
+                    ParamMode::Shared
+                },
+                referent,
+            ))
+        }
         Operation::BorrowEnd(reference) => {
             if ty(*reference).referent().is_none() {
                 return Err("borrow end requires a reference".into());
@@ -318,6 +335,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::PlaceInit(_, a)
         | Operation::Store(_, a)
         | Operation::BorrowEnd(a)
+        | Operation::BorrowReborrow(a, _)
         | Operation::LoadRef(a) => vec![*a],
         Operation::StoreRef(a, b) => vec![*a, *b],
         Operation::Load(_)

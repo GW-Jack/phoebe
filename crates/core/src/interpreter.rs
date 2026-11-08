@@ -498,6 +498,7 @@ impl CoreTask {
                     .expect("verified owned place"),
             ),
             Operation::BorrowBegin(place, _) => Some(Value::Ref(base + place.0)),
+            Operation::BorrowReborrow(parent, _) => Some(get(*parent)),
             Operation::BorrowEnd(_) => None,
             Operation::LoadRef(reference) => {
                 let Value::Ref(slot) = get(*reference) else {
@@ -1119,6 +1120,12 @@ impl fmt::Display for Program {
                         }
                         Operation::BorrowBegin(place, true) => {
                             write!(f, "borrow.begin &mut p{}", place.0)?
+                        }
+                        Operation::BorrowReborrow(parent, false) => {
+                            write!(f, "borrow.reborrow &v{}", parent.0)?
+                        }
+                        Operation::BorrowReborrow(parent, true) => {
+                            write!(f, "borrow.reborrow &mut v{}", parent.0)?
                         }
                         Operation::BorrowEnd(reference) => {
                             write!(f, "borrow.end v{}", reference.0)?

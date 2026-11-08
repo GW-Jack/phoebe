@@ -796,6 +796,7 @@ fn compile_poll_module<M: Module>(
                             Some(get(*value, &mut builder))
                         }
                         Operation::BorrowBegin(place, _) => Some(vec![places[place.0][0]]),
+                        Operation::BorrowReborrow(parent, _) => Some(get(*parent, &mut builder)),
                         Operation::BorrowEnd(_) => None,
                         Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                             for (component, address) in
@@ -1718,6 +1719,7 @@ fn validate_poll_function(
                     | Operation::Move(_)
                     | Operation::Copy(_)
                     | Operation::BorrowBegin(_, _)
+                    | Operation::BorrowReborrow(_, _)
                     | Operation::BorrowEnd(_)
                     | Operation::PlaceInit(_, _)
                     | Operation::Load(_)

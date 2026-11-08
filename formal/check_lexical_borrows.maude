@@ -16,6 +16,8 @@ search [1] in PHOEBE-LEXICAL-BORROWS : initial =>*
 search [1] in PHOEBE-LEXICAL-BORROWS : initial =>*
   st(live, oFrozen, iExclusive, run, updated) .
 search [1] in PHOEBE-LEXICAL-BORROWS : initial =>*
+  st(live, oFrozen, iShared, run, old) .
+search [1] in PHOEBE-LEXICAL-BORROWS : initial =>*
   st(moved, oClosed, iClosed, run, old) .
 search [1] in PHOEBE-LEXICAL-BORROWS : initial =>*
   st(live, oFrozen, iExclusive, park, old) .
@@ -36,3 +38,6 @@ search [1] in PHOEBE-LEXICAL-BORROWS : initial =>*
 search [1] in PHOEBE-LEXICAL-BORROWS :
   st(live, oShared, iShared, run, old) =>1
   st(live, oShared, iShared, run, updated) .
+search [1] in PHOEBE-LEXICAL-BORROWS :
+  st(live, oFrozen, iShared, run, old) =>1
+  st(live, oFrozen, iShared, run, updated) .

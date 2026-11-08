@@ -29,25 +29,27 @@ fields and payloads.
 
 The first Core slice uses `borrow.begin p, mode` to create a scalar reference
 and `borrow.end ref` to end it. A separate verifier tracks exact active loan
-IDs through CFG edges. It permits concurrent shared loans, rejects an
-exclusive overlap, blocks direct mutation or exclusive reads of a loaned
-root, rejects use after end, and requires identical loan states at joins.
+IDs through CFG edges. `borrow.reborrow ref, mode` records an explicit parent;
+an exclusive parent is frozen until its child ends. A shared parent can only
+grant a shared child. The verifier permits concurrent shared loans, rejects
+an exclusive overlap, blocks direct mutation or exclusive reads of a loaned
+root, rejects use after end or out-of-order parent end, and requires identical
+active and frozen loan states at joins.
 It also requires loans to end before return, suspension, spawn, or a call.
 Interpreter, JIT, and standalone tests exercise a loan in direct code and a
 loan created after a yield in retained code. The source lowerer does not yet
 emit these operations.
 
-Next, extend the existing call-only `LoanRegion` to a tree of lexical regions.
-Reborrowing must name its parent loan and freeze exclusive parent authority
-until the child ends. Ordinary ownership and capability-flow verification
+Next, integrate this Core parent relation with the existing call-only
+`LoanRegion` metadata and source lowering. Ordinary ownership and capability-flow verification
 remain separate passes over the same explicit Core edges. The native frame
 plan must prove that every root live at a suspension point has a stable slot
 and that cancellation releases loans before that slot. These checks should
 remain linear in Core size apart from the existing CFG fixed point, with no
 optimization search during compilation.
 
-Before adding source-level nominal or field borrows, implement nested
-reborrows, frame-stable suspension, and failure unwind, with forged-IR
+Before adding source-level nominal or field borrows, implement frame-stable
+suspension and failure unwind for live loans, with forged-IR
 rejection and interpreter/native differential cases. Product fields are
 currently stored in separate native slots, so nominal borrowing also needs
 a stable aggregate address or an explicit multi-address view. The Maude

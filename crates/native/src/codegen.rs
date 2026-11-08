@@ -518,6 +518,7 @@ pub(super) fn compile_functions<M: Module>(
                             places[place.0][0],
                             0,
                         )]),
+                        Operation::BorrowReborrow(parent, _) => Some(get(*parent)),
                         Operation::BorrowEnd(_) => None,
                         Operation::Variant(id, tag, payload) => {
                             let mut components =

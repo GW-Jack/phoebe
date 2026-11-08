@@ -44,6 +44,38 @@ fn lexical_write() -> core::Program {
     program
 }
 
+fn exclusive_reborrow() -> core::Program {
+    let mut program = lexical_write();
+    let function = &mut program.functions[0];
+    let span = function.blocks[0].instructions[2].span;
+    function.value_types.push(core::Type::RefMutI64);
+    function.blocks[0].instructions.insert(
+        3,
+        core::Instruction {
+            result: Some(core::ValueId(4)),
+            operation: core::Operation::BorrowReborrow(core::ValueId(1), true),
+            span,
+        },
+    );
+    for instruction in &mut function.blocks[0].instructions[5..7] {
+        match &mut instruction.operation {
+            core::Operation::StoreRef(reference, _) | core::Operation::LoadRef(reference) => {
+                *reference = core::ValueId(4)
+            }
+            _ => unreachable!(),
+        }
+    }
+    function.blocks[0].instructions.insert(
+        7,
+        core::Instruction {
+            result: None,
+            operation: core::Operation::BorrowEnd(core::ValueId(4)),
+            span,
+        },
+    );
+    program
+}
+
 #[test]
 fn lexical_loan_load_store_and_end_agree_across_engines() {
     let program = lexical_write();
@@ -251,4 +283,127 @@ fn two_shared_lexical_loans_can_read_the_same_place() {
     core::verify(&program).unwrap();
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
+fn exclusive_reborrow_agrees_across_engines() {
+    let program = exclusive_reborrow();
+    core::verify(&program).unwrap();
+    assert!(program.to_string().contains("borrow.reborrow &mut v1"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-reborrow-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn reborrow_freezes_parent_and_requires_child_to_end_first() {
+    let mut frozen_use = exclusive_reborrow();
+    let function = &mut frozen_use.functions[0];
+    let span = function.blocks[0].instructions[2].span;
+    function.blocks[0].instructions.insert(
+        5,
+        core::Instruction {
+            result: None,
+            operation: core::Operation::StoreRef(core::ValueId(1), core::ValueId(2)),
+            span,
+        },
+    );
+    assert!(
+        core::verify(&frozen_use)
+            .unwrap_err()
+            .contains("frozen parent")
+    );
+
+    let mut wrong_order = exclusive_reborrow();
+    wrong_order.functions[0].blocks[0].instructions.swap(7, 8);
+    assert!(
+        core::verify(&wrong_order)
+            .unwrap_err()
+            .contains("parent loan ends before child")
+    );
+
+    let mut frozen_reborrow = exclusive_reborrow();
+    let function = &mut frozen_reborrow.functions[0];
+    function.value_types.push(core::Type::RefI64);
+    function.blocks[0].instructions.insert(
+        4,
+        core::Instruction {
+            result: Some(core::ValueId(5)),
+            operation: core::Operation::BorrowReborrow(core::ValueId(1), false),
+            span,
+        },
+    );
+    assert!(
+        core::verify(&frozen_reborrow)
+            .unwrap_err()
+            .contains("frozen parent")
+    );
+}
+
+#[test]
+fn shared_parent_only_grants_shared_children() {
+    let mut program = lexical_write();
+    let function = &mut program.functions[0];
+    function.value_types[1] = core::Type::RefI64;
+    function.blocks[0].instructions[2].operation =
+        core::Operation::BorrowBegin(core::PlaceId(0), false);
+    function.value_types.push(core::Type::RefI64);
+    let span = function.blocks[0].instructions[2].span;
+    function.blocks[0].instructions.remove(4);
+    function.blocks[0].instructions.insert(
+        3,
+        core::Instruction {
+            result: Some(core::ValueId(4)),
+            operation: core::Operation::BorrowReborrow(core::ValueId(1), false),
+            span,
+        },
+    );
+    function.blocks[0].instructions[5].operation = core::Operation::LoadRef(core::ValueId(4));
+    function.blocks[0].instructions.insert(
+        6,
+        core::Instruction {
+            result: None,
+            operation: core::Operation::BorrowEnd(core::ValueId(4)),
+            span,
+        },
+    );
+    core::verify(&program).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 41);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 41);
+
+    program.functions[0].value_types[4] = core::Type::RefMutI64;
+    program.functions[0].blocks[0].instructions[3].operation =
+        core::Operation::BorrowReborrow(core::ValueId(1), true);
+    assert!(
+        core::verify(&program)
+            .unwrap_err()
+            .contains("exclusive reborrow requires an exclusive parent")
+    );
+}
+
+#[test]
+fn exclusive_parent_can_grant_shared_child_then_regain_write_access() {
+    let mut program = exclusive_reborrow();
+    let function = &mut program.functions[0];
+    function.value_types[4] = core::Type::RefI64;
+    function.blocks[0].instructions[3].operation =
+        core::Operation::BorrowReborrow(core::ValueId(1), false);
+    function.blocks[0].instructions.remove(5);
+    let span = function.blocks[0].instructions[2].span;
+    function.blocks[0].instructions.insert(
+        7,
+        core::Instruction {
+            result: None,
+            operation: core::Operation::StoreRef(core::ValueId(1), core::ValueId(2)),
+            span,
+        },
+    );
+    core::verify(&program).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 41);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 41);
 }

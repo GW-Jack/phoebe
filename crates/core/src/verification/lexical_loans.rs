@@ -40,14 +40,64 @@ fn successors(terminator: &Terminator) -> Vec<BlockId> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Loan {
+    origin: LoanOrigin,
+    exclusive: bool,
+}
+
+#[derive(Clone, Copy)]
+enum LoanOrigin {
+    Root(PlaceId),
+    Parent(ValueId),
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct LoanState {
+    active: Vec<bool>,
+    frozen: Vec<bool>,
+}
+
+fn roots(loans: &[Option<Loan>]) -> Option<Vec<Option<PlaceId>>> {
+    let mut roots = vec![None; loans.len()];
+    for start in 0..loans.len() {
+        if loans[start].is_none() || roots[start].is_some() {
+            continue;
+        }
+        let mut path = Vec::new();
+        let mut current = start;
+        let place = loop {
+            if let Some(place) = roots.get(current).copied().flatten() {
+                break place;
+            }
+            let loan = loans.get(current)?.as_ref()?;
+            path.push(current);
+            if path.len() > loans.len() {
+                return None;
+            }
+            match loan.origin {
+                LoanOrigin::Root(place) => break place,
+                LoanOrigin::Parent(parent) => current = parent.0,
+            }
+        };
+        for id in path {
+            roots[id] = Some(place);
+        }
+    }
+    Some(roots)
+}
+
 fn conflict(
     active: &[bool],
-    loans: &[Option<(PlaceId, bool)>],
-    root: PlaceId,
+    loans: &[Option<Loan>],
+    roots: &[Option<PlaceId>],
+    root_place: PlaceId,
     exclusive: bool,
 ) -> bool {
     active.iter().enumerate().any(|(id, live)| {
-        *live && loans[id].is_some_and(|(place, mode)| place == root && (exclusive || mode))
+        *live
+            && loans[id]
+                .is_some_and(|loan| roots[id] == Some(root_place) && (exclusive || loan.exclusive))
     })
 }
 
@@ -57,7 +107,9 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
             block.instructions.iter().any(|instruction| {
                 matches!(
                     instruction.operation,
-                    Operation::BorrowBegin(_, _) | Operation::BorrowEnd(_)
+                    Operation::BorrowBegin(_, _)
+                        | Operation::BorrowReborrow(_, _)
+                        | Operation::BorrowEnd(_)
                 )
             })
         }) {
@@ -66,32 +118,68 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
         let mut loans = vec![None; function.value_types.len()];
         for block in &function.blocks {
             for instruction in &block.instructions {
-                if let Operation::BorrowBegin(place, exclusive) = instruction.operation {
-                    let id = instruction.result.ok_or("borrow begin lacks a result")?;
-                    loans[id.0] = Some((place, exclusive));
+                let loan = match instruction.operation {
+                    Operation::BorrowBegin(place, exclusive) => Some(Loan {
+                        origin: LoanOrigin::Root(place),
+                        exclusive,
+                    }),
+                    Operation::BorrowReborrow(parent, exclusive) => Some(Loan {
+                        origin: LoanOrigin::Parent(parent),
+                        exclusive,
+                    }),
+                    _ => None,
+                };
+                if let Some(loan) = loan {
+                    let id = instruction
+                        .result
+                        .ok_or("borrow operation lacks a result")?;
+                    loans[id.0] = Some(loan);
                 }
             }
         }
+        let roots = roots(&loans)
+            .ok_or_else(|| format!("{}: reborrow has no lexical root", function.name))?;
         let mut incoming = vec![None; function.blocks.len()];
-        incoming[0] = Some(vec![false; loans.len()]);
+        incoming[0] = Some(LoanState {
+            active: vec![false; loans.len()],
+            frozen: vec![false; loans.len()],
+        });
         let mut ready = VecDeque::from([0usize]);
         while let Some(block_id) = ready.pop_front() {
             let block = &function.blocks[block_id];
-            let mut active = incoming[block_id]
+            let mut state = incoming[block_id]
                 .clone()
                 .expect("queued block has loan state");
             for instruction in &block.instructions {
                 for operand in operands(&instruction.operation) {
-                    if loans[operand.0].is_some() && !active[operand.0] {
+                    if loans[operand.0].is_some() && !state.active[operand.0] {
                         return Err(format!("{}: use after borrow end", function.name));
                     }
                 }
                 match &instruction.operation {
                     Operation::BorrowBegin(place, exclusive) => {
-                        if conflict(&active, &loans, *place, *exclusive) {
+                        if conflict(&state.active, &loans, &roots, *place, *exclusive) {
                             return Err(format!("{}: overlapping lexical borrows", function.name));
                         }
-                        active[instruction.result.expect("typed borrow begin").0] = true;
+                        state.active[instruction.result.expect("typed borrow begin").0] = true;
+                    }
+                    Operation::BorrowReborrow(parent, _) => {
+                        if loans[parent.0].is_none() {
+                            return Err(format!(
+                                "{}: reborrow requires a lexical parent",
+                                function.name
+                            ));
+                        }
+                        if state.frozen[parent.0] {
+                            return Err(format!(
+                                "{}: frozen parent cannot be reborrowed",
+                                function.name
+                            ));
+                        }
+                        if loans[parent.0].expect("checked parent").exclusive {
+                            state.frozen[parent.0] = true;
+                        }
+                        state.active[instruction.result.expect("typed reborrow").0] = true;
                     }
                     Operation::BorrowEnd(reference) => {
                         if loans[reference.0].is_none() {
@@ -100,12 +188,30 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                                 function.name
                             ));
                         }
-                        active[reference.0] = false;
+                        if loans.iter().enumerate().any(|(id, loan)| {
+                            state.active[id]
+                                && loan.is_some_and(|loan| {
+                                    matches!(loan.origin, LoanOrigin::Parent(parent) if parent == *reference)
+                                })
+                        }) {
+                            return Err(format!("{}: parent loan ends before child", function.name));
+                        }
+                        state.active[reference.0] = false;
+                        if let LoanOrigin::Parent(parent) =
+                            loans[reference.0].expect("checked loan").origin
+                        {
+                            state.frozen[parent.0] = false;
+                        }
+                    }
+                    Operation::LoadRef(reference) | Operation::StoreRef(reference, _)
+                        if state.frozen[reference.0] =>
+                    {
+                        return Err(format!("{}: frozen parent cannot be used", function.name));
                     }
                     Operation::Load(place)
                     | Operation::ReadField(place, _)
                     | Operation::CopyPlace(place)
-                        if conflict(&active, &loans, *place, false) =>
+                        if conflict(&state.active, &loans, &roots, *place, false) =>
                     {
                         return Err(format!(
                             "{}: read conflicts with exclusive loan",
@@ -115,7 +221,7 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                     Operation::PlaceInit(place, _)
                     | Operation::Store(place, _)
                     | Operation::Take(place)
-                        if conflict(&active, &loans, *place, true) =>
+                        if conflict(&state.active, &loans, &roots, *place, true) =>
                     {
                         return Err(format!(
                             "{}: mutation conflicts with lexical loan",
@@ -123,7 +229,7 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                         ));
                     }
                     Operation::Call(_, _) | Operation::GenericCall { .. }
-                        if active.iter().any(|live| *live) =>
+                        if state.active.iter().any(|live| *live) =>
                     {
                         // A callee may park. Until frame stability is proved for
                         // lexical loans, keep calls outside their live interval.
@@ -135,7 +241,7 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                     _ => {}
                 }
             }
-            if active.iter().any(|live| *live)
+            if state.active.iter().any(|live| *live)
                 && matches!(
                     block.terminator,
                     Terminator::Return(_)
@@ -157,10 +263,10 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
             for target in successors(&block.terminator) {
                 match &incoming[target.0] {
                     None => {
-                        incoming[target.0] = Some(active.clone());
+                        incoming[target.0] = Some(state.clone());
                         ready.push_back(target.0);
                     }
-                    Some(existing) if existing != &active => {
+                    Some(existing) if existing != &state => {
                         return Err(format!(
                             "{}: lexical loan states differ at a CFG join",
                             function.name

@@ -170,6 +170,7 @@ pub enum Operation {
         args: Vec<ValueId>,
     },
     BorrowBegin(PlaceId, bool),
+    BorrowReborrow(ValueId, bool),
     BorrowEnd(ValueId),
     LoadRef(ValueId),
     StoreRef(ValueId, ValueId),
