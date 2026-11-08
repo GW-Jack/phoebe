@@ -16,6 +16,7 @@ def integration_tests(rust_test):
             "examples/channel_exchange.phoebe",
             "examples/channel_exchange_helper.phoebe",
             "examples/channel_accumulator.phoebe",
+            "examples/bench_channel_throughput.phoebe",
             "examples/borrow_across_wait.phoebe",
             "examples/wide_after_wait.phoebe",
             "examples/spawn_direct_from_poll.phoebe",

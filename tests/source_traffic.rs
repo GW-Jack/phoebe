@@ -16,6 +16,15 @@ fn assert_standalone(program: &core::Program, name: &str, expected: i64) {
 }
 
 #[test]
+fn ten_thousand_bounded_messages_agree_across_backends() {
+    let source = include_str!("../examples/bench_channel_throughput.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 49_995_000);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 49_995_000);
+    assert_standalone(&program, "bench-channel-throughput", 49_995_000);
+}
+
+#[test]
 fn source_two_message_exchange_parks_and_wakes() {
     let source = include_str!("../examples/channel_exchange.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

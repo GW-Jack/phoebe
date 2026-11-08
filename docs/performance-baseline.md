@@ -124,3 +124,27 @@ These are local measurements of one executable, not a general throughput
 claim. The source call graph now leaves a loop in a component disconnected
 from `spawn` on the direct path. Components joined by a shared helper still
 receive checkpoints even when some entry paths never create a task.
+
+## Bounded channel standalone run
+
+On 2026-11-08, an optimized Cargo-built compiler on macOS ARM64 built
+`examples/bench_channel_throughput.phoebe`, which sends 10,000 `I64` values
+through a one-slot channel from a child task to its parent. The executable
+returned and printed `49995000`. The interpreter, native JIT, and standalone
+executable agree on that result in `tests/source_traffic.rs`.
+
+```sh
+cargo build --release --locked -p phoebe -p phoebe-runtime
+python3 examples/bench_standalone.py examples/bench_channel_throughput.phoebe 49995000 --builds 20 --runs 30
+```
+
+Three independent invocations of the harness each measured 20 fresh builds
+without `--cache-dir`, followed by three warmup runs and 30 timed process
+runs. Their within-invocation medians ranged from 40.3 to 40.8 ms for a
+build and 2.66 to 2.78 ms for a standalone run. The build measurement starts
+a new compiler process, parses and checks the source, generates code, and
+links the executable. It excludes building Phoebe itself. The runtime
+measurement includes process startup and printing, so it is not a per-message
+latency or throughput figure. These local timings are a reproducible baseline
+for this one workload, not a claim of OCaml-like compilation or general native
+runtime speed.
