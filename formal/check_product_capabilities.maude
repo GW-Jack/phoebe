@@ -1,0 +1,43 @@
+load product_capabilities.maude
+
+--- A torn queued product is classified bad.
+reduce in PHOEBE-PRODUCT-CAPABILITIES :
+  bad(st(queued, queue, product, full)) .
+
+--- No reachable state tears the pair or closes the first field before the
+--- second during structural cleanup.
+search [1] in PHOEBE-PRODUCT-CAPABILITIES : initial =>* X:State
+  such that bad(X:State) == true .
+search [1] in PHOEBE-PRODUCT-CAPABILITIES : initial =>*
+  st(closing, closed, product, empty) .
+
+search [1] in PHOEBE-PRODUCT-CAPABILITIES : initial =>*
+  st(packed, product, product, empty) .
+search [1] in PHOEBE-PRODUCT-CAPABILITIES : initial =>*
+  st(split, task, task, empty) .
+search [1] in PHOEBE-PRODUCT-CAPABILITIES : initial =>*
+  st(rejected, product, product, empty) .
+search [1] in PHOEBE-PRODUCT-CAPABILITIES : initial =>*
+  st(queued, queue, queue, full) .
+search [1] in PHOEBE-PRODUCT-CAPABILITIES : initial =>*
+  st(delivered, child, child, empty) .
+search [1] in PHOEBE-PRODUCT-CAPABILITIES : initial =>*
+  st(closing, product, closed, empty) .
+search [1] in PHOEBE-PRODUCT-CAPABILITIES : initial =>*
+  st(disposed, closed, closed, empty) .
+search [1] in PHOEBE-PRODUCT-CAPABILITIES : initial =>*
+  st(canceled, closed, closed, empty) .
+search [1] in PHOEBE-PRODUCT-CAPABILITIES : initial =>*
+  st(failed, closed, closed, empty) .
+
+--- These queries start at the branch being checked, so another route to a
+--- terminal state cannot accidentally satisfy the cleanup witness.
+search [1] in PHOEBE-PRODUCT-CAPABILITIES :
+  st(rejected, product, product, empty) =>*
+  st(finished, closed, closed, empty) .
+search [1] in PHOEBE-PRODUCT-CAPABILITIES :
+  st(queued, queue, queue, full) =>*
+  st(disposed, closed, closed, empty) .
+search [1] in PHOEBE-PRODUCT-CAPABILITIES :
+  st(delivered, child, child, empty) =>*
+  st(failed, closed, closed, empty) .

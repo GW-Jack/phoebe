@@ -1,0 +1,79 @@
+--- Two distinct affine rights in a nominal two-field product. Each owner
+--- component denotes exactly one right; a transition moves or closes it.
+mod PHOEBE-PRODUCT-CAPABILITIES is
+  protecting BOOL .
+
+  sorts Phase Owner Queue State .
+  ops separate packed split queued rejected delivered closing disposed
+      finished canceled failed : -> Phase [ctor] .
+  ops task product queue child closed : -> Owner [ctor] .
+  ops empty full : -> Queue [ctor] .
+  op st : Phase Owner Owner Queue -> State [ctor] .
+  op initial : -> State .
+  eq initial = st(separate, task, task, empty) .
+
+  --- Both field rights transfer together. The queue owns the complete value.
+  rl [pack] : st(separate, task, task, empty)
+    => st(packed, product, product, empty) .
+  rl [split] : st(packed, product, product, empty)
+    => st(split, task, task, empty) .
+  rl [send] : st(packed, product, product, empty)
+    => st(queued, queue, queue, full) .
+  rl [send-closed] : st(packed, product, product, empty)
+    => st(rejected, product, product, empty) .
+  rl [receive] : st(queued, queue, queue, full)
+    => st(delivered, child, child, empty) .
+
+  --- Structural close proceeds in reverse field order. An intermediate
+  --- close state is internal to cleanup, never a sendable product.
+  rl [close-product] : st(packed, product, product, empty)
+    => st(closing, product, closed, empty) .
+  rl [close-rejected] : st(rejected, product, product, empty)
+    => st(closing, product, closed, empty) .
+  rl [close-left] : st(closing, product, closed, empty)
+    => st(finished, closed, closed, empty) .
+  rl [close-split] : st(split, task, task, empty)
+    => st(finished, closed, closed, empty) .
+  rl [close-child] : st(delivered, child, child, empty)
+    => st(finished, closed, closed, empty) .
+
+  --- Queue discard and task cancellation close every owned leaf. A failure
+  --- of the receiving task also closes its two rights.
+  rl [discard] : st(queued, queue, queue, full)
+    => st(disposed, closed, closed, empty) .
+  rl [cancel-separate] : st(separate, task, task, empty)
+    => st(canceled, closed, closed, empty) .
+  rl [cancel-packed] : st(packed, product, product, empty)
+    => st(canceled, closed, closed, empty) .
+  rl [cancel-rejected] : st(rejected, product, product, empty)
+    => st(canceled, closed, closed, empty) .
+  rl [cancel-split] : st(split, task, task, empty)
+    => st(canceled, closed, closed, empty) .
+  rl [cancel-queued] : st(queued, queue, queue, full)
+    => st(canceled, closed, closed, empty) .
+  rl [cancel-delivered] : st(delivered, child, child, empty)
+    => st(canceled, closed, closed, empty) .
+  rl [cancel-closing] : st(closing, product, closed, empty)
+    => st(canceled, closed, closed, empty) .
+  rl [child-failure] : st(delivered, child, child, empty)
+    => st(failed, closed, closed, empty) .
+
+  vars P : Phase .
+  vars L R : Owner .
+  vars Q : Queue .
+  op valid : Phase Owner Owner Queue -> Bool .
+  eq valid(separate, task, task, empty) = true .
+  eq valid(packed, product, product, empty) = true .
+  eq valid(split, task, task, empty) = true .
+  eq valid(queued, queue, queue, full) = true .
+  eq valid(rejected, product, product, empty) = true .
+  eq valid(delivered, child, child, empty) = true .
+  eq valid(closing, product, closed, empty) = true .
+  eq valid(disposed, closed, closed, empty) = true .
+  eq valid(finished, closed, closed, empty) = true .
+  eq valid(canceled, closed, closed, empty) = true .
+  eq valid(failed, closed, closed, empty) = true .
+  eq valid(P, L, R, Q) = false [owise] .
+  op bad : State -> Bool .
+  eq bad(st(P, L, R, Q)) = not valid(P, L, R, Q) .
+endm

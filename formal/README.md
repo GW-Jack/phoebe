@@ -99,9 +99,27 @@ channels, and native ABI. The source tests exercise the corresponding
 sibling-isolation and failure paths, but no refinement proof connects them
 to this model.
 
+## Two-field capability product
+
+`product_capabilities.maude` has two distinct affine rights in a nominal
+product. Its rules pack and split both rights, transfer the intact product to
+and from a one-slot queue, return it intact on a rejected send, close its
+fields in reverse declaration order, and close both rights on queue discard,
+task cancellation, or child failure. The exhaustive search visits 11 states
+with no encoded torn pair or out-of-order structural close. Twelve witnesses
+include branch-specific cleanup after rejection, discard, and child failure.
+A deliberately torn queued product is classified bad.
+
+The model represents each right by a single owner component, so duplication
+is excluded by its representation. It fixes the product at two fields and
+does not represent nested products, variant tags, partial projection,
+concurrent mutation, resource allocation, or concrete runtime operations.
+It is specification backpressure for future Core work; source nominal
+products cannot yet carry capabilities.
+
 ## Evidence boundary
 
-These are finite explorations of six handwritten abstract machines. The
+These are finite explorations of seven handwritten abstract machines. The
 two-task model does not include regions or references; the one-task model
 does not include handle fork. Neither models multiple queued messages or
 blocking/parking. The reply model does not cover multiple reply rights,

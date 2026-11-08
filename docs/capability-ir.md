@@ -69,6 +69,11 @@ result and must account for all unselected live paths through an explicit
 residual owner, close, or transfer. These rules are prerequisites for a
 first-class channel pair value and capability-bearing `Result`. The current
 source pair binding maps the two success parameters directly to names.
+The bounded two-field product model in `formal/product_capabilities.maude`
+checks intact transfer, rejection, reverse-order close, discard, and failure
+for two distinct rights. It does not model partial projection or prove Core
+implements these transitions; the nominal-field restriction stays in place
+until Core can assign and transfer slots for each leaf path.
 
 ## Operations and edges
 
