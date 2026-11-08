@@ -92,6 +92,14 @@ fn retained_poll_object_reuses_unrelated_edits_and_rebuilds_reachable_code() {
     let shifted = format!("fn unused() -> I64 = 9\n{source}");
     let shifted = core::lower(&syntax::parse(&shifted).unwrap()).unwrap();
     assert_eq!(session.build_executable(&shifted, &executable).unwrap(), 1);
+    for declaration in ["data Extra { A }", "data Extra { A, B }"] {
+        let with_data = format!("{declaration}\n{source}");
+        let with_data = core::lower(&syntax::parse(&with_data).unwrap()).unwrap();
+        assert_eq!(
+            session.build_executable(&with_data, &executable).unwrap(),
+            1
+        );
+    }
     let output = std::process::Command::new(&executable).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
@@ -122,6 +130,28 @@ fn retained_poll_object_reuses_unrelated_edits_and_rebuilds_reachable_code() {
     let output = std::process::Command::new(&executable).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"43\n");
+
+    let marker_source = format!(
+        "data Inner {{ A, B }}\ndata Marker {{ inner: Inner }}\n{}\nfn marker_value(marker: Marker) -> I64 = 0\n",
+        source.replace(
+            "sender.send(20)",
+            "sender.send(20 + marker_value(Marker(Inner.A)))"
+        )
+    );
+    let marker = core::lower(&syntax::parse(&marker_source).unwrap()).unwrap();
+    assert_eq!(session.build_executable(&marker, &executable).unwrap(), 0);
+    assert_eq!(session.build_executable(&marker, &executable).unwrap(), 1);
+    let changed_layout = marker_source.replace("Inner { A, B }", "Inner { A, C }");
+    let changed_layout = core::lower(&syntax::parse(&changed_layout).unwrap()).unwrap();
+    assert_eq!(
+        session
+            .build_executable(&changed_layout, &executable)
+            .unwrap(),
+        0
+    );
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
     std::fs::remove_file(executable).unwrap();
 }
 

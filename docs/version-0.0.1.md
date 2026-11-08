@@ -137,9 +137,9 @@ single-object emission. In-process retained poll objects now reuse exact
 reachable call and spawn
 closures after unrelated body edits or function insertions. Their keys ignore
 spans and normalize call targets to names; poll-local symbols use those names.
-A reachable helper or task change rebuilds the object. Unrelated nominal data
-insertions still invalidate it. The optional CLI `--cache-dir` persists a
-complete
+A reachable helper, task, or nominal layout change rebuilds the object.
+Unrelated nominal data changes can preserve it. The optional CLI `--cache-dir`
+persists a complete
 emitted object set for unchanged codegen inputs, ignoring source spans and
 unreachable pure leaf bodies, but still parses, verifies Core,
 lowers, and links each invocation. A changed program recompiles that set;

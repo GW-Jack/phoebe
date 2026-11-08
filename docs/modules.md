@@ -102,12 +102,12 @@ an injective encoding of the name, so inserting a private helper does not
 rename existing objects. The session compares existing signatures, runtime
 context needs, suspension flags, and frame facts before reuse. A changed
 retained child frame invalidates direct parents that could spawn it. A poll
-object can now be reused when its reachable call and spawn closure and all
-nominal layouts are unchanged; the exact key excludes source spans and
-normalizes call targets to qualified names. Poll-local symbols also derive
-from those names, so an unrelated function insertion can preserve the object.
-An unrelated nominal data insertion still invalidates it. These symbols are
-not a public ABI.
+object can now be reused when its reachable call and spawn closure and their
+transitively referenced nominal layouts are unchanged; the exact key excludes
+source spans and normalizes call targets to qualified names. Poll-local symbols also derive
+from those names, so unrelated function or nominal data insertions can
+preserve the object. A layout change to a referenced type invalidates it.
+These symbols are not a public ABI.
 
 The current CLI starts a fresh parse and Core session for each command.
 `phoebe build-session <project> -o <output>` exposes the in-process compiler

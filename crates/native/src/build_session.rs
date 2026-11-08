@@ -87,9 +87,14 @@ fn direct_function_key(program: &Program, index: usize, data_ids: &[core::DataId
 /// A poll object contains its retained callees, direct helpers, and spawn
 /// wrappers. Poll and direct linker names derive from qualified names, so
 /// unrelated function-ID shifts do not affect this key. Source spans do not
-/// affect code generation. Including all data layouts conservatively invalidates a
-/// poll object when even an unrelated nominal layout changes.
-fn poll_object_key(program: &Program, root: core::FunctionId, symbol: &str) -> String {
+/// affect code generation. Only layouts reachable from the emitted functions
+/// can affect their transport shapes or variant operations.
+fn poll_object_key(
+    program: &Program,
+    root: core::FunctionId,
+    symbol: &str,
+    data_ids: &[core::DataId],
+) -> String {
     let mut reachable = vec![false; program.functions.len()];
     let mut pending = vec![root];
     while let Some(id) = pending.pop() {
@@ -107,16 +112,55 @@ fn poll_object_key(program: &Program, root: core::FunctionId, symbol: &str) -> S
             }
         }
     }
-    let data_ids = (0..program.data.len())
-        .map(core::DataId)
-        .collect::<Vec<_>>();
-    let mut key = format!("{:?}", (symbol, &program.data));
+    let mut used_data = vec![false; program.data.len()];
+    let mut pending_data = Vec::new();
+    for (index, included) in reachable.iter().copied().enumerate() {
+        if !included {
+            continue;
+        }
+        let function = &program.functions[index];
+        for ty in function
+            .value_types
+            .iter()
+            .chain(&function.place_types)
+            .chain(std::iter::once(&function.return_type))
+        {
+            if let Type::Data(id) = ty {
+                pending_data.push(*id);
+            }
+        }
+    }
+    while let Some(id) = pending_data.pop() {
+        if std::mem::replace(&mut used_data[id.0], true) {
+            continue;
+        }
+        let data = &program.data[id.0];
+        for ty in data
+            .payloads
+            .iter()
+            .flatten()
+            .chain(data.fields.iter().map(|(_, ty)| ty))
+        {
+            if let Type::Data(nested) = ty {
+                pending_data.push(*nested);
+            }
+        }
+    }
+    let all_layouts = canonical_data_layouts(program, data_ids);
+    let layouts = program
+        .data
+        .iter()
+        .zip(used_data)
+        .filter(|(_, used)| *used)
+        .map(|(data, _)| (data.name.clone(), all_layouts[&data.name].clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut key = format!("{:?}", (symbol, layouts));
     for (index, included) in reachable.into_iter().enumerate() {
         if included {
             key.push_str(&format!(
                 "\n{}:{}",
                 program.functions[index].name,
-                direct_function_key(program, index, &data_ids)
+                direct_function_key(program, index, data_ids)
             ));
         }
     }
@@ -127,6 +171,7 @@ fn emit_cached_poll_object(
     program: &Program,
     name: &str,
     symbol: &str,
+    data_ids: &[core::DataId],
     cache: Option<&mut NativeBuildSession>,
 ) -> Result<(Vec<u8>, usize, bool), String> {
     let Some(session) = cache else {
@@ -134,7 +179,7 @@ fn emit_cached_poll_object(
         return Ok((object, words, false));
     };
     let (root, _) = program.function(name).ok_or("unknown poll entry")?;
-    let key = poll_object_key(program, root, symbol);
+    let key = poll_object_key(program, root, symbol, data_ids);
     if let Some((_, object, words)) = session
         .poll_objects
         .get(symbol)
@@ -181,6 +226,21 @@ pub(super) fn emit_object_with_poll_layout(
     if entry.return_type != Type::I64 {
         return Err("standalone `main` must return I64".into());
     }
+    let data_ids = if let Some(session) = cache.as_deref_mut() {
+        program
+            .data
+            .iter()
+            .map(|data| {
+                let next = core::DataId(session.stable_data_ids.len());
+                *session
+                    .stable_data_ids
+                    .entry(data.name.clone())
+                    .or_insert(next)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        (0..program.data.len()).map(core::DataId).collect()
+    };
     let suspendable = frame_layout::suspendable_functions(program)?;
     if suspendable[main.0] {
         if let Some(session) = cache.as_deref_mut() {
@@ -188,8 +248,13 @@ pub(super) fn emit_object_with_poll_layout(
                 .poll_objects
                 .retain(|symbol, _| symbol == "phoebe_main_poll");
         }
-        let (object, words, reused) =
-            emit_cached_poll_object(program, "main", "phoebe_main_poll", cache.as_deref_mut())?;
+        let (object, words, reused) = emit_cached_poll_object(
+            program,
+            "main",
+            "phoebe_main_poll",
+            &data_ids,
+            cache.as_deref_mut(),
+        )?;
         return Ok((
             ObjectEmission {
                 root: object,
@@ -218,6 +283,7 @@ pub(super) fn emit_object_with_poll_layout(
             program,
             name,
             &spawn_poll_symbol(name),
+            &data_ids,
             cache.as_deref_mut(),
         )?;
         reused_poll += usize::from(reused);
@@ -253,21 +319,6 @@ pub(super) fn emit_object_with_poll_layout(
             0,
         ));
     }
-    let data_ids = if let Some(session) = cache.as_deref_mut() {
-        program
-            .data
-            .iter()
-            .map(|data| {
-                let next = core::DataId(session.stable_data_ids.len());
-                *session
-                    .stable_data_ids
-                    .entry(data.name.clone())
-                    .or_insert(next)
-            })
-            .collect::<Vec<_>>()
-    } else {
-        (0..program.data.len()).map(core::DataId).collect()
-    };
     let data_layouts = canonical_data_layouts(program, &data_ids);
     let mut frame_facts = vec![None; program.functions.len()];
     for frame in frame_layout::analyze(program)? {
