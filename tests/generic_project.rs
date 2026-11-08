@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use phoebe::runtime::ScopeLimits;
 use phoebe::{ProjectBuildSession, ProjectCompilerSession, core, native, project, syntax};
 
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
@@ -357,6 +358,18 @@ fn direct_root_spawns_a_retained_generic_child() {
     let linked = core::lower_linked_checked(&ast).unwrap();
     assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run_linked(&linked, "main", &[]).unwrap(), 42);
+    let limited = ScopeLimits {
+        tasks: 1,
+        ..ScopeLimits::default()
+    };
+    assert_eq!(
+        linked.interpret_with_limits("main", &[], limited).unwrap(),
+        0
+    );
+    assert_eq!(
+        native::run_linked_with_limits(&linked, "main", &[], limited).unwrap(),
+        0
+    );
     let path = temp_generic_project();
     let executable = path.join("spawned");
     native::build_executable_linked(&linked, &executable).unwrap();
@@ -410,6 +423,18 @@ fn channel_exchange_calls_generic_after_park_and_wake() {
     let linked = core::lower_linked_checked(&ast).unwrap();
     assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run_linked(&linked, "main", &[]).unwrap(), 42);
+    let limited = ScopeLimits {
+        tasks: 1,
+        ..ScopeLimits::default()
+    };
+    assert_eq!(
+        linked.interpret_with_limits("main", &[], limited).unwrap(),
+        0
+    );
+    assert_eq!(
+        native::run_linked_with_limits(&linked, "main", &[], limited).unwrap(),
+        0
+    );
     let path = temp_generic_project();
     let executable = path.join("exchange");
     native::build_executable_linked(&linked, &executable).unwrap();

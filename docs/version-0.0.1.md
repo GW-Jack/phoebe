@@ -108,7 +108,9 @@ Single-shot projects resolve public generic calls across modules for `check`,
 `build-session`, reusing checked concrete bodies and an exact linked object set;
 one-shot `build --cache-dir` persists that object set across processes.
 Generic calls in retained tasks and spawned poll children run in JIT and
-standalone code. Generic bodies themselves cannot suspend, and per-function
+standalone code. Linked interpreter and native runs accept the same explicit
+scope limits; tests compare task-limit rejection in direct and retained
+generic callers. Generic bodies themselves cannot suspend, and per-function
 linked object reuse remains open.
 The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`

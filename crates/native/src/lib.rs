@@ -430,19 +430,24 @@ pub fn run_linked(
     name: &str,
     args: &[i64],
 ) -> Result<i64, String> {
+    run_linked_with_limits(linked, name, args, ScopeLimits::default())
+}
+
+pub fn run_linked_with_limits(
+    linked: &core::CheckedLinkedProgram,
+    name: &str,
+    args: &[i64],
+    limits: ScopeLimits,
+) -> Result<i64, String> {
     let program = linked.program();
     let (id, function) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
     if !frame_layout::suspendable_functions_linked(linked)[id.0] {
-        return compile_jit_linked(linked, name)?.run(args);
+        return compile_jit_linked(linked, name)?.run_with_limits(args, limits);
     }
     check_poll_entry(function, name, args)?;
-    run_poll_executable(
-        poll::compile_poll_jit_linked(linked, name)?,
-        args,
-        ScopeLimits::default(),
-    )
+    run_poll_executable(poll::compile_poll_jit_linked(linked, name)?, args, limits)
 }
 
 pub fn run_checked_with_limits(
