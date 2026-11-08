@@ -35,7 +35,8 @@ proposed proof boundary and its limits.
 
 These are logical events, not exact counts of memory instructions. A
 `copy.value` may be carried entirely in registers. The current executable
-compiler emits this event for explicit nominal copies and emits `task.yield`
+compiler emits this event for explicit nominal copies, `task.create` for
+source `spawn`, and `task.yield`
 for explicit yields and automatic loop checkpoints. Its static site ledger is available with
 `phoebe cost <file>`; it does not count dynamic executions.
 A `storage.grow` may reuse a reserved task-local page without an OS allocation.
@@ -120,8 +121,8 @@ operation and is necessary under the initial task-local ownership model.
 ## 4. Verification path
 
 The executable compiler emits a tab-separated static cost-site ledger on
-demand with `phoebe cost <file>`. It currently records `copy.value` and
-`task.yield`, with a distinct reason for an automatic loop checkpoint.
+demand with `phoebe cost <file>`. It currently records `copy.value`,
+`task.create`, and `task.yield`, with a distinct reason for an automatic loop checkpoint.
 The development compiler should extend it to the remaining event kinds.
 Acceptance tests compare it with these fixtures. An IR verifier checks
 provenance and forbidden operations in tests and debug builds. Proofs of core

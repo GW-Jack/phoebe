@@ -1154,6 +1154,7 @@ fn compile_poll_module<M: Module>(
                         args,
                         success,
                         failure,
+                        ..
                     } => {
                         let child_layout = layouts[child.0]
                             .as_ref()

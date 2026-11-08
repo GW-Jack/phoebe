@@ -443,6 +443,7 @@ impl<'a> Lowerer<'a> {
                         args: values,
                         success,
                         failure,
+                        span: *span,
                     });
                     self.current = failure;
                     let failed = self.emit(

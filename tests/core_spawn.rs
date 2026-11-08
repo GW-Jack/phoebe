@@ -54,6 +54,7 @@ fn two_task_program() -> Program {
                             args: vec![ValueId(1)],
                             success: BlockId(3),
                             failure: BlockId(4),
+                            span: Span { start: 0, end: 0 },
                         },
                     },
                     Block {
@@ -239,6 +240,7 @@ fn closed_nominal_argument_moves_only_if_spawn_commits() {
                             args: vec![ValueId(0)],
                             success: BlockId(1),
                             failure: BlockId(2),
+                            span: Span { start: 0, end: 0 },
                         },
                     },
                     Block {

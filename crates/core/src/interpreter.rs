@@ -42,6 +42,17 @@ impl Program {
                         },
                     });
                 }
+                if let Terminator::Spawn { span, .. } = block.terminator {
+                    events.push(CostEvent {
+                        function: function.name.clone(),
+                        block: block_id,
+                        instruction: block.instructions.len(),
+                        span,
+                        kind: "task.create",
+                        type_name: "Task".into(),
+                        reason: "explicit spawn",
+                    });
+                }
             }
         }
         events
@@ -644,6 +655,7 @@ impl CoreTask {
                     args,
                     success,
                     failure,
+                    ..
                 } => {
                     let child_values = args
                         .into_iter()
@@ -990,6 +1002,7 @@ impl fmt::Display for Program {
                         args,
                         success,
                         failure,
+                        ..
                     } => {
                         write!(f, "    spawn {}(", self.functions[child.0].name)?;
                         for (index, arg) in args.iter().enumerate() {

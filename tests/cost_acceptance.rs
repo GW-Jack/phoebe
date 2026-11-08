@@ -20,6 +20,28 @@ fn scalar_identity_has_no_phoebe_cost_or_backend_runtime_work() {
 }
 
 #[test]
+fn each_source_spawn_has_one_attributed_task_creation_site() {
+    let source = include_str!("../examples/spawn_pair.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let events = program
+        .cost_events()
+        .into_iter()
+        .filter(|event| event.kind == "task.create")
+        .collect::<Vec<_>>();
+    let sites = source
+        .match_indices("spawn ")
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), sites.len());
+    for (event, site) in events.iter().zip(sites) {
+        assert_eq!(event.function, "start");
+        assert_eq!(event.span.start, site);
+        assert_eq!(event.reason, "explicit spawn");
+        assert_eq!(event.type_name, "Task");
+    }
+}
+
+#[test]
 fn unreachable_channel_code_does_not_change_main_native_abi() {
     let source = r#"
 fn unused() -> Result<I64, ResourceError> {

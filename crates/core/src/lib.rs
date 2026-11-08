@@ -241,6 +241,7 @@ pub enum Terminator {
         args: Vec<ValueId>,
         success: BlockId,
         failure: BlockId,
+        span: Span,
     },
 }
 

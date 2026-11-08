@@ -1218,6 +1218,7 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
                     args,
                     success,
                     failure,
+                    ..
                 } => {
                     let callee = program
                         .functions

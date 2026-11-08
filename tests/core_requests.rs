@@ -533,6 +533,7 @@ fn request_service_parks_then_completes_parent_reply() {
                     args: vec![ValueId(2)],
                     success: BlockId(5),
                     failure: BlockId(6),
+                    span: Span { start: 0, end: 0 },
                 },
             ),
             block(

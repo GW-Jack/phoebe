@@ -318,6 +318,7 @@ fn spawned_reply() -> Program {
                             args: vec![ValueId(0)],
                             success: BlockId(3),
                             failure: BlockId(4),
+                            span: Span { start: 0, end: 0 },
                         },
                     },
                     Block {

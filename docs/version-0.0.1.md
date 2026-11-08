@@ -49,6 +49,8 @@ owning uses and nominal field projections consume them; primitive product
 field reads preserve them. CFG joins reject later reuse when any incoming path
 has moved the owner. `copy(x)` makes
 an explicit independent nominal copy and records a `copy.value` cost site.
+Source `spawn` records a `task.create` cost site with its source span; this
+ledger identifies static sites rather than counting successful creations.
 Recursion is rejected until task stacks have safe growth limits. Arithmetic
 wraps at 64 bits in both interpreter and native execution. `phoebe check`,
 `phoebe ir`, `phoebe cost`, `phoebe run`, and

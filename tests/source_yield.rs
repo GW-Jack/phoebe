@@ -7,7 +7,11 @@ fn source_yield_resumes_with_mutable_state_in_all_backends() {
     let source = include_str!("../examples/yield_loop.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
     assert!(program.to_string().contains("yield resume"));
-    let sites = program.cost_events();
+    let sites = program
+        .cost_events()
+        .into_iter()
+        .filter(|event| event.kind == "task.yield")
+        .collect::<Vec<_>>();
     assert_eq!(sites.len(), 1);
     assert_eq!(sites[0].kind, "task.yield");
     assert_eq!(sites[0].reason, "explicit");
@@ -58,7 +62,11 @@ fn main() -> I64 {
 }
 "#;
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
-    let sites = program.cost_events();
+    let sites = program
+        .cost_events()
+        .into_iter()
+        .filter(|event| event.kind == "task.yield")
+        .collect::<Vec<_>>();
     assert!(program.to_string().contains("yield.auto resume"));
     assert_eq!(sites.len(), 1);
     assert_eq!(sites[0].kind, "task.yield");
@@ -106,7 +114,12 @@ fn single_task_loop_keeps_direct_native_path() {
         "{source}\nfn worker() -> I64 = 0\nfn unused() -> Result<I64, ResourceError> {{ spawn worker()?; Result<I64, ResourceError>.Ok(0) }}\n"
     );
     let program = core::lower(&syntax::parse(&unrelated_spawn).unwrap()).unwrap();
-    assert!(program.cost_events().is_empty());
+    assert!(
+        program
+            .cost_events()
+            .iter()
+            .all(|event| event.kind != "task.yield")
+    );
     assert!(!program.runtime_context_functions()[program.function("main").unwrap().0.0]);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 45);
 }

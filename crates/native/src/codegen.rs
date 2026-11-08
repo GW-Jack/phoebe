@@ -878,6 +878,7 @@ pub(super) fn compile_functions<M: Module>(
                         args,
                         success,
                         failure,
+                        ..
                     } => {
                         let (_, _, spawn, _) = runtime_imports.expect("spawn runtime import");
                         let entry = spawn_wrappers[child.0]
