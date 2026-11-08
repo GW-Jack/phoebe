@@ -595,6 +595,11 @@ pub fn build_executable_linked(
     linked: &core::CheckedLinkedProgram,
     output: &Path,
 ) -> Result<(), String> {
+    let emitted = emit_object_linked(linked)?;
+    link_executable(linked.program(), &emitted, output)
+}
+
+fn emit_object_linked(linked: &core::CheckedLinkedProgram) -> Result<ObjectEmission, String> {
     let program = linked.program();
     let (main, entry) = program
         .function("main")
@@ -637,15 +642,11 @@ pub fn build_executable_linked(
         Some(&direct),
         Some(&targets),
     )?;
-    link_executable(
-        program,
-        &ObjectEmission {
-            root: module.finish().emit().map_err(|error| error.to_string())?,
-            poll_words: None,
-            children: Vec::new(),
-        },
-        output,
-    )
+    Ok(ObjectEmission {
+        root: module.finish().emit().map_err(|error| error.to_string())?,
+        poll_words: None,
+        children: Vec::new(),
+    })
 }
 
 fn build_executable_verified(

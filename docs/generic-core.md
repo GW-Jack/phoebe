@@ -129,8 +129,10 @@ copy instruction. Non-suspending concrete source calls now use these planned
 instances in the same JIT module or standalone object. Project qualification
 allows public generic calls across imported modules; incremental project
 compiler sessions now reuse checked concrete bodies across edits, remapping
-generic callee and nominal type IDs. Incremental native object emission and a
-persistent object cache key for linked programs remain open. The current IR has no
+generic callee and nominal type IDs. `build-session` reuses an exact linked
+native object on warm generic project builds and skips relinking an intact
+output. Per-function linked object reuse and a persistent object cache key
+remain open. The current IR has no
 suspension, hidden runtime context, or dictionary
 operations; adding any of them requires extending the sharing key and its
 soundness argument before emission.

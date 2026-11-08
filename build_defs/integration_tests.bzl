@@ -31,6 +31,10 @@ def integration_tests(rust_test):
             "examples/multi_module/phoebe.toml",
             "examples/multi_module/app.phoebe",
             "examples/multi_module/math.phoebe",
+            "examples/generic_project/phoebe.toml",
+            "examples/generic_project/app.phoebe",
+            "examples/generic_project/math.phoebe",
+            "examples/generic_project/base.phoebe",
         ],
         edition = "2024",
         env = {

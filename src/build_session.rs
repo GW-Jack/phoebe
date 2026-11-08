@@ -2,7 +2,10 @@
 
 use std::path::Path;
 
-use crate::{ProjectCompilerSession, native, project_session::CompileReport};
+use crate::{
+    ProjectCompilerSession, native,
+    project_session::{CompileReport, CompiledProject},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BuildReport {
@@ -23,8 +26,15 @@ impl ProjectBuildSession {
     }
 
     pub fn build(&mut self, project: &Path, output: &Path) -> Result<BuildReport, String> {
-        let (program, compile) = self.compiler.compile(project)?;
-        let native = self.native.build_executable_report(&program, output)?;
+        let (program, compile) = self.compiler.compile_for_build(project)?;
+        let native = match program {
+            CompiledProject::Concrete(program) => {
+                self.native.build_executable_report(&program, output)?
+            }
+            CompiledProject::Linked(program) => self
+                .native
+                .build_executable_linked_report(&program, output)?,
+        };
         Ok(BuildReport {
             compile,
             reused_native_objects: native.reused_objects,

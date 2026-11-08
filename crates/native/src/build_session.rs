@@ -15,8 +15,8 @@ use phoebe_frame as frame_layout;
 use sha2::{Digest, Sha256};
 
 use super::{
-    ObjectEmission, compile_functions, find_runtime_archive, link_executable, poll,
-    spawn_poll_symbol,
+    ObjectEmission, compile_functions, emit_object_linked, find_runtime_archive, link_executable,
+    poll, spawn_poll_symbol,
 };
 use crate::reachability::{spawned_poll_children_in, standalone_direct_functions};
 
@@ -27,6 +27,7 @@ pub struct NativeBuildSession {
     facts: BTreeMap<String, String>,
     objects: BTreeMap<String, (String, Vec<u8>)>,
     poll_objects: BTreeMap<String, (String, Vec<u8>, usize)>,
+    linked_object: Option<([u8; 32], Vec<u8>)>,
     linked_output: Option<LinkedOutput>,
 }
 
@@ -330,6 +331,45 @@ impl NativeBuildSession {
         let mut next = self.clone();
         let verified = core::VerifiedProgram::check(program)?;
         let (emitted, reused) = emit_object_with_poll_layout(verified, true, Some(&mut next))?;
+        self.link_or_reuse(next, program, emitted, output, reused)
+    }
+
+    /// Linked generic programs currently emit one object. Reuse that object
+    /// only for the exact checked IR and skip linking only for an intact output.
+    pub fn build_executable_linked_report(
+        &mut self,
+        linked: &core::CheckedLinkedProgram,
+        output: &Path,
+    ) -> Result<NativeBuildReport, String> {
+        let mut hash = Sha256::new();
+        hash.update(b"PHOEBE-LINKED-OBJECT\0\x01");
+        hash.update(std::env::consts::OS);
+        hash.update(std::env::consts::ARCH);
+        hash.update(format!("{:?}", linked.program()));
+        hash.update(format!("{:?}", linked.generics().as_module()));
+        let key: [u8; 32] = hash.finalize().into();
+        let mut next = self.clone();
+        let (object, reused) = match &self.linked_object {
+            Some((cached_key, object)) if *cached_key == key => (object.clone(), 1),
+            _ => (emit_object_linked(linked)?.root, 0),
+        };
+        next.linked_object = Some((key, object.clone()));
+        let emitted = ObjectEmission {
+            root: object,
+            poll_words: None,
+            children: Vec::new(),
+        };
+        self.link_or_reuse(next, linked.program(), emitted, output, reused)
+    }
+
+    fn link_or_reuse(
+        &mut self,
+        mut next: Self,
+        program: &Program,
+        emitted: ObjectEmission,
+        output: &Path,
+        reused: usize,
+    ) -> Result<NativeBuildReport, String> {
         let input_digest = link_input_digest(program, &emitted);
         if let (Some(input_digest), Some(previous)) = (input_digest, &self.linked_output)
             && previous.path == output

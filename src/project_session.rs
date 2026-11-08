@@ -18,6 +18,11 @@ struct FunctionSource {
     start: usize,
 }
 
+pub(crate) enum CompiledProject {
+    Concrete(Arc<core::Program>),
+    Linked(Arc<core::CheckedLinkedProgram>),
+}
+
 #[derive(Default)]
 pub struct ProjectCompilerSession {
     project: project::ProjectSession,
@@ -35,7 +40,22 @@ impl ProjectCompilerSession {
     pub fn compile(&mut self, path: &Path) -> Result<(Arc<core::Program>, CompileReport), String> {
         // Publish both caches only after the new combined Core passes all
         // verifiers. A failed edit cannot become a future cache hit.
-        let (next_project, loaded, load, current, reusable, deltas) = self.prepare(path)?;
+        let prepared = self.prepare(path)?;
+        self.compile_prepared(prepared)
+    }
+
+    fn compile_prepared(
+        &mut self,
+        prepared: PreparedProject,
+    ) -> Result<(Arc<core::Program>, CompileReport), String> {
+        let PreparedProject {
+            project: next_project,
+            loaded,
+            load,
+            functions: current,
+            reusable,
+            deltas,
+        } = prepared;
         let (program, reused_core_functions) = if let (Some(previous_ast), Some(previous)) =
             (&self.previous_ast, &self.previous_core)
         {
@@ -66,7 +86,22 @@ impl ProjectCompilerSession {
         &mut self,
         path: &Path,
     ) -> Result<(Arc<core::CheckedLinkedProgram>, CompileReport), String> {
-        let (next_project, loaded, load, current, reusable, deltas) = self.prepare(path)?;
+        let prepared = self.prepare(path)?;
+        self.compile_linked_prepared(prepared)
+    }
+
+    fn compile_linked_prepared(
+        &mut self,
+        prepared: PreparedProject,
+    ) -> Result<(Arc<core::CheckedLinkedProgram>, CompileReport), String> {
+        let PreparedProject {
+            project: next_project,
+            loaded,
+            load,
+            functions: current,
+            reusable,
+            deltas,
+        } = prepared;
         let (program, reused_core_functions) = if let (Some(previous_ast), Some(previous)) =
             (&self.previous_ast, &self.previous_linked)
         {
@@ -91,6 +126,26 @@ impl ProjectCompilerSession {
                 reused_core_functions,
             },
         ))
+    }
+
+    pub(crate) fn compile_for_build(
+        &mut self,
+        path: &Path,
+    ) -> Result<(CompiledProject, CompileReport), String> {
+        let prepared = self.prepare(path)?;
+        if prepared
+            .loaded
+            .ast
+            .functions
+            .iter()
+            .any(|function| !function.type_params.is_empty())
+        {
+            let (program, report) = self.compile_linked_prepared(prepared)?;
+            Ok((CompiledProject::Linked(program), report))
+        } else {
+            let (program, report) = self.compile_prepared(prepared)?;
+            Ok((CompiledProject::Concrete(program), report))
+        }
     }
 
     fn prepare(&self, path: &Path) -> Result<PreparedProject, String> {
@@ -131,15 +186,22 @@ impl ProjectCompilerSession {
                 }
             })
             .unzip();
-        Ok((next_project, loaded, load, current, reusable, deltas))
+        Ok(PreparedProject {
+            project: next_project,
+            loaded,
+            load,
+            functions: current,
+            reusable,
+            deltas,
+        })
     }
 }
 
-type PreparedProject = (
-    project::ProjectSession,
-    project::Loaded,
-    project::LoadReport,
-    Vec<FunctionSource>,
-    Vec<bool>,
-    Vec<isize>,
-);
+struct PreparedProject {
+    project: project::ProjectSession,
+    loaded: project::Loaded,
+    load: project::LoadReport,
+    functions: Vec<FunctionSource>,
+    reusable: Vec<bool>,
+    deltas: Vec<isize>,
+}

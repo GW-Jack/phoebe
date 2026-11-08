@@ -104,7 +104,10 @@ failed source edit prints an error and leaves the last linked executable in
 place. This is a trigger-driven local session; it does not watch files or
 persist typed interfaces across compiler processes. Retained poll objects can
 also be reused when their reachable code and data layouts are unchanged. The
-separate `--cache-dir` mode of one-shot
+non-suspending generic project path reuses checked concrete bodies and an
+exact linked object on a warm build. Its object is currently emitted as one
+unit, so a source edit can rebuild more code than necessary. The separate
+`--cache-dir` mode of one-shot
 `build` persists exact-program native objects across processes.
 
 `third-party/rust/Cargo.toml` and its lockfile pin third-party Rust versions.
