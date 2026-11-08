@@ -2,6 +2,7 @@ use super::*;
 
 mod capability;
 pub(crate) mod capability_layout;
+mod dominators;
 mod lexical_loans;
 mod operations;
 mod structure;

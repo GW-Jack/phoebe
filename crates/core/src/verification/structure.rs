@@ -1,5 +1,6 @@
 //! Core structural, dominance, call, and loan-region checks.
 
+use super::dominators::Dominators;
 use super::*;
 
 /// Recover a source call site from a cycle after structural verification has
@@ -399,24 +400,7 @@ pub(crate) fn verify_structure(
         if reachable.iter().any(|yes| !yes) {
             return Err(format!("{}: unreachable block", function.name));
         }
-        let all = (0..function.blocks.len()).collect::<std::collections::HashSet<_>>();
-        let mut dominators = vec![all.clone(); function.blocks.len()];
-        dominators[0] = std::collections::HashSet::from([0]);
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for id in 1..function.blocks.len() {
-                let mut next = all.clone();
-                for predecessor in &predecessors[id] {
-                    next.retain(|candidate| dominators[*predecessor].contains(candidate));
-                }
-                next.insert(id);
-                if next != dominators[id] {
-                    dominators[id] = next;
-                    changed = true;
-                }
-            }
-        }
+        let dominators = Dominators::new(&successors, &predecessors);
         let check_use =
             |value: ValueId, block_id: usize, instruction_index: usize| -> Result<(), String> {
                 let (def_block, def_index) = definitions
@@ -427,7 +411,7 @@ pub(crate) fn verify_structure(
                     if def_index.is_some_and(|index| index >= instruction_index) {
                         return Err(format!("{}: use before definition", function.name));
                     }
-                } else if !dominators[block_id].contains(&def_block) {
+                } else if !dominators.dominates(def_block, block_id) {
                     return Err(format!("{}: non-dominating value use", function.name));
                 }
                 Ok(())
@@ -445,7 +429,7 @@ pub(crate) fn verify_structure(
                         function.name
                     ));
                 }
-            } else if !dominators[block_id].contains(&init_block) {
+            } else if !dominators.dominates(init_block, block_id) {
                 return Err(format!(
                     "{}: non-dominating place initialization",
                     function.name

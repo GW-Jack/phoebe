@@ -96,7 +96,15 @@ transition rules and their evidence boundary.
 The structural verifier checks unique SSA definitions, operand dominance,
 block reachability, parameter, call, and return types, branch targets, call modes,
 one dominating initializer per place, and the restricted borrow rules in
-`call-borrows.md`. A borrowed call also has a `LoanRegion` record naming its
+`call-borrows.md`.
+The dominance pass computes immediate dominators in reverse postorder and
+numbers the resulting tree for constant-time value and place dominance
+queries. A generated-graph regression compares those answers against an
+independent set-intersection reference, including backedges. This removes
+the full dominator set stored per block; it is bounded test evidence, not a
+proof of the algorithm or verifier.
+
+A borrowed call also has a `LoanRegion` record naming its
 call instruction, place or forwarded-reference roots, and the call
 return/unwind end. The verifier requires exactly one matching record for each
 borrowed call. Frame analysis checks that a place root remains in the parent
