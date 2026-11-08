@@ -137,6 +137,11 @@ fn recursion_is_rejected_until_task_stacks_are_guarded() {
     let source = "fn f(x: I64) -> I64 = g(x) fn g(x: I64) -> I64 = f(x)";
     let error = core::lower(&syntax::parse(source).unwrap()).unwrap_err();
     assert!(error.message.contains("recursive call cycle"));
+    assert_eq!(&source[error.span.start..error.span.end], "f(x)");
+    assert_eq!(
+        error.render(source),
+        "1:50: recursive call cycle is not yet supported"
+    );
 }
 
 #[test]

@@ -7,7 +7,7 @@ mod structure;
 pub(crate) use capability::{capability_graph, verify_capability_edges};
 use operations::op_type;
 pub use operations::operands;
-pub(crate) use structure::verify_structure;
+pub(crate) use structure::{recursive_call_span, verify_structure};
 
 #[derive(Clone, PartialEq, Eq)]
 struct OwnershipState {

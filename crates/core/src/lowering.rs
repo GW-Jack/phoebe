@@ -464,8 +464,14 @@ fn lower_internal(
         data,
         functions: lowered,
     };
-    verify_structure(&program)
-        .map_err(|message| Diagnostic::new(Span { start: 0, end: 0 }, message))?;
+    verify_structure(&program).map_err(|message| {
+        let span = if message == "recursive call cycle is not yet supported" {
+            recursive_call_span(&program).unwrap_or(Span { start: 0, end: 0 })
+        } else {
+            Span { start: 0, end: 0 }
+        };
+        Diagnostic::new(span, message)
+    })?;
     verify_ownership(&program).map_err(|error| Diagnostic::new(error.span, error.message))?;
     // A single abstract flow pass decides lexical closes in control-flow
     // order. Provisional closes alter the abstract state, so nested aliases

@@ -2,6 +2,52 @@
 
 use super::*;
 
+/// Recover a source call site from a cycle after structural verification has
+/// reported recursion. This runs only on the diagnostic path.
+pub(crate) fn recursive_call_span(program: &Program) -> Option<Span> {
+    let edges = program
+        .functions
+        .iter()
+        .map(|function| {
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .filter_map(|instruction| match instruction.operation {
+                    Operation::Call(target, _) => Some((target.0, instruction.span)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut state = vec![0u8; edges.len()];
+    for start in 0..edges.len() {
+        if state[start] != 0 {
+            continue;
+        }
+        state[start] = 1;
+        let mut stack = vec![(start, 0usize)];
+        while let Some((node, next)) = stack.last_mut() {
+            if *next == edges[*node].len() {
+                state[*node] = 2;
+                stack.pop();
+                continue;
+            }
+            let (target, span) = edges[*node][*next];
+            *next += 1;
+            match state[target] {
+                1 => return Some(span),
+                0 => {
+                    state[target] = 1;
+                    stack.push((target, 0));
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 fn verify_loan_regions(function: &Function) -> Result<(), String> {
     let mut expected = Vec::new();
     for (block_id, block) in function.blocks.iter().enumerate() {

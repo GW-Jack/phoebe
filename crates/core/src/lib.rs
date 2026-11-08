@@ -340,5 +340,8 @@ mod scope_verification;
 mod verification;
 
 pub use lowering::{lower, lower_reusing};
-use verification::{capability_graph, verify_capability_edges, verify_ownership, verify_structure};
+use verification::{
+    capability_graph, recursive_call_span, verify_capability_edges, verify_ownership,
+    verify_structure,
+};
 pub use verification::{operands, verify};

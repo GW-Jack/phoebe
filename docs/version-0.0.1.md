@@ -42,7 +42,8 @@ It supports up to four owned parameters (I64 borrows only), `val` and
 `var` bindings, assignment, `while`, integer and boolean literals, unary
 numeric negation, Boolean `!`, `+`, `-`, `*`, `==`, `!=`, `<`, `<=`, `>`, `>=`,
 short-circuit `&&` and `||`, `if` expressions with block arms, exhaustive `when` expressions,
-acyclic direct calls, call-site `&I64` and `&mut I64`
+acyclic direct calls (a recursive cycle is diagnosed at a participating call
+site), call-site `&I64` and `&mut I64`
 arguments, `?` on concrete built-in `Result<T, E>` applications with
 primitive, existing nominal, or finite `Option`/`Result` payloads and the same
 error type as the enclosing function's `Result<U, E>`, and a matching tail expression.
