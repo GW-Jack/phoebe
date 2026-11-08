@@ -95,8 +95,13 @@ cancels every remaining task in the scope before another task poll. The first
 failure is reported to the host; cancellation closes siblings' capabilities
 and discards queued messages whose final receiver closes. A root waiting on
 its own still-open sender therefore cannot mask a child fault as a deadlock.
-Detected scope deadlock also closes all task-owned capabilities. The root
-can join successful children; a child fault fails the scope immediately.
+Detected scope deadlock also closes all task-owned capabilities. A task can
+join its entire descendant tree while unrelated sibling tasks remain active;
+the root joins all tasks. Spawn records each child's parent, and completion
+wakes a joiner only after its descendants have finished. A child fault still
+fails the whole scope immediately. The source language does not yet expose
+lexical nested task scopes, and task completion without an explicit join still
+leaves its descendants under the root scope.
 The optional `Scheduler::verify` scans handle counts, queue bounds, reply
 owners, message shapes, and waiter registrations in tests; ordinary polling
 does not run that scan.

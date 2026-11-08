@@ -131,6 +131,9 @@ queued request discard, cancellation, close, failure cleanup, and deadlock
 cleanup. Recoverable runtime calls return the original frame or request on
 pre-commit failure. Checked Core and source lowering use this kernel for
 channel operations and task creation in the interpreter.
+Each spawned task now records its parent. The Rust runtime lets any task join
+its descendant tree without waiting for unrelated siblings; the root joins
+all tasks. Source-level lexical nested task scopes remain open.
 The Rust spawn path now atomically transfers channel handles and either reply
 capability to a child. Native reply and typed spawn shims are exercised by
 synthetic poll frames, including a receiver that parks and wakes across tasks

@@ -390,6 +390,7 @@ enum TaskState {
 struct TaskRecord {
     body: Option<Box<dyn Task>>,
     state: TaskState,
+    parent: Option<TaskId>,
 }
 
 pub struct Scheduler {
@@ -455,6 +456,7 @@ impl Scheduler {
         tasks.push(TaskRecord {
             body: Some(root),
             state: TaskState::Runnable,
+            parent: None,
         });
         ready.push_back(TaskId(0));
         Ok(Self {
@@ -606,6 +608,13 @@ impl Scheduler {
             }
         }
         for (index, task) in self.tasks.iter().enumerate() {
+            if index == 0 {
+                if task.parent.is_some() {
+                    return Err("root task has a parent".into());
+                }
+            } else if !task.parent.is_some_and(|parent| parent.0 < index) {
+                return Err(format!("task {index} lacks an earlier parent"));
+            }
             let waiters = match task.state {
                 TaskState::Waiting(Wait::Send(channel)) => {
                     self.channels.get(channel).map(|item| &item.send_waiters)
@@ -617,8 +626,8 @@ impl Scheduler {
                     self.reply_slots.get(slot).map(|item| &item.waiters)
                 }
                 TaskState::Waiting(Wait::Join) => {
-                    if index != 0 {
-                        return Err("non-root task waits for scope join".into());
+                    if !self.has_live_descendants(TaskId(index)) {
+                        return Err(format!("task {index} waits for completed descendants"));
                     }
                     continue;
                 }
@@ -718,19 +727,32 @@ impl Scheduler {
         Ok(())
     }
 
+    fn is_descendant(&self, task: TaskId, ancestor: TaskId) -> bool {
+        let mut parent = self.tasks[task.0].parent;
+        while let Some(id) = parent {
+            if id == ancestor {
+                return true;
+            }
+            parent = self.tasks[id.0].parent;
+        }
+        false
+    }
+
+    fn has_live_descendants(&self, ancestor: TaskId) -> bool {
+        self.tasks.iter().enumerate().any(|(index, task)| {
+            self.is_descendant(TaskId(index), ancestor)
+                && !matches!(task.state, TaskState::Done(_) | TaskState::Failed(_))
+        })
+    }
+
     fn wake_joiners(&mut self) {
-        if self.tasks.iter().all(|task| {
-            matches!(
-                task.state,
-                TaskState::Done(_) | TaskState::Failed(_) | TaskState::Waiting(Wait::Join)
-            )
-        }) {
-            for index in 0..self.tasks.len() {
-                if matches!(self.tasks[index].state, TaskState::Waiting(Wait::Join)) {
-                    self.tasks[index].state = TaskState::Runnable;
-                    self.ready.push_back(TaskId(index));
-                    self.stats.wakes += 1;
-                }
+        for index in 0..self.tasks.len() {
+            if matches!(self.tasks[index].state, TaskState::Waiting(Wait::Join))
+                && !self.has_live_descendants(TaskId(index))
+            {
+                self.tasks[index].state = TaskState::Runnable;
+                self.ready.push_back(TaskId(index));
+                self.stats.wakes += 1;
             }
         }
     }
@@ -1417,6 +1439,7 @@ impl Context<'_> {
         self.scheduler.tasks.push(TaskRecord {
             body: Some(child),
             state: TaskState::Runnable,
+            parent: Some(self.task),
         });
         for transfer in transfers {
             match transfer {
@@ -1515,19 +1538,7 @@ impl Context<'_> {
     }
 
     pub fn join(&mut self) -> Result<Poll<()>, String> {
-        if self.task != TaskId(0) {
-            return Err("only the scope root may join this runtime slice".into());
-        }
-        if self
-            .scheduler
-            .tasks
-            .iter()
-            .enumerate()
-            .all(|(index, task)| {
-                index == self.task.0
-                    || matches!(task.state, TaskState::Done(_) | TaskState::Failed(_))
-            })
-        {
+        if !self.scheduler.has_live_descendants(self.task) {
             Ok(Poll::Ready(()))
         } else {
             if self.wait.is_some() {

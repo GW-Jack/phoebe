@@ -429,3 +429,117 @@ fn cooperative_yields_keep_task_runnable_and_join_wakes_root() {
     assert_eq!(scheduler.stats().parks, 1);
     scheduler.verify().unwrap();
 }
+
+struct JoiningChild {
+    sibling: TaskId,
+    grandchild: Option<TaskId>,
+}
+
+impl Task for JoiningChild {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        if self.grandchild.is_none() {
+            self.grandchild = Some(context.spawn(CountingChild { remaining: 0 }, &[])?);
+        }
+        match context.join()? {
+            Poll::Pending => Ok(Poll::Pending),
+            Poll::Ready(()) => {
+                assert_eq!(context.task_result(self.grandchild.unwrap())?, Some(42));
+                assert_eq!(context.task_result(self.sibling)?, None);
+                Ok(Poll::Ready(41))
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct NestedJoinRoot {
+    child: Option<TaskId>,
+    sibling: Option<TaskId>,
+}
+
+impl Task for NestedJoinRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        if self.child.is_none() {
+            let sibling = context.spawn(CountingChild { remaining: 5 }, &[])?;
+            self.sibling = Some(sibling);
+            self.child = Some(context.spawn(
+                JoiningChild {
+                    sibling,
+                    grandchild: None,
+                },
+                &[],
+            )?);
+        }
+        match context.join()? {
+            Poll::Pending => Ok(Poll::Pending),
+            Poll::Ready(()) => Ok(Poll::Ready(
+                context.task_result(self.child.unwrap())?.unwrap()
+                    + context.task_result(self.sibling.unwrap())?.unwrap(),
+            )),
+        }
+    }
+}
+
+#[test]
+fn child_joins_only_its_descendants_and_root_waits_for_all() {
+    let mut scheduler = Scheduler::new(NestedJoinRoot::default(), 4, 0, 0).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 83);
+    assert_eq!(scheduler.stats().tasks_created, 4);
+    scheduler.verify().unwrap();
+}
+
+struct FailingGrandchild;
+
+impl Task for FailingGrandchild {
+    fn poll(&mut self, _context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        Err("nested boom".into())
+    }
+}
+
+#[derive(Default)]
+struct JoiningFailureChild {
+    spawned: bool,
+}
+
+impl Task for JoiningFailureChild {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        if !self.spawned {
+            context.spawn(FailingGrandchild, &[])?;
+            self.spawned = true;
+        }
+        match context.join()? {
+            Poll::Pending => Ok(Poll::Pending),
+            Poll::Ready(()) => Err("failed descendant should cancel before join resumes".into()),
+        }
+    }
+}
+
+#[derive(Default)]
+struct JoiningFailureRoot {
+    spawned: bool,
+}
+
+impl Task for JoiningFailureRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        if !self.spawned {
+            context.spawn(JoiningFailureChild::default(), &[])?;
+            self.spawned = true;
+        }
+        match context.join()? {
+            Poll::Pending => Ok(Poll::Pending),
+            Poll::Ready(()) => Err("failed descendant should cancel root".into()),
+        }
+    }
+}
+
+#[test]
+fn failing_grandchild_cancels_waiting_ancestors() {
+    let mut scheduler = Scheduler::new(JoiningFailureRoot::default(), 3, 0, 0).unwrap();
+    assert!(
+        scheduler
+            .run()
+            .unwrap_err()
+            .contains("task 2 failed: nested boom")
+    );
+    scheduler.verify().unwrap();
+}
