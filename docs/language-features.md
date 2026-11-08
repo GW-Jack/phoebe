@@ -16,8 +16,10 @@ to the other.
 `Unit` is the single value for a computation without a useful result. Its
 native ABI shape is empty; a `Unit` function may omit a final expression.
 Scoped task bodies may return `Unit` instead of a dummy integer.
-Concrete `Option<T>` applications are executable for finite primitive and
-nominal payloads. They use `None` and `Some(T)` and require exhaustive `when`;
+Concrete `Option<T>` applications are executable for finite primitive,
+nominal, and capability-bearing payloads. They use `None` and `Some(T)` and
+require exhaustive `when`; capability-bearing applications are affine and
+cannot yet cross `spawn`. `Result<T, E>` follows the same ownership rule;
 generic function definitions remain a separate compiler milestone.
 
 `trait` describes a small set of named operations. Implementations obey a

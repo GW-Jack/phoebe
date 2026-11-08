@@ -207,11 +207,8 @@ pub(super) fn op_type(
             Ok(None)
         }
         Operation::CloseCaps(value) => {
-            let Type::Data(id) = ty(*value) else {
-                return Err("close.caps requires a nominal product".into());
-            };
-            if program.data[id.0].fields.is_empty() {
-                return Err("close.caps requires a nominal product".into());
+            if !matches!(ty(*value), Type::Data(_)) {
+                return Err("close.caps requires a nominal value".into());
             }
             Ok(None)
         }

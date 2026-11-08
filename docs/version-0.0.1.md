@@ -320,19 +320,21 @@ normal and `?` exits; `examples/with_wait.phoebe` retains the owner across
 channel suspension before cleanup. `examples/with_pair.phoebe` covers grouped
 rights on normal and `?` exits. `examples/with_product.phoebe` covers
 structural product cleanup; source tests also cover nested aliases and spawn
-transfer. Capability-bearing sums, mutable product places, and general
-failure cleanup remain open.
-The bounded `formal/sum_capabilities.maude` model checks that an optional
-right exists only in its `Some` variant and is transferred or closed on the
-selected branch. It is specification backpressure, not tagged ownership in
-Core; source and hand-built Core still reject sums with capability-bearing
-payloads.
-The exact slot checker now has `PackSum` and `UnpackSum` transitions and a
-unit graph that joins `Some` and `None` at one envelope slot. Core's private
-graph builder derives those actions for variant construction and matching in
-a synthetic test. Structural verification still rejects capability-bearing
-sums because native close, transfer, and tagged payload cleanup are not yet
-implemented.
+transfer. Mutable product places and general failure cleanup remain open.
+Capability-bearing sums now use one exact ownership envelope per sum value.
+`PackSum` consumes the selected payload rights, and `UnpackSum` exposes only
+the matched variant's rights. Source `Option` and `Result` values may carry
+bare rights or closed and capability-bearing nominal payloads. The ABI crate
+computes one structural close plan with reverse product order and tag-aware
+sum dispatch; the interpreter, direct Cranelift path, and retained path use
+that disposition. Examples cover `Some`/`None` joins, a two-right payload,
+owned calls and returns, lexical close after `yield`, and `?` cleanup of a
+nested sum on resource failure. The standalone path agrees on those cases.
+Copying or storing these owners in a mutable place is rejected. Spawn of a
+capability-bearing sum, including one nested in a product, remains rejected
+until native transfer descriptors can select the active variant. The bounded
+`formal/sum_capabilities.maude` model checks a one-right abstraction; it is
+not a proof of the compiler or runtime.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
 retry across both operations. Generated send and receive leaves use retained

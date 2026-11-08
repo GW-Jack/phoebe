@@ -273,6 +273,12 @@ impl Lowerer<'_> {
                             self.expr(expr, locals)?
                         };
                         self.require(ty, *expected, expr.span)?;
+                        if self.capability_layout.has_tagged(ty) {
+                            return Err(Diagnostic::new(
+                                expr.span,
+                                "spawn of capability-bearing sum is not yet supported",
+                            ));
+                        }
                         if matches!(
                             ty,
                             Type::Data(_)

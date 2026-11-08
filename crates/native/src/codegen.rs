@@ -85,6 +85,12 @@ impl AbiShapes {
             .expect("checked Core type has an ABI capability layout")
     }
 
+    pub(super) fn close_plan(&self, ty: Type) -> phoebe_abi::ClosePlan {
+        self.shapes
+            .close_plan(ty)
+            .expect("checked Core type has a structural close plan")
+    }
+
     /// Native spawn transfer descriptors use one runtime kind and token per
     /// capability leaf, including rights nested in products and requests.
     pub(super) fn append_transfer_descriptors<T>(
@@ -627,20 +633,17 @@ pub(super) fn compile_functions<M: Module>(
                         }
                         Operation::CloseCaps(value) => {
                             let parts = get(*value);
-                            for leaf in shapes
-                                .capability_parts(function.value_types[value.0])
-                                .iter()
-                                .rev()
-                            {
-                                let kind = match leaf.kind {
+                            let plan = shapes.close_plan(function.value_types[value.0]);
+                            close::emit(&mut builder, &plan, &parts, &mut |builder, ty, token| {
+                                let kind = match ty {
                                     Type::SenderI64 | Type::RequestSenderI64 => 0,
                                     Type::ReceiverI64 | Type::RequestReceiverI64 => 1,
                                     Type::ReplyToI64 => 0,
                                     Type::ReplyReceiverI64 => 1,
-                                    _ => unreachable!("capability ABI leaf"),
+                                    _ => return Err("unsupported structural close leaf".into()),
                                 };
                                 let kind = builder.ins().iconst(types::I64, kind);
-                                let close = match leaf.kind {
+                                let close = match ty {
                                     Type::SenderI64
                                     | Type::ReceiverI64
                                     | Type::RequestSenderI64
@@ -652,13 +655,10 @@ pub(super) fn compile_functions<M: Module>(
                                 let callee = module.declare_func_in_func(close, builder.func);
                                 builder.ins().call(
                                     callee,
-                                    &[
-                                        runtime_context.expect("runtime context"),
-                                        parts[leaf.part],
-                                        kind,
-                                    ],
+                                    &[runtime_context.expect("runtime context"), token, kind],
                                 );
-                            }
+                                Ok(())
+                            })?;
                             None
                         }
                         Operation::CloseReply(value) => {

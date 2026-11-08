@@ -1,0 +1,24 @@
+data Envelope { maybe: Option<Sender<I64>>, receiver: Receiver<I64> }
+
+fn close_envelope(value: Envelope) -> I64 {
+  yield;
+  value.close_caps();
+  42
+}
+
+fn scoped(maybe: Option<Sender<I64>>) -> I64 {
+  with owned = maybe { yield; 6 }
+}
+
+fn acquire() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  val first = close_envelope(Envelope(Option<Sender<I64>>.Some(sender), receiver));
+  val (second, second_receiver) = channel<I64>(capacity = 1)?;
+  second_receiver.close();
+  Result<I64, ResourceError>.Ok(first + scoped(Option<Sender<I64>>.Some(second)) + scoped(Option<Sender<I64>>.None))
+}
+
+fn main() -> I64 = when (acquire()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}

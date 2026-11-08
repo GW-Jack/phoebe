@@ -32,28 +32,19 @@ fn register_application(
             TypeName::I64 => Ok(Type::I64),
             TypeName::Bool => Ok(Type::Bool),
             TypeName::Unit => Ok(Type::Unit),
-            TypeName::SenderI64
-            | TypeName::ReceiverI64
-            | TypeName::ReplyToI64
-            | TypeName::ReplyReceiverI64
-            | TypeName::RequestI64
-            | TypeName::RequestSenderI64
-            | TypeName::RequestReceiverI64 => Err(Diagnostic::new(
-                span,
-                "generic data cannot carry communication capabilities yet",
-            )),
+            TypeName::SenderI64 => Ok(Type::SenderI64),
+            TypeName::ReceiverI64 => Ok(Type::ReceiverI64),
+            TypeName::ReplyToI64 => Ok(Type::ReplyToI64),
+            TypeName::ReplyReceiverI64 => Ok(Type::ReplyReceiverI64),
+            TypeName::RequestI64 => Ok(Type::RequestI64),
+            TypeName::RequestSenderI64 => Ok(Type::RequestSenderI64),
+            TypeName::RequestReceiverI64 => Ok(Type::RequestReceiverI64),
             TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
             TypeName::Named(name) => {
                 let id = data_names
                     .get(name)
                     .copied()
                     .ok_or_else(|| Diagnostic::new(span, format!("unknown data type {name}")))?;
-                if data_rights[id.0] {
-                    return Err(Diagnostic::new(
-                        span,
-                        "generic data cannot carry communication capabilities yet",
-                    ));
-                }
                 Ok(Type::Data(id))
             }
             TypeName::Option(_) | TypeName::Result(_, _) => {
@@ -74,13 +65,17 @@ fn register_application(
     };
     let id = DataId(data.len());
     data_names.insert(name.clone(), id);
+    let owns_rights = payloads
+        .iter()
+        .flatten()
+        .any(|ty| has_right(*ty, data_rights));
     data.push(DataDef {
         name,
         variants,
         payloads,
         fields: vec![],
     });
-    data_rights.push(false);
+    data_rights.push(owns_rights);
     Ok(id)
 }
 
@@ -131,20 +126,13 @@ pub(super) fn lower_data(
                 Some(TypeName::I64) => Some(Type::I64),
                 Some(TypeName::Bool) => Some(Type::Bool),
                 Some(TypeName::Unit) => Some(Type::Unit),
-                Some(
-                    TypeName::SenderI64
-                    | TypeName::ReceiverI64
-                    | TypeName::ReplyToI64
-                    | TypeName::ReplyReceiverI64
-                    | TypeName::RequestI64
-                    | TypeName::RequestSenderI64
-                    | TypeName::RequestReceiverI64,
-                ) => {
-                    return Err(Diagnostic::new(
-                        variant.span,
-                        "channel endpoints cannot be stored in data yet",
-                    ));
-                }
+                Some(TypeName::SenderI64) => Some(Type::SenderI64),
+                Some(TypeName::ReceiverI64) => Some(Type::ReceiverI64),
+                Some(TypeName::ReplyToI64) => Some(Type::ReplyToI64),
+                Some(TypeName::ReplyReceiverI64) => Some(Type::ReplyReceiverI64),
+                Some(TypeName::RequestI64) => Some(Type::RequestI64),
+                Some(TypeName::RequestSenderI64) => Some(Type::RequestSenderI64),
+                Some(TypeName::RequestReceiverI64) => Some(Type::RequestReceiverI64),
                 Some(TypeName::Named(name)) if name == "ResourceError" => Some(Type::ResourceError),
                 Some(TypeName::Named(name)) => {
                     let id = data_names.get(name).copied().ok_or_else(|| {
@@ -153,12 +141,6 @@ pub(super) fn lower_data(
                             format!("variant payload type `{name}` must be declared earlier"),
                         )
                     })?;
-                    if data_rights[id.0] {
-                        return Err(Diagnostic::new(
-                            variant.span,
-                            "sum variants cannot carry communication capabilities yet",
-                        ));
-                    }
                     Some(Type::Data(id))
                 }
                 Some(ty @ (TypeName::Option(_) | TypeName::Result(_, _))) => {
@@ -175,7 +157,10 @@ pub(super) fn lower_data(
             payloads.push(payload);
         }
         let mut fields = Vec::with_capacity(declaration.fields.len());
-        let mut owns_rights = false;
+        let mut owns_rights = payloads
+            .iter()
+            .flatten()
+            .any(|ty| has_right(*ty, &data_rights));
         for field in &declaration.fields {
             if fields.iter().any(|(name, _)| name == &field.name) {
                 return Err(Diagnostic::new(field.span, "duplicate field"));

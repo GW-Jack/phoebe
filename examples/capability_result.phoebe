@@ -1,0 +1,18 @@
+fn acquire(capacity: I64) -> Result<Sender<I64>, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = capacity)?;
+  receiver.close();
+  Result<Sender<I64>, ResourceError>.Ok(sender)
+}
+
+fn consume(capacity: I64) -> Result<I64, ResourceError> {
+  val sender = acquire(capacity)?;
+  sender.close();
+  Result<I64, ResourceError>.Ok(42)
+}
+
+fn code(result: Result<I64, ResourceError>) -> I64 = when (result) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 7 },
+}
+
+fn main() -> I64 = code(consume(1)) + code(consume(0))

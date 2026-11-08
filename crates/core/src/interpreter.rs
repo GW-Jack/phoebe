@@ -7,6 +7,7 @@ fn close_caps(value: Value, context: &mut Option<&mut Context<'_>>) -> Result<()
                 close_caps(field, context)?;
             }
         }
+        Value::Data(_, _, Some(payload)) => close_caps(*payload, context)?,
         Value::Sender(token) => context
             .as_deref_mut()
             .expect("capability close requires runtime context")

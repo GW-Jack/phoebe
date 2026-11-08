@@ -63,6 +63,15 @@ in a product. A `Request<I64>` contributes its reply right at its second
 part. Reverse traversal of this table gives structural close order without
 a runtime scan. Spawn descriptors use the same leaf offsets to transfer all
 nested rights to the child; source tests cover direct and retained parents.
+For a capability-bearing sum, a flat leaf list cannot identify which payload
+exists. The ABI crate therefore builds a `ClosePlan`: products sequence their
+field plans in reverse order, and sums select one payload plan by tag. The
+interpreter closes the same recursive value structure; direct and retained
+Cranelift functions emit the plan. `Option<Sender<I64>>`,
+`Result<Sender<I64>, ResourceError>`, and products containing those sums are
+executable across interpreter, JIT, and standalone builds. Spawn transfer
+still uses a flat descriptor list, so the verifier rejects a spawn argument
+containing a capability-bearing sum until transfer becomes tag-aware.
 
 A sum with a payload reserves the maximum number of flattened payload words
 among its variants. Every payload component is represented as an I64 word;

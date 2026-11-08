@@ -1,0 +1,26 @@
+data Pair { sender: Sender<I64>, receiver: Receiver<I64> }
+
+fn choose(pair: Pair, keep: Bool) -> Option<Pair> = if (keep) {
+  Option<Pair>.Some(pair)
+} else {
+  pair.close_caps();
+  Option<Pair>.None
+}
+
+fn finish(maybe: Option<Pair>) -> I64 = when (maybe) {
+  Option<Pair>.None -> { 1 },
+  Option<Pair>.Some(pair) -> { pair.close_caps(); 2 },
+}
+
+fn acquire(keep: Bool) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  val pair = Pair(sender, receiver);
+  Result<I64, ResourceError>.Ok(finish(choose(pair, keep)))
+}
+
+fn value(result: Result<I64, ResourceError>) -> I64 = when (result) {
+  Result<I64, ResourceError>.Ok(number) -> { number },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+
+fn main() -> I64 = value(acquire(true)) + value(acquire(false))

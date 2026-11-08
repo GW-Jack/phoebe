@@ -1,0 +1,24 @@
+fn choose(sender: Sender<I64>, keep: Bool) -> Option<Sender<I64>> = if (keep) {
+  Option<Sender<I64>>.Some(sender)
+} else {
+  sender.close();
+  Option<Sender<I64>>.None
+}
+
+fn finish(maybe: Option<Sender<I64>>) -> I64 = when (maybe) {
+  Option<Sender<I64>>.None -> { 1 },
+  Option<Sender<I64>>.Some(sender) -> { sender.close(); 2 },
+}
+
+fn acquire(keep: Bool) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  receiver.close();
+  Result<I64, ResourceError>.Ok(finish(choose(sender, keep)))
+}
+
+fn value(result: Result<I64, ResourceError>) -> I64 = when (result) {
+  Result<I64, ResourceError>.Ok(number) -> { number },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+
+fn main() -> I64 = value(acquire(true)) + value(acquire(false))

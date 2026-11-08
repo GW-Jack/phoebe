@@ -13,25 +13,32 @@ pub(super) struct Leaf {
 
 pub(crate) struct Layout {
     products: Vec<Vec<Leaf>>,
+    tagged: Vec<bool>,
 }
 
 impl Layout {
     pub(crate) fn new(data: &[DataDef]) -> Self {
         let mut layout = Self {
             products: Vec::with_capacity(data.len()),
+            tagged: Vec::with_capacity(data.len()),
         };
         for definition in data {
             let mut leaves = Vec::new();
-            // The sum's single envelope has a tag-dependent physical payload.
-            // Structural verification still rejects such sums until cleanup
-            // and native transfer use the same tagged representation.
-            if definition.fields.is_empty()
-                && definition
+            let is_tagged = if definition.fields.is_empty() {
+                // One affine envelope owns the selected variant's physical
+                // payload, even when that variant contains no right.
+                definition
                     .payloads
                     .iter()
                     .flatten()
                     .any(|ty| layout.leaves(*ty) > 0)
-            {
+            } else {
+                definition
+                    .fields
+                    .iter()
+                    .any(|(_, ty)| layout.has_tagged(*ty))
+            };
+            if definition.fields.is_empty() && is_tagged {
                 leaves.push(Leaf {
                     path: vec![],
                     kind: Type::Data(DataId(layout.products.len())),
@@ -58,6 +65,7 @@ impl Layout {
                 }
             }
             layout.products.push(leaves);
+            layout.tagged.push(is_tagged);
         }
         layout
     }
@@ -80,6 +88,13 @@ impl Layout {
             Type::Data(DataId(id)) => self.products.get(id).map_or(0, Vec::len),
             ty if Self::bare_right(ty) => 1,
             _ => 0,
+        }
+    }
+
+    pub(crate) fn has_tagged(&self, ty: Type) -> bool {
+        match ty {
+            Type::Data(DataId(id)) => self.tagged.get(id).copied().unwrap_or(false),
+            _ => false,
         }
     }
 

@@ -26,6 +26,7 @@ use phoebe_syntax::syntax::ParamMode;
 
 mod build_session;
 mod cache;
+mod close;
 mod codegen;
 mod poll;
 mod reachability;

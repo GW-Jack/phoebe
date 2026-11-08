@@ -111,15 +111,15 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
         }
         if definition.payloads.iter().flatten().any(|ty| match ty {
             Type::I64 | Type::Bool | Type::Unit => false,
-            Type::Data(id) => id.0 >= index || capability_layout.leaves(*ty) > 0,
+            Type::Data(id) => id.0 >= index,
             Type::ResourceError => false,
             Type::RefI64
             | Type::RefMutI64
             | Type::SenderI64
             | Type::ReceiverI64
             | Type::ReplyToI64
-            | Type::ReplyReceiverI64 => true,
-            Type::RequestI64 | Type::RequestSenderI64 | Type::RequestReceiverI64 => true,
+            | Type::ReplyReceiverI64 => false,
+            Type::RequestI64 | Type::RequestSenderI64 | Type::RequestReceiverI64 => false,
         }) {
             return Err("invalid variant payload type".into());
         }
@@ -563,7 +563,11 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
                         }
                         let params = &function.blocks[arm.target.0].params;
                         let valid = match arm.binding {
-                            MatchBinding::Discard => params.is_empty(),
+                            MatchBinding::Discard => {
+                                params.is_empty()
+                                    && data.payloads[tag]
+                                        .is_none_or(|ty| capability_layout.leaves(ty) == 0)
+                            }
                             MatchBinding::Payload => data.payloads[tag].is_some_and(|ty| {
                                 params.len() == 1 && function.value_types[params[0].0] == ty
                             }),
@@ -845,6 +849,12 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
                         check_use(*arg, block_id, end)?;
                         if function.value_types[arg.0] != callee.value_types[param.0] {
                             return Err(format!("{}: spawn argument type mismatch", function.name));
+                        }
+                        if capability_layout.has_tagged(function.value_types[arg.0]) {
+                            return Err(format!(
+                                "{}: spawn of capability-bearing sum is not yet supported",
+                                function.name
+                            ));
                         }
                     }
                 }

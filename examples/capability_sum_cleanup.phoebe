@@ -1,0 +1,18 @@
+data Envelope { maybe: Option<Sender<I64>>, receiver: Receiver<I64> }
+
+fn acquire(capacity: I64) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  val pair = Envelope(Option<Sender<I64>>.Some(sender), receiver);
+  val (extra_sender, extra_receiver) = channel<I64>(capacity = capacity)?;
+  extra_sender.close();
+  extra_receiver.close();
+  pair.close_caps();
+  Result<I64, ResourceError>.Ok(8)
+}
+
+fn value(result: Result<I64, ResourceError>) -> I64 = when (result) {
+  Result<I64, ResourceError>.Ok(number) -> { number },
+  Result<I64, ResourceError>.Err(error) -> { 7 },
+}
+
+fn main() -> I64 = value(acquire(1)) + value(acquire(0))

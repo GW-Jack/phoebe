@@ -91,24 +91,26 @@ owning place operations are specified. For a sum,
 the active variant determines which paths exist, so the verifier must either
 split on its tag or carry a tagged slot state. A blind union of variant slots
 would report nonexistent rights; a blind intersection would lose live ones.
-The intended Core representation is one affine envelope slot for an owned
+Core uses one affine envelope slot for an owned
 capability-bearing sum, including a variant with no right. The envelope means
 the task owns the tagged value; the tag and the type determine which physical
 rights it contains. Construction consumes the selected payload's leaf slots
 and creates the envelope. A `match` edge consumes the envelope and creates
 only that variant's payload slots. Cleanup consumes the envelope and dispatches
 on the tag to close only that variant's live leaves. Thus the flow checker
-needs one exact slot at a join while the typed Core producer must prove the
-pack and unpack actions match the constructor and arm tags. The existing
-`PackSum` and `UnpackSum` flow actions check slot uniqueness and exact
-disposition; they do not themselves establish that tag/type correspondence.
+needs one exact slot at a join. The `PackSum` and `UnpackSum` flow actions
+check slot uniqueness and exact disposition. Core's operation and match-arm
+type checks bind these actions to their declared tags and payload types; a
+capability-bearing payload cannot be discarded by a match arm.
 The bounded one-right model in `formal/sum_capabilities.maude` checks the
 semantic obligation, but no refinement proof connects it to Core or native
-code generation.
+code generation. Native spawn transfer still needs a tag-aware descriptor
+plan, so Core rejects spawning an owner containing such a sum.
 Projection moves the selected leaf paths from the aggregate owner to the
 result and must account for all unselected live paths through an explicit
-residual owner, close, or transfer. These rules are prerequisites for a
-first-class channel pair value and capability-bearing `Result`. The current
+residual owner, close, or transfer. They remain prerequisites for a
+first-class channel pair value. Capability-bearing `Result` now uses the
+sum envelope without partial projection. The current
 source pair binding maps the two success parameters directly to names.
 The bounded two-field product model in `formal/product_capabilities.maude`
 checks intact transfer, rejection, reverse-order close, discard, and failure

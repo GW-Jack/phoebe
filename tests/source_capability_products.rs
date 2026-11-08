@@ -93,7 +93,7 @@ fn fail() -> I64 = unwrap(acquire(0))
 }
 
 #[test]
-fn capability_product_rejects_copy_projection_place_and_sum_payload() {
+fn capability_product_rejects_copy_projection_and_place_storage() {
     let base = r#"
 data Pair { sender: Sender<I64>, receiver: Receiver<I64> }
 fn use_pair(pair: Pair) -> I64 {
@@ -124,27 +124,6 @@ fn main() -> I64 = 0
                 "  var saved = pair;\n  saved.close_caps();",
             ),
             "cannot be stored in var",
-        ),
-        (
-            base.replace(
-                "fn use_pair",
-                "data MaybePair { None, Some(value: Pair) }\nfn use_pair",
-            ),
-            "sum variants cannot carry",
-        ),
-        (
-            base.replace(
-                "fn use_pair",
-                "data Envelope { pair: Pair }\ndata MaybeEnvelope { None, Some(value: Envelope) }\nfn use_pair",
-            ),
-            "sum variants cannot carry",
-        ),
-        (
-            base.replace(
-                "fn use_pair",
-                "data Envelope { pair: Pair }\nfn bad(value: Option<Envelope>) -> I64 = 0\nfn use_pair",
-            ),
-            "generic data cannot carry",
         ),
     ] {
         let error = core::lower(&syntax::parse(&changed).unwrap()).unwrap_err();

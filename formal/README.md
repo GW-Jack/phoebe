@@ -132,13 +132,11 @@ branch-specific early-failure cleanup. Deliberately mismatched `None` and
 The model fixes one optional right and omits nested sums, multiple rights,
 queue transfer, allocation failure, and compiler/runtime state. It establishes
 a design obligation for Core: a sum's capability state must retain its active
-tag through joins and cleanup. The current Core verifier deliberately rejects
-capability-bearing sum payloads.
-The executable exact-slot checker separately tests an opaque envelope that
-both variants can carry through one CFG join. Core's private graph builder
-derives pack and unpack actions from a synthetic tagged sum. Structural
-verification still rejects that data type while native cleanup and transfer
-remain incomplete.
+tag through joins and cleanup. The executable exact-slot checker uses one
+opaque envelope at a CFG join and Core derives pack and unpack actions from
+typed variant construction and matching. Source and native paths now run
+finite capability-bearing sums with tag-aware close; spawn transfer remains
+restricted. No refinement proof connects those implementations to this model.
 
 ## Evidence boundary
 

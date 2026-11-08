@@ -931,23 +931,19 @@ fn compile_poll_module<M: Module>(
                         }
                         Operation::CloseCaps(value) => {
                             let parts = get(*value, &mut builder);
-                            for leaf in shapes
-                                .capability_parts(function.value_types[value.0])
-                                .iter()
-                                .rev()
-                            {
-                                let token = parts[leaf.part];
-                                let kind = match leaf.kind {
+                            let plan = shapes.close_plan(function.value_types[value.0]);
+                            close::emit(&mut builder, &plan, &parts, &mut |builder, ty, token| {
+                                let kind = match ty {
                                     Type::SenderI64 | Type::RequestSenderI64 | Type::ReplyToI64 => {
                                         0
                                     }
                                     Type::ReceiverI64
                                     | Type::RequestReceiverI64
                                     | Type::ReplyReceiverI64 => 1,
-                                    _ => unreachable!("capability ABI leaf"),
+                                    _ => return Err("unsupported structural close leaf".into()),
                                 };
                                 let kind = builder.ins().iconst(types::I64, kind);
-                                match leaf.kind {
+                                match ty {
                                     Type::SenderI64
                                     | Type::ReceiverI64
                                     | Type::RequestSenderI64
@@ -966,7 +962,8 @@ fn compile_poll_module<M: Module>(
                                         builder.switch_to_block(next);
                                     }
                                 }
-                            }
+                                Ok(())
+                            })?;
                             None
                         }
                         Operation::CloseReply(value) => {
