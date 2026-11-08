@@ -104,6 +104,41 @@ fn main() -> I64 {
 }
 
 #[test]
+fn unit_arguments_and_fields_survive_a_suspending_call() {
+    let source = r#"
+data Packet { first: Unit, count: I64, last: Unit }
+
+fn close_sender(sender: Sender<I64>) -> Unit { sender.close(); }
+fn pass(value: Unit) -> Unit = value
+
+fn use_packet(packet: Packet, marker: Unit) -> I64 {
+  marker;
+  packet.first;
+  packet.last;
+  packet.count
+}
+
+fn start() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  spawn close_sender(sender)?;
+  var packet = Packet(Unit, 42, Unit);
+  val done = receiver.receive();
+  receiver.close();
+  val marker = pass(packet.first);
+  Result<I64, ResourceError>.Ok(use_packet(packet, marker))
+}
+
+fn main() -> I64 {
+  when (start()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#;
+    assert_all_backends(source, "suspending-arguments");
+}
+
+#[test]
 fn result_unit_keeps_resource_error_edge() {
     let source = r#"
 fn close_one() -> Result<Unit, ResourceError> {

@@ -26,4 +26,4 @@
   execution_platforms = prelude//platforms:default
 
 [project]
-  ignore = target
+  ignore = target, .git
