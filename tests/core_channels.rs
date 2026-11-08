@@ -175,6 +175,42 @@ fn checked_core_send_and_receive_preserve_rights_and_value() {
 }
 
 #[test]
+fn forged_second_take_from_mutable_right_place_is_rejected() {
+    let source = "fn main() -> Result<I64, ResourceError> { \
+        var (sender, receiver) = channel<I64>(1)?; \
+        sender.close(); receiver.close(); Result<I64, ResourceError>.Ok(0) \
+    }";
+    let mut program = core::lower(&phoebe::syntax::parse(source).unwrap()).unwrap();
+    core::verify(&program).unwrap();
+    let function = &mut program.functions[0];
+    let second = ValueId(function.value_types.len());
+    function.value_types.push(Type::SenderI64);
+    let (block, index, place) = function
+        .blocks
+        .iter()
+        .enumerate()
+        .find_map(|(block_id, block)| {
+            block
+                .instructions
+                .iter()
+                .enumerate()
+                .find_map(|(index, instruction)| {
+                    if let Operation::Take(place) = instruction.operation {
+                        Some((block_id, index, place))
+                    } else {
+                        None
+                    }
+                })
+        })
+        .unwrap();
+    function.blocks[block].instructions.insert(
+        index + 1,
+        instruction(Some(second.0), Operation::Take(place)),
+    );
+    assert!(core::verify(&program).is_err());
+}
+
+#[test]
 fn core_receive_parks_with_a_retained_frame_until_scope_deadlock() {
     let mut program = channel_program();
     let function = &mut program.functions[0];

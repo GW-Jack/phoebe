@@ -1,0 +1,102 @@
+--- Two distinct rights in task-local places. A communication operation takes
+--- the first right into a retained temporary and restores it only after a
+--- completed outcome. Place replacement requires an empty destination.
+mod PHOEBE-MUTABLE-RIGHT-PLACES is
+  protecting NAT .
+  protecting BOOL .
+
+  sorts Phase Right State .
+  ops ready taken pending sent closedOutcome aClosed bTaken reassigned
+      done canceled : -> Phase [ctor] .
+  ops none a b : -> Right [ctor] .
+  --- Slots are place A, place B, temporary A, temporary B.
+  op st : Phase Right Right Right Right -> State [ctor] .
+  op initial : -> State .
+  eq initial = st(ready, a, b, none, none) .
+
+  --- Take is enabled only when the place is live and the temporary empty.
+  rl [take] : st(ready, a, b, none, none)
+    => st(taken, none, b, a, none) .
+  rl [send-pends] : st(taken, none, b, a, none)
+    => st(pending, none, b, a, none) .
+  rl [send-immediate] : st(taken, none, b, a, none)
+    => st(sent, none, b, a, none) .
+  rl [send-retry] : st(pending, none, b, a, none)
+    => st(sent, none, b, a, none) .
+  rl [send-closed] : st(taken, none, b, a, none)
+    => st(closedOutcome, none, b, a, none) .
+  rl [send-retry-closed] : st(pending, none, b, a, none)
+    => st(closedOutcome, none, b, a, none) .
+  rl [restore-sent] : st(sent, none, b, a, none)
+    => st(ready, a, b, none, none) .
+  rl [restore-closed] : st(closedOutcome, none, b, a, none)
+    => st(ready, a, b, none, none) .
+
+  --- A consuming close empties place A. Only then may B replace it.
+  rl [close-taken] : st(taken, none, b, a, none)
+    => st(aClosed, none, b, none, none) .
+  rl [take-b] : st(aClosed, none, b, none, none)
+    => st(bTaken, none, none, none, b) .
+  rl [store-b] : st(bTaken, none, none, none, b)
+    => st(reassigned, b, none, none, none) .
+  rl [close-b-in-place] : st(aClosed, none, b, none, none)
+    => st(done, none, none, none, none) .
+  rl [close-b-taken] : st(bTaken, none, none, none, b)
+    => st(done, none, none, none, none) .
+  rl [close-reassigned] : st(reassigned, b, none, none, none)
+    => st(done, none, none, none, none) .
+
+  --- Early failure or task cancellation disposes rights wherever they are,
+  --- including the temporary held while a send is pending.
+  rl [fail-ready] : st(ready, a, b, none, none)
+    => st(canceled, none, none, none, none) .
+  rl [fail-taken] : st(taken, none, b, a, none)
+    => st(canceled, none, none, none, none) .
+  rl [fail-pending] : st(pending, none, b, a, none)
+    => st(canceled, none, none, none, none) .
+  rl [fail-sent] : st(sent, none, b, a, none)
+    => st(canceled, none, none, none, none) .
+  rl [fail-closed] : st(closedOutcome, none, b, a, none)
+    => st(canceled, none, none, none, none) .
+  rl [fail-after-close] : st(aClosed, none, b, none, none)
+    => st(canceled, none, none, none, none) .
+  rl [fail-taken-b] : st(bTaken, none, none, none, b)
+    => st(canceled, none, none, none, none) .
+  rl [fail-reassigned] : st(reassigned, b, none, none, none)
+    => st(canceled, none, none, none, none) .
+
+  vars P : Phase .
+  vars W X Y Z : Right .
+  op hit : Right Right -> Nat .
+  eq hit(a, a) = 1 .
+  eq hit(a, b) = 0 .
+  eq hit(a, none) = 0 .
+  eq hit(b, a) = 0 .
+  eq hit(b, b) = 1 .
+  eq hit(b, none) = 0 .
+  op count : Right Right Right Right Right -> Nat .
+  eq count(W, X, Y, Z, a) =
+    hit(a, W) + hit(a, X) + hit(a, Y) + hit(a, Z) .
+  eq count(W, X, Y, Z, b) =
+    hit(b, W) + hit(b, X) + hit(b, Y) + hit(b, Z) .
+
+  op active-a : Phase -> Bool .
+  eq active-a(ready) = true .
+  eq active-a(taken) = true .
+  eq active-a(pending) = true .
+  eq active-a(sent) = true .
+  eq active-a(closedOutcome) = true .
+  eq active-a(P) = false [owise] .
+  op active-b : Phase -> Bool .
+  eq active-b(done) = false .
+  eq active-b(canceled) = false .
+  eq active-b(P) = true [owise] .
+
+  op bad : State -> Bool .
+  eq bad(st(P, W, X, Y, Z)) =
+    not ((count(W, X, Y, Z, a) == 1) == active-a(P)) or
+    not ((count(W, X, Y, Z, b) == 1) == active-b(P)) or
+    count(W, X, Y, Z, a) > 1 or count(W, X, Y, Z, b) > 1 or
+    (P == pending and not (W == none and Y == a)) or
+    (P == reassigned and not (W == b and X == none)) .
+endm

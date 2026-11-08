@@ -142,9 +142,29 @@ typed variant construction and matching. Source and native paths now run
 finite capability-bearing sums with tag-aware close and spawn transfer. No
 refinement proof connects those implementations to this model.
 
+## Mutable right places
+
+`mutable_right_places.maude` tracks two distinct rights in two task-local
+places and two operation temporaries. Taking a right empties its place. A
+pending send retains the right in its temporary; either completed outcome
+restores it. Closing empties the first place before the second right may be
+moved there. Early failure disposes both rights from their current locations.
+The exhaustive search visits 10 states with no encoded duplicate, missing
+right, or wrong pending owner. Three unreachable searches check the bad-state
+predicate, a second take, and an overwrite of a live place. Eleven witnesses
+cover take, pending send, both outcomes, restoration, reassignment, normal
+close, and pending failure cleanup. Two deliberately bad states satisfy the
+predicate.
+
+This model fixes two rights and one task, and treats send outcomes as abstract
+transitions. It omits queues, peers, scheduler interleavings, fork, frame
+offsets, and allocation. Source tests exercise the corresponding mutable
+channel and request paths, but no refinement proof connects those tests or
+their compiler/runtime implementation to this model.
+
 ## Evidence boundary
 
-These are finite explorations of eight handwritten abstract machines. The
+These are finite explorations of nine handwritten abstract machines. The
 two-task model does not include regions or references; the one-task model
 does not include handle fork. Neither models multiple queued messages or
 blocking/parking. The reply model does not cover multiple reply rights,

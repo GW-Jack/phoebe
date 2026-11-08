@@ -304,6 +304,9 @@ still held in places.
 and standalone executable. The
 finite models and tests do not prove
 correctness of the compiler or generated machine code.
+The finite mutable-place model checks two rights across take, pending send,
+both completed outcomes, reassignment, and cleanup. It explores 10 abstract
+states; it does not model the generated retained frame or scheduler.
 The bounded two-request Maude model explores both successful retry and
 receiver closure during a pending send. It checks encoded queue/right
 ownership and terminal cleanup over 25 states; it is not a proof about the

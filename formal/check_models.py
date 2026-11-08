@@ -15,6 +15,7 @@ CASES = (
     ("check_lexical_scopes.maude", 2, 7, 1),
     ("check_product_capabilities.maude", 2, 12, 1),
     ("check_sum_capabilities.maude", 4, 22, 3),
+    ("check_mutable_right_places.maude", 3, 11, 2),
 )
 
 

@@ -1,0 +1,42 @@
+load mutable_right_places.maude
+
+--- An explicitly duplicated right and a wrong pending owner are bad.
+reduce in PHOEBE-MUTABLE-RIGHT-PLACES :
+  bad(st(ready, a, b, a, none)) .
+reduce in PHOEBE-MUTABLE-RIGHT-PLACES :
+  bad(st(pending, a, b, none, none)) .
+
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES : initial =>* X:State
+  such that bad(X:State) == true .
+--- A second take and an overwrite of a live place cannot be reached.
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES : initial =>*
+  st(P:Phase, a, b, a, none) .
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES : initial =>*
+  st(P:Phase, b, b, none, none) .
+
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES : initial =>*
+  st(taken, none, b, a, none) .
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES : initial =>*
+  st(pending, none, b, a, none) .
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES : initial =>*
+  st(sent, none, b, a, none) .
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES : initial =>*
+  st(closedOutcome, none, b, a, none) .
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES : initial =>*
+  st(aClosed, none, b, none, none) .
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES : initial =>*
+  st(bTaken, none, none, none, b) .
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES : initial =>*
+  st(reassigned, b, none, none, none) .
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES : initial =>*
+  st(done, none, none, none, none) .
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES :
+  st(sent, none, b, a, none) =>+
+  st(ready, a, b, none, none) .
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES :
+  st(closedOutcome, none, b, a, none) =>+
+  st(ready, a, b, none, none) .
+--- Force the failure branch to begin while pending, then check disposal.
+search [1] in PHOEBE-MUTABLE-RIGHT-PLACES :
+  st(pending, none, b, a, none) =>+
+  st(canceled, none, none, none, none) .
