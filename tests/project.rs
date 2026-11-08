@@ -32,6 +32,29 @@ fn temp_project() -> PathBuf {
 }
 
 #[test]
+fn changing_pair_binding_to_var_invalidates_checked_body() {
+    let path = temp_project();
+    let app = path.join("app.phoebe");
+    let source = include_str!("../examples/channel_exchange.phoebe");
+    std::fs::write(&app, source).unwrap();
+    let mut session = ProjectCompilerSession::new();
+    let (first, _) = session.compile(&path).unwrap();
+    assert_eq!(first.interpret("main", &[]).unwrap(), 42);
+    let changed = source.replace(
+        "val (sender, receiver) = channel<I64>",
+        "var (sender, receiver) = channel<I64>",
+    );
+    std::fs::write(&app, changed).unwrap();
+    let (edited, report) = session.compile(&path).unwrap();
+    assert_eq!(report.load.affected, ["app"]);
+    assert!(edited.to_string().contains("place.init"));
+    assert_eq!(edited.interpret("main", &[]).unwrap(), 42);
+    let fresh = core::lower(&project::load(&path).unwrap().ast).unwrap();
+    assert_eq!(edited.to_string(), fresh.to_string());
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
 fn project_build_session_reuses_bodies_and_objects_after_body_edits() {
     let path = temp_project();
     let executable = path.join("program");

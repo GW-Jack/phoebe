@@ -24,7 +24,7 @@ impl Parser {
                 None
             };
             if let Some(mutable) = binding {
-                if !mutable && self.eat(&TokenKind::LParen).is_some() {
+                if self.eat(&TokenKind::LParen).is_some() {
                     let mut names = vec![self.name()?];
                     while self.eat(&TokenKind::Comma).is_some() {
                         names.push(self.name()?);
@@ -44,6 +44,7 @@ impl Parser {
                         self.expect(&TokenKind::RParen, ")")?;
                         self.expect(&TokenKind::Semicolon, "; after binding")?;
                         statements.push(Statement::UnpackVal {
+                            mutable,
                             names,
                             value: Expr {
                                 kind: ExprKind::Name(constructor),
@@ -87,6 +88,7 @@ impl Parser {
                             self.expect(&TokenKind::Question, "? after fallible reply creation")?;
                         self.expect(&TokenKind::Semicolon, "; after binding")?;
                         statements.push(Statement::ReplyVal {
+                            mutable,
                             right: sender,
                             receiver,
                             span: start.join(question.span),
@@ -109,6 +111,7 @@ impl Parser {
                     self.expect(&TokenKind::Semicolon, "; after binding")?;
                     if constructor == "request_channel" {
                         statements.push(Statement::RequestChannelVal {
+                            mutable,
                             sender,
                             receiver,
                             capacity,
@@ -116,6 +119,7 @@ impl Parser {
                         });
                     } else {
                         statements.push(Statement::ChannelVal {
+                            mutable,
                             sender,
                             receiver,
                             capacity,

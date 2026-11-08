@@ -50,19 +50,22 @@ fn statement(a: &Statement, b: &Statement, delta: isize) -> bool {
         }
         (
             Statement::ChannelVal {
+                mutable: am,
                 sender: asend,
                 receiver: arecv,
                 capacity: ac,
                 span: asp,
             },
             Statement::ChannelVal {
+                mutable: bm,
                 sender: bsend,
                 receiver: brecv,
                 capacity: bc,
                 span: bsp,
             },
         ) => {
-            asend.0 == bsend.0
+            am == bm
+                && asend.0 == bsend.0
                 && span(asend.1, bsend.1, delta)
                 && arecv.0 == brecv.0
                 && span(arecv.1, brecv.1, delta)
@@ -71,19 +74,22 @@ fn statement(a: &Statement, b: &Statement, delta: isize) -> bool {
         }
         (
             Statement::RequestChannelVal {
+                mutable: am,
                 sender: asend,
                 receiver: arecv,
                 capacity: ac,
                 span: asp,
             },
             Statement::RequestChannelVal {
+                mutable: bm,
                 sender: bsend,
                 receiver: brecv,
                 capacity: bc,
                 span: bsp,
             },
         ) => {
-            asend.0 == bsend.0
+            am == bm
+                && asend.0 == bsend.0
                 && span(asend.1, bsend.1, delta)
                 && arecv.0 == brecv.0
                 && span(arecv.1, brecv.1, delta)
@@ -92,17 +98,20 @@ fn statement(a: &Statement, b: &Statement, delta: isize) -> bool {
         }
         (
             Statement::UnpackVal {
+                mutable: am,
                 names: an,
                 value: aq,
                 span: asp,
             },
             Statement::UnpackVal {
+                mutable: bm,
                 names: bn,
                 value: bq,
                 span: bsp,
             },
         ) => {
-            an.len() == bn.len()
+            am == bm
+                && an.len() == bn.len()
                 && an
                     .iter()
                     .zip(bn)
@@ -112,17 +121,20 @@ fn statement(a: &Statement, b: &Statement, delta: isize) -> bool {
         }
         (
             Statement::ReplyVal {
+                mutable: am,
                 right: ar,
                 receiver: av,
                 span: aspan,
             },
             Statement::ReplyVal {
+                mutable: bm,
                 right: br,
                 receiver: bv,
                 span: bspan,
             },
         ) => {
-            ar.0 == br.0
+            am == bm
+                && ar.0 == br.0
                 && span(ar.1, br.1, delta)
                 && av.0 == bv.0
                 && span(av.1, bv.1, delta)

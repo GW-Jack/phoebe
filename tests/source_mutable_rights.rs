@@ -1,6 +1,48 @@
 use phoebe::{core, native, runtime::ScopeLimits, syntax};
 
 #[test]
+fn mutable_pair_bindings_lower_directly_into_owned_places() {
+    for source in [
+        include_str!("../examples/channel_exchange.phoebe").replace(
+            "val (sender, receiver) = channel<I64>",
+            "var (sender, receiver) = channel<I64>",
+        ),
+        include_str!("../examples/reply_exchange.phoebe").replace(
+            "val (right, receiver) = reply<I64>",
+            "var (right, receiver) = reply<I64>",
+        ),
+        include_str!("../examples/request_backpressure.phoebe")
+            .replace(
+                "val (sender, receiver) = request_channel<I64>",
+                "var (sender, receiver) = request_channel<I64>",
+            )
+            .replace(
+                "val (value, right) = incoming.unpack();",
+                "var (value, right) = incoming.unpack();",
+            ),
+        include_str!("../examples/product_unpack.phoebe")
+            .replace("val (pair, bonus)", "var (pair, bonus)")
+            .replace("val (left, right)", "var (left, right)"),
+    ] {
+        let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+        assert!(program.to_string().contains("place.init"));
+        assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+        assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    }
+}
+
+#[test]
+fn mutable_pair_reassignment_requires_the_old_right_to_be_empty() {
+    let source = include_str!("../examples/channel_exchange.phoebe").replace(
+        "val (sender, receiver) = channel<I64>(capacity = 1)?;",
+        "var (sender, receiver) = channel<I64>(capacity = 1)?; \
+         val (second, other) = channel<I64>(capacity = 1)?; sender = second; \
+         other.close();",
+    );
+    assert!(core::lower(&syntax::parse(&source).unwrap()).is_err());
+}
+
+#[test]
 fn mutable_sender_moves_reassigns_and_closes_across_yield() {
     let source = include_str!("../examples/mutable_channel_right.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

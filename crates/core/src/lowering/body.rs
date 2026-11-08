@@ -49,6 +49,25 @@ impl Lowerer<'_> {
         Ok(output)
     }
 
+    fn bind_pair_local(
+        &mut self,
+        locals: &mut HashMap<String, Binding>,
+        name: &str,
+        span: Span,
+        value: ValueId,
+        ty: Type,
+        mutable: bool,
+    ) {
+        let binding = if mutable {
+            let place = self.place(ty);
+            self.emit_effect(Operation::PlaceInit(place, value), span);
+            Binding::Var(place)
+        } else {
+            Binding::Val(value)
+        };
+        locals.insert(name.to_owned(), binding);
+    }
+
     pub(super) fn body(
         &mut self,
         body: &Body,
@@ -57,6 +76,7 @@ impl Lowerer<'_> {
         for statement in &body.statements {
             match statement {
                 Statement::ChannelVal {
+                    mutable,
                     sender,
                     receiver,
                     capacity,
@@ -96,10 +116,25 @@ impl Lowerer<'_> {
                     );
                     self.implicit_return(failed, *span);
                     self.current = success;
-                    locals.insert(sender.0.clone(), Binding::Val(send_value));
-                    locals.insert(receiver.0.clone(), Binding::Val(receive_value));
+                    self.bind_pair_local(
+                        locals,
+                        &sender.0,
+                        sender.1,
+                        send_value,
+                        Type::SenderI64,
+                        *mutable,
+                    );
+                    self.bind_pair_local(
+                        locals,
+                        &receiver.0,
+                        receiver.1,
+                        receive_value,
+                        Type::ReceiverI64,
+                        *mutable,
+                    );
                 }
                 Statement::ReplyVal {
+                    mutable,
                     right,
                     receiver,
                     span,
@@ -127,10 +162,25 @@ impl Lowerer<'_> {
                     );
                     self.implicit_return(failed, *span);
                     self.current = success;
-                    locals.insert(right.0.clone(), Binding::Val(right_value));
-                    locals.insert(receiver.0.clone(), Binding::Val(receiver_value));
+                    self.bind_pair_local(
+                        locals,
+                        &right.0,
+                        right.1,
+                        right_value,
+                        Type::ReplyToI64,
+                        *mutable,
+                    );
+                    self.bind_pair_local(
+                        locals,
+                        &receiver.0,
+                        receiver.1,
+                        receiver_value,
+                        Type::ReplyReceiverI64,
+                        *mutable,
+                    );
                 }
                 Statement::RequestChannelVal {
+                    mutable,
                     sender,
                     receiver,
                     capacity,
@@ -165,10 +215,29 @@ impl Lowerer<'_> {
                     );
                     self.implicit_return(failed, *span);
                     self.current = success;
-                    locals.insert(sender.0.clone(), Binding::Val(send_value));
-                    locals.insert(receiver.0.clone(), Binding::Val(receive_value));
+                    self.bind_pair_local(
+                        locals,
+                        &sender.0,
+                        sender.1,
+                        send_value,
+                        Type::RequestSenderI64,
+                        *mutable,
+                    );
+                    self.bind_pair_local(
+                        locals,
+                        &receiver.0,
+                        receiver.1,
+                        receive_value,
+                        Type::RequestReceiverI64,
+                        *mutable,
+                    );
                 }
-                Statement::UnpackVal { names, value, span } => {
+                Statement::UnpackVal {
+                    mutable,
+                    names,
+                    value,
+                    span,
+                } => {
                     for (index, (name, name_span)) in names.iter().enumerate() {
                         if locals.contains_key(name)
                             || names[..index].iter().any(|(prior, _)| prior == name)
@@ -220,8 +289,9 @@ impl Lowerer<'_> {
                         }
                     });
                     self.current = next;
-                    for ((name, _), param) in names.iter().zip(params) {
-                        locals.insert(name.clone(), Binding::Val(param));
+                    for ((name, name_span), param) in names.iter().zip(params) {
+                        let ty = self.value_types[param.0];
+                        self.bind_pair_local(locals, name, *name_span, param, ty, *mutable);
                     }
                 }
                 Statement::Spawn { child, args, span } => {

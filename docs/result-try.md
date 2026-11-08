@@ -10,8 +10,8 @@ corresponding payload. Constructors and patterns spell the application
 explicitly, for example `Result<I64, Bool>.Err(true)`. A user declaration
 named `Result` is reserved. `?` requires the enclosing function to return a
 concrete `Result<U, E>` with the same error type `E`; the success types may
-differ. Generic functions and error conversion are
-still unimplemented. User data may store finite concrete `Result`
+differ. `?` inside a generic function and error conversion remain
+unimplemented. User data may store finite concrete `Result`
 applications when their nominal argument types were declared earlier.
 
 For `val x = expression?`, lowering evaluates `expression` once, then emits a
@@ -36,10 +36,11 @@ conversion from one error type to another.
 This is a normal return edge. After lowering, the exact capability-flow
 checker finds endpoints still owned at each source `?` error return, and
 lowering inserts a close for each of those rights on that edge. The ordinary
-Core verifier then checks the completed graph. This covers bare scalar
-channel endpoints in the current source subset; nested capability-bearing
-data and general lexical cleanup are not implemented. The existing Maude
-models do not prove this compiler lowering.
+Core verifier then checks the completed graph. This covers bare channel and
+reply rights and nested capability-bearing data in the current source subset,
+including rights held in mutable places. Lexical `with` cleanup and ordinary
+ownership verification use the same exact capability-flow graph. The existing
+Maude models do not prove this compiler lowering.
 The useful proof obligation is: for any checked expression yielding
 `Result<T, E>`, `?` evaluates it once, propagates the same error payload on failure,
 and yields the `Ok` payload on success while preserving the same ownership

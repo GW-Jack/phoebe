@@ -124,23 +124,27 @@ pub struct Body {
 pub enum Statement {
     Val(String, Span, Expr),
     ChannelVal {
+        mutable: bool,
         sender: (String, Span),
         receiver: (String, Span),
         capacity: Expr,
         span: Span,
     },
     ReplyVal {
+        mutable: bool,
         right: (String, Span),
         receiver: (String, Span),
         span: Span,
     },
     RequestChannelVal {
+        mutable: bool,
         sender: (String, Span),
         receiver: (String, Span),
         capacity: Expr,
         span: Span,
     },
     UnpackVal {
+        mutable: bool,
         names: Vec<(String, Span)>,
         value: Expr,
         span: Span,

@@ -1,12 +1,10 @@
 fn exercise() -> Result<I64, ResourceError> {
-  val (first, first_receiver) = channel<I64>(capacity = 1)?;
-  var active = first;
-  val (second, second_receiver) = channel<I64>(capacity = 1)?;
+  var (active, first_receiver) = channel<I64>(capacity = 1)?;
+  var (second, incoming) = channel<I64>(capacity = 1)?;
   val retired = active;
   retired.close();
   first_receiver.close();
   active = second;
-  var incoming = second_receiver;
   yield;
   val sent = active.send(42);
   active.close();

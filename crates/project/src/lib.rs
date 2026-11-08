@@ -827,6 +827,7 @@ fn shift_body(body: &mut Body, offset: usize) {
                 right,
                 receiver,
                 span,
+                ..
             } => {
                 shift_span(&mut right.1, offset);
                 shift_span(&mut receiver.1, offset);
@@ -837,6 +838,7 @@ fn shift_body(body: &mut Body, offset: usize) {
                 receiver,
                 capacity,
                 span,
+                ..
             } => {
                 shift_span(&mut sender.1, offset);
                 shift_span(&mut receiver.1, offset);
@@ -848,13 +850,16 @@ fn shift_body(body: &mut Body, offset: usize) {
                 receiver,
                 capacity,
                 span,
+                ..
             } => {
                 shift_span(&mut sender.1, offset);
                 shift_span(&mut receiver.1, offset);
                 shift_span(span, offset);
                 shift_expr(capacity, offset);
             }
-            Statement::UnpackVal { names, value, span } => {
+            Statement::UnpackVal {
+                names, value, span, ..
+            } => {
                 for (_, name_span) in names {
                     shift_span(name_span, offset);
                 }
