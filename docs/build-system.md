@@ -110,8 +110,9 @@ unit, so a source edit can rebuild more code than necessary. The separate
 `--cache-dir` mode of one-shot
 `build` persists exact-program native objects across processes, including the
 non-suspending generic project path. The linked generic cache stores one
-object; it is invalidated by a changed checked program, generic module, or
-compiler executable.
+object. Its key uses names for reachable generic callees, so adding or editing
+an unused generic definition does not rebuild it. Reachable changes and a new
+compiler executable invalidate the entry.
 
 `third-party/rust/Cargo.toml` and its lockfile pin third-party Rust versions.
 Reindeer generates `third-party/rust/BUCK` and sha256-checked archive rules.

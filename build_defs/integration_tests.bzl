@@ -169,10 +169,6 @@ def integration_tests(rust_test):
             "examples/multi_module/phoebe.toml",
             "examples/multi_module/app.phoebe",
             "examples/multi_module/math.phoebe",
-            "examples/generic_project/phoebe.toml",
-            "examples/generic_project/app.phoebe",
-            "examples/generic_project/math.phoebe",
-            "examples/generic_project/base.phoebe",
             "examples/request_exchange.phoebe",
             "examples/channel_exchange.phoebe",
             "examples/package_graph/app/phoebe.toml",
@@ -183,6 +179,21 @@ def integration_tests(rust_test):
             "examples/package_graph/math/helper.phoebe",
             "examples/package_graph/util/phoebe.toml",
             "examples/package_graph/util/api.phoebe",
+        ],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
+        name = "generic_project_tests",
+        crate_root = "tests/generic_project.rs",
+        srcs = [
+            "tests/generic_project.rs",
+            "examples/generic_project/phoebe.toml",
+            "examples/generic_project/app.phoebe",
+            "examples/generic_project/math.phoebe",
+            "examples/generic_project/base.phoebe",
         ],
         edition = "2024",
         deps = [":phoebe_lib"],

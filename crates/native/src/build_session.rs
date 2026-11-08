@@ -18,6 +18,7 @@ use super::{
     ObjectEmission, compile_functions, emit_object_linked, find_runtime_archive, link_executable,
     poll, spawn_poll_symbol,
 };
+use crate::cache::linked_program_key;
 use crate::reachability::{spawned_poll_children_in, standalone_direct_functions};
 
 #[derive(Clone, Default)]
@@ -341,13 +342,7 @@ impl NativeBuildSession {
         linked: &core::CheckedLinkedProgram,
         output: &Path,
     ) -> Result<NativeBuildReport, String> {
-        let mut hash = Sha256::new();
-        hash.update(b"PHOEBE-LINKED-OBJECT\0\x01");
-        hash.update(std::env::consts::OS);
-        hash.update(std::env::consts::ARCH);
-        hash.update(format!("{:?}", linked.program()));
-        hash.update(format!("{:?}", linked.generics().as_module()));
-        let key: [u8; 32] = hash.finalize().into();
+        let key: [u8; 32] = Sha256::digest(linked_program_key(linked)?).into();
         let mut next = self.clone();
         let (object, reused) = match &self.linked_object {
             Some((cached_key, object)) if *cached_key == key => (object.clone(), 1),

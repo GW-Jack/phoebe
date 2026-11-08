@@ -70,7 +70,7 @@ fn dead_pure_leaf(function: &Function) -> bool {
     })
 }
 
-fn program_key(program: &Program) -> Result<String, String> {
+fn reachable_concrete(program: &Program) -> Result<Vec<bool>, String> {
     let (main, _) = program
         .function("main")
         .ok_or("standalone executable requires `fn main() -> I64`")?;
@@ -95,6 +95,11 @@ fn program_key(program: &Program) -> Result<String, String> {
             }
         }
     }
+    Ok(reachable)
+}
+
+fn program_key(program: &Program) -> Result<String, String> {
+    let reachable = reachable_concrete(program)?;
     let mut normalized = program.clone();
     for (index, function) in normalized.functions.iter_mut().enumerate() {
         if !reachable[index] && dead_pure_leaf(function) {
@@ -126,11 +131,91 @@ fn program_key(program: &Program) -> Result<String, String> {
     Ok(format!("{normalized:?}"))
 }
 
-fn linked_program_key(linked: &core::CheckedLinkedProgram) -> Result<String, String> {
+pub(super) fn linked_program_key(linked: &core::CheckedLinkedProgram) -> Result<String, String> {
+    let program = linked.program();
+    let module = linked.generics().as_module();
+    let reachable_concrete = reachable_concrete(program)?;
+    let mut reachable_generic = vec![false; module.functions.len()];
+    let mut pending = Vec::new();
+    for (function, reachable) in program.functions.iter().zip(&reachable_concrete) {
+        if !reachable {
+            continue;
+        }
+        for block in &function.blocks {
+            for instruction in &block.instructions {
+                if let Operation::GenericCall { callee, .. } = instruction.operation {
+                    pending.push(callee);
+                }
+            }
+        }
+    }
+    while let Some(index) = pending.pop() {
+        let Some(function) = module.functions.get(index) else {
+            return Err("invalid generic target in native cache key".into());
+        };
+        if std::mem::replace(&mut reachable_generic[index], true) {
+            continue;
+        }
+        for block in &function.blocks {
+            for instruction in &block.instructions {
+                if let phoebe_generic_core::Operation::Call { callee, .. } = instruction.operation {
+                    pending.push(callee);
+                }
+            }
+        }
+    }
+    let mut selected = reachable_generic
+        .iter()
+        .enumerate()
+        .filter_map(|(index, reachable)| reachable.then_some(index))
+        .collect::<Vec<_>>();
+    selected.sort_by(|a, b| module.functions[*a].name.cmp(&module.functions[*b].name));
+    let mut old_to_new = vec![None; module.functions.len()];
+    for (new, old) in selected.iter().enumerate() {
+        old_to_new[*old] = Some(new);
+    }
+    let mut normalized_module = module.clone();
+    normalized_module.functions = selected
+        .iter()
+        .map(|index| module.functions[*index].clone())
+        .collect();
+    for function in &mut normalized_module.functions {
+        for block in &mut function.blocks {
+            for instruction in &mut block.instructions {
+                if let phoebe_generic_core::Operation::Call { callee, .. } =
+                    &mut instruction.operation
+                {
+                    *callee = old_to_new
+                        .get(*callee)
+                        .copied()
+                        .flatten()
+                        .ok_or("unreachable generic callee in cache key")?;
+                }
+            }
+        }
+    }
+    let mut normalized_program = program.clone();
+    for (index, function) in normalized_program.functions.iter_mut().enumerate() {
+        for block in &mut function.blocks {
+            for instruction in &mut block.instructions {
+                if let Operation::GenericCall { callee, .. } = &mut instruction.operation {
+                    *callee = if reachable_concrete[index] {
+                        old_to_new
+                            .get(*callee)
+                            .copied()
+                            .flatten()
+                            .ok_or("unreachable generic target in cache key")?
+                    } else {
+                        usize::MAX
+                    };
+                }
+            }
+        }
+    }
     Ok(format!(
         "PHOEBE-LINKED-OBJECT-KEY\0\x01{:?}\n{}",
-        linked.generics().as_module(),
-        program_key(linked.program())?
+        normalized_module,
+        program_key(&normalized_program)?
     ))
 }
 

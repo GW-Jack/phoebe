@@ -132,7 +132,8 @@ compiler sessions now reuse checked concrete bodies across edits, remapping
 generic callee and nominal type IDs. `build-session` reuses an exact linked
 native object on warm generic project builds and skips relinking an intact
 output. One-shot `build --cache-dir` also reuses a linked object across
-compiler processes after validating the cache entry. Per-function linked
+compiler processes after validating the cache entry. Its key ignores unused
+generic definitions and renumbering of reachable generic callees. Per-function linked
 object reuse remains open. The current IR has no
 suspension, hidden runtime context, or dictionary
 operations; adding any of them requires extending the sharing key and its
