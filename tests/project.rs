@@ -140,11 +140,8 @@ fn locked_transitive_package_modules_compile_and_rebuild() {
     std::fs::write(&util, renamed).unwrap();
     package::write_lock(&app).unwrap();
     let (renamed_core, report) = session.compile(&app).unwrap();
-    assert_eq!(report.load.changed_interfaces, ["math__util"]);
-    assert_eq!(
-        report.load.affected,
-        ["app", "math", "math__helper", "math__util"]
-    );
+    assert!(report.load.changed_interfaces.is_empty());
+    assert_eq!(report.load.affected, ["math__util"]);
     assert_eq!(report.reused_core_functions, 6);
     assert_eq!(renamed_core.interpret("main", &[]).unwrap(), 43);
 

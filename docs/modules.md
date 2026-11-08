@@ -50,8 +50,9 @@ direct dependency's root module by its alias; see `docs/packages.md` and
 `phoebe-project::ProjectSession` can load the same manifest repeatedly. It
 compares each module's exact source bytes and path to reuse unchanged parsed
 ASTs. Each successful load extracts an interface containing exported function
-signatures, exported data shapes, and any private data shapes reachable through
-those public signatures. A private type may remain opaque to importers while
+signatures (parameter modes and types, excluding local parameter names),
+exported data shapes, and any private data shapes reachable through those
+public signatures. A private type may remain opaque to importers while
 its layout still invalidates their build when it changes. Body edits leave
 that interface unchanged; relevant signature or data-layout edits change it. `LoadReport`
 lists parsed and reused modules, changed interfaces, and a conservative set

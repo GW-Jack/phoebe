@@ -21,7 +21,7 @@ pub struct DataInterface {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionInterface {
     pub name: String,
-    pub params: Vec<(String, ParamMode, TypeName)>,
+    pub params: Vec<(ParamMode, TypeName)>,
     pub return_type: TypeName,
 }
 
@@ -110,7 +110,7 @@ pub(super) fn from_program(name: &str, program: &syntax::Program) -> ModuleInter
                 params: function
                     .params
                     .iter()
-                    .map(|param| (param.name.clone(), param.mode, param.ty.clone()))
+                    .map(|param| (param.mode, param.ty.clone()))
                     .collect(),
                 return_type: function.return_type.clone(),
             })
