@@ -3,12 +3,12 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use phoebe::{core, frame_layout, native, package, project, syntax};
+use phoebe::{abi, core, frame_layout, native, package, project, syntax};
 
 mod build_session_cli;
 
 fn usage() -> &'static str {
-    "usage: phoebe lock <project> | phoebe deps <project> | phoebe check <file|project> | phoebe ir <file|project> | phoebe frames <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable> [--cache-dir <directory>] | phoebe build-session <project> -o <executable>"
+    "usage: phoebe lock <project> | phoebe deps <project> | phoebe check <file|project> | phoebe ir <file|project> | phoebe shapes <file|project> | phoebe frames <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable> [--cache-dir <directory>] | phoebe build-session <project> -o <executable>"
 }
 
 fn command() -> Result<(), String> {
@@ -20,6 +20,7 @@ fn command() -> Result<(), String> {
             | "deps"
             | "check"
             | "ir"
+            | "shapes"
             | "frames"
             | "clif"
             | "cost"
@@ -74,6 +75,35 @@ fn command() -> Result<(), String> {
                 return Err(usage().into());
             }
             print!("{}", program.as_program());
+        }
+        "shapes" => {
+            if args.next().is_some() {
+                return Err(usage().into());
+            }
+            let core = program.as_program();
+            let shapes = abi::Shapes::new(core)?;
+            println!("function\tposition\tmode\tparts");
+            for function in &core.functions {
+                for (index, (&value, mode)) in function.blocks[0]
+                    .params
+                    .iter()
+                    .zip(&function.param_modes)
+                    .enumerate()
+                {
+                    println!(
+                        "{}\t{}\t{:?}\t{:?}",
+                        function.name,
+                        index,
+                        mode,
+                        shapes.parts(function.value_types[value.0])?
+                    );
+                }
+                println!(
+                    "{}\treturn\t-\t{:?}",
+                    function.name,
+                    shapes.parts(function.return_type)?
+                );
+            }
         }
         "frames" => {
             if args.next().is_some() {

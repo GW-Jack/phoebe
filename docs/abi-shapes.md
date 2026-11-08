@@ -8,6 +8,10 @@ the retained frame layout counts them as words. Distinct nominal types can
 have equal transport shapes. This establishes a reusable shape key for
 generic compilation, but shape equality alone grants no right to inspect,
 copy, or close a value. Generic bodies and dictionaries are not yet emitted.
+`phoebe shapes <file|project>` prints each checked function's parameter and
+result transport parts. It omits hidden context, suspension, dictionary
+layout, and the target return convention, so its output is not a machine-code
+sharing key. `docs/generic-core.md` specifies the full compatibility rule.
 
 Core IR assigns one nominal type to each value. Cranelift lowering expands a
 value into an ordered sequence of scalar components at function, call, return,

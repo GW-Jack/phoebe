@@ -162,8 +162,8 @@ stability. Generic functions compile once per compatible ABI shape, with
 dictionaries for trait operations unavailable statically; concrete functions
 use direct calls. A later runtime-optimized mode may specialize measured hot
 paths. Only fixed operator symbols may map to named traits, without implicit
-conversions or hidden parking. See `docs/language-features.md` for the full
-design sketch and remaining questions.
+conversions or hidden parking. See `docs/generic-core.md` for the parametric
+Core contract and `docs/language-features.md` for the broader language sketch.
 
 ## 6. Middle IR contract
 

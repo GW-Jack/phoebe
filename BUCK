@@ -7,6 +7,7 @@ rust_library(
     srcs = ["src/lib.rs", "src/project_session.rs", "src/build_session.rs"],
     edition = "2024",
     deps = [
+        "//crates/abi:phoebe_abi",
         "//crates/capability:phoebe_capability",
         "//crates/core:phoebe_core",
         "//crates/frame:phoebe_frame",

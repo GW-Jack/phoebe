@@ -80,7 +80,10 @@ The diagnostic regression suite mutates three valid programs 1,000 times
 each and checks that parse/lower errors stay in source bounds. It also covers
 deeply nested expressions, types, and branches. This is bounded test evidence,
 not a proof for every input.
-`phoebe clif <file>` prints the pre-legalization Cranelift IR. The scalar
+`phoebe clif <file>` prints the pre-legalization Cranelift IR.
+`phoebe shapes <file|project>` prints checked transport signatures for
+inspecting prospective generic shape classes; generic definitions and
+dictionaries remain open under `docs/generic-core.md`. The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures
 remain design sketches. `docs/performance-baseline.md` records a
@@ -469,6 +472,7 @@ buck2 run //:phoebe -- run examples/request_backpressure.phoebe
 buck2 run //:phoebe -- frames examples/channel_exchange.phoebe
 buck2 run //:phoebe -- cost examples/copy.phoebe
 buck2 run //:phoebe -- ir examples/hello.phoebe
+buck2 run //:phoebe -- shapes examples/product.phoebe
 buck2 run //:phoebe -- build examples/borrow.phoebe -o /tmp/phoebe-borrow
 /tmp/phoebe-borrow
 buck2 test //...

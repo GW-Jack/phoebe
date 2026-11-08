@@ -55,6 +55,9 @@ describe the current IR and its limits.
 `phoebe frames <file|project>` prints planned suspension spill sets;
 `docs/native-frames.md` explains their current evidence and the remaining
 native poll ABI work.
+`phoebe shapes <file|project>` prints checked parameter and result transport
+shapes. `docs/generic-core.md` explains the additional proof and ABI work
+needed before generic functions can share native bodies by shape.
 
 Build and run the compiler with Buck2:
 
@@ -72,6 +75,7 @@ buck2 run //:phoebe -- run examples/request_backpressure.phoebe
 buck2 run //:phoebe -- run examples/capability_product.phoebe
 buck2 run //:phoebe -- run examples/with_product.phoebe
 buck2 run //:phoebe -- run examples/multi_module
+buck2 run //:phoebe -- shapes examples/product.phoebe
 buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 /tmp/phoebe-exchange
 buck2 test //...

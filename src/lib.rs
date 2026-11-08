@@ -1,6 +1,7 @@
 //! Compatibility facade and static runtime archive for the Phoebe toolchain.
 //! Phase implementations live in independently cacheable workspace crates.
 
+pub use phoebe_abi as abi;
 pub use phoebe_capability as capability_flow;
 pub use phoebe_core as core;
 pub use phoebe_frame as frame_layout;

@@ -402,6 +402,7 @@ dependencies = [
 name = "phoebe"
 version = "0.0.1"
 dependencies = [
+ "phoebe-abi",
  "phoebe-capability",
  "phoebe-core",
  "phoebe-frame",
