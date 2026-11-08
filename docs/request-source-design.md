@@ -49,5 +49,8 @@ exit.
 
 The concrete `I64` request syntax is implemented. General request payloads,
 capabilities inside arbitrary aggregates, and storable request outcomes remain
-open. The example in `examples/request_exchange.phoebe` runs through the
-interpreter, JIT, and standalone executable.
+open. The examples in `examples/request_exchange.phoebe` and
+`examples/request_backpressure.phoebe` run through the interpreter, JIT, and
+standalone executable. The latter uses a one-slot queue and two requests;
+its frame-plan test confirms the second request's two words are retained at
+the send retry, and a scheduler test observes parking and wakeup.

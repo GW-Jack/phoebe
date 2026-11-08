@@ -143,7 +143,10 @@ executable. Source now has `request_channel<I64>(capacity)?`,
 `request(value, right)`, request send and receive in exhaustive `when` arms,
 `unpack()`, and explicit or lexical close. Source tests compare interpreter,
 JIT, and standalone execution for delivery, closed-send recovery, cleanup,
-and resource limits. General capability-bearing aggregates remain open.
+resource limits, and a full request queue. The two-request, one-slot example
+retains the second request's nested reply right across a pending send and
+resumes after the first dequeue. General capability-bearing aggregates remain
+open.
 The runtime also has native ABI shims for this concrete request layout.
 Native poll tests cover atomic creation, enqueue/dequeue transfer, closed-send
 retention, and pending receive wakeup. Cranelift lowering uses these shims for
@@ -288,6 +291,8 @@ buck2 run //:phoebe -- run examples/spawn_close.phoebe --interp
 buck2 run //:phoebe -- run examples/channel_exchange.phoebe --interp
 buck2 run //:phoebe -- run examples/channel_exchange.phoebe
 buck2 run //:phoebe -- run examples/reply_exchange.phoebe
+buck2 run //:phoebe -- run examples/request_exchange.phoebe
+buck2 run //:phoebe -- run examples/request_backpressure.phoebe
 buck2 run //:phoebe -- frames examples/channel_exchange.phoebe
 buck2 run //:phoebe -- cost examples/copy.phoebe
 buck2 run //:phoebe -- ir examples/hello.phoebe

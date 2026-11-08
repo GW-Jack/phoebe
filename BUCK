@@ -257,7 +257,7 @@ rust_test(
 rust_test(
     name = "source_requests_tests",
     crate_root = "tests/source_requests.rs",
-    srcs = ["tests/source_requests.rs", "examples/request_exchange.phoebe"],
+    srcs = ["tests/source_requests.rs", "examples/request_exchange.phoebe", "examples/request_backpressure.phoebe"],
     edition = "2024",
     deps = [":phoebe_lib"],
     resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},

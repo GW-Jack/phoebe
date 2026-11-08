@@ -1,4 +1,4 @@
-use phoebe::runtime::ScopeLimits;
+use phoebe::runtime::{NativePollTask, Scheduler, ScopeLimits};
 use phoebe::{core, native, syntax};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -60,6 +60,53 @@ fn source_request_service_transfers_reply_right_through_queue() {
             0
         );
     }
+}
+
+#[test]
+fn full_request_queue_retains_nested_right_across_send_retry() {
+    let source = include_str!("../examples/request_backpressure.phoebe");
+    let program = program(source);
+    let (function_id, exchange) = program.function("exchange").unwrap();
+    let sends = exchange
+        .blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(block, item)| {
+            if let core::Terminator::RequestSend { request, .. } = item.terminator {
+                Some((block, request))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(sends.len(), 2);
+    let layout = native::frame_word_layouts(&program)
+        .unwrap()
+        .into_iter()
+        .find(|layout| layout.function == function_id)
+        .unwrap();
+    let second_retry = layout
+        .resumes
+        .iter()
+        .find(|point| point.block.0 == sends[1].0)
+        .unwrap();
+    assert!(second_retry.values.contains(&sends[1].1));
+    let retained = layout
+        .values
+        .iter()
+        .find(|slot| slot.id == sends[1].1)
+        .unwrap();
+    assert_eq!(retained.words.end - retained.words.start, 2);
+
+    assert_engines(source, 42);
+    let executable = native::compile_poll_jit(&program, "main").unwrap();
+    let root = unsafe { NativePollTask::new(executable.entry(), executable.layout().total_words) }
+        .unwrap();
+    let mut scheduler = Scheduler::new(root, 2, 1, 2).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
+    assert!(scheduler.stats().parks >= 2);
+    assert!(scheduler.stats().wakes >= 2);
+    scheduler.verify().unwrap();
 }
 
 #[test]
