@@ -61,6 +61,7 @@ buck2 test //crates/core:unit_tests //crates/runtime:unit_tests //crates/native:
 buck2 test //:compiler_tests
 buck2 test //:core_lexical_loans_tests
 buck2 test //:core_lexical_send_tests
+buck2 test //:source_lexical_borrows_tests
 buck2 test //:source_traffic_tests
 buck2 test //:source_replies_tests
 buck2 test //:source_requests_tests

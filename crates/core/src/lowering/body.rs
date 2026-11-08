@@ -11,6 +11,9 @@ impl Lowerer<'_> {
         body: &Body,
         locals: &HashMap<String, Binding>,
     ) -> Result<Option<TypedValue>, Diagnostic> {
+        if matches!(value.kind, ExprKind::Borrow { .. }) {
+            return self.borrow_body(name, span, value, body, locals);
+        }
         let (owner, ty) = self.expr(value, locals)?;
         if self.capability_layout.leaves(ty) == 0 {
             return Err(Diagnostic::new(

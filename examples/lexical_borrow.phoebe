@@ -1,0 +1,11 @@
+fn main() -> I64 {
+  var x = 40;
+  with outer = &mut x {
+    with inner = &mut outer {
+      inner = inner + 1;
+      yield;
+      inner = inner + 1;
+    };
+  };
+  x
+}

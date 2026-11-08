@@ -81,6 +81,11 @@ as `copy(x)`. A `val` owner may mutate its object through an exclusive borrow
 without rebinding its name. Borrow roots and last uses are inferred, but
 borrows cannot enter a child task or message.
 
+The 0.0.1 scalar subset spells a lexical region as `with r = &x { ... }` or
+`with r = &mut x { ... }`. The block ends the loan, including on `?` failure;
+nested blocks may reborrow an alias. Calls inside a live lexical loan and
+general inferred last-use regions remain future work.
+
 ## 4. Tasks, scopes, and channels
 
 `spawn` starts a lightweight task. Scalars and small fixed-size closed
@@ -144,9 +149,10 @@ failure. Failure does not run user destructors. The exact failure payload and
 selection policy among multiple receivers remain open.
 
 `?` propagates an existing `Err` as a normal early return; it performs no
-implicit `Option` or error-type conversion. A lexical `with` owns a built-in
+implicit `Option` or error-type conversion. A lexical `with` can own a built-in
 communication capability or an aggregate containing them and closes any
-still-owned capabilities on every normal exit, including `?`. A rejected send
+still-owned capabilities on every normal exit, including `?`. A scalar borrow
+`with` ends its loan on those exits. A rejected send
 returns its intact message. The caller may recover it or consume it with the
 compiler-derived, structural `close_caps()`; this runs no user code. A named
 `send_or_close` convenience operation may explicitly discard it on rejection.

@@ -16,7 +16,11 @@ fn arguments_height(arguments: &[CallArgument]) -> usize {
 
 pub(crate) fn expr_height(expr: &Expr) -> usize {
     1 + match &expr.kind {
-        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(_, _) => 0,
+        ExprKind::Int(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Name(_)
+        | ExprKind::Borrow { .. }
+        | ExprKind::Member(_, _) => 0,
         ExprKind::Copy(value)
         | ExprKind::Neg(value)
         | ExprKind::Not(value)

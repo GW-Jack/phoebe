@@ -1,8 +1,9 @@
 # Lexical borrow regions
 
-Status: first executable Core slice plus remaining design obligations. Current
-source supports call-scoped I64 and Bool loans. Hand-built checked Core also
-supports explicit `borrow.begin` and `borrow.end` for task-local scalar places.
+Status: executable scalar source and Core slice plus remaining design
+obligations. Source supports call-scoped loans and scoped `with` bindings for
+I64 and Bool places. Checked Core supports explicit `borrow.begin`,
+`borrow.reborrow`, and `borrow.end` for task-local scalar places.
 The finite `formal/lexical_borrows.maude` model checks a two-level instance of
 the target rules below; it is not a proof of Core or native code.
 
@@ -41,11 +42,15 @@ scope join, or a call. A loan may cross `yield`, `channel.send`, or
 root place, and the native poll frame gives the root a stable address.
 Interpreter, JIT, and standalone tests exercise direct loans, nested loans
 spanning yield, and loans spanning channel send and receive. The receive test
-runs both delivered and closed outcomes. The source lowerer does not yet emit
-these operations.
+runs both delivered and closed outcomes. Source `with r = &x { ... }` and
+`with r = &mut x { ... }` emit these operations for scalar `val` or `var`
+owners. A nested `with` may reborrow a lexical alias. The lowerer ends loans
+in reverse order on normal and `?` exits. Source examples cover nested loans
+across yield and an exclusive loan across channel receive.
 
 Next, integrate this Core parent relation with the existing call-only
-`LoanRegion` metadata and source lowering. Ordinary ownership and
+`LoanRegion` metadata so a lexical alias can be forwarded to a call and a
+borrowed parameter can be reborrowed. Ordinary ownership and
 capability-flow verification remain separate passes over the same explicit
 Core edges. The native frame plan must extend the stable-root check to remaining
 suspension points, and cancellation must release loans before their slots. These checks should

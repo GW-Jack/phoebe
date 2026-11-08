@@ -1,5 +1,18 @@
 def integration_tests(rust_test):
     rust_test(
+        name = "source_lexical_borrows_tests",
+        crate_root = "tests/source_lexical_borrows.rs",
+        srcs = [
+            "tests/source_lexical_borrows.rs",
+            "examples/lexical_borrow.phoebe",
+            "examples/lexical_channel.phoebe",
+        ],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
         name = "core_lexical_send_tests",
         crate_root = "tests/core_lexical_send.rs",
         srcs = ["tests/core_lexical_send.rs", "examples/channel_exchange.phoebe"],

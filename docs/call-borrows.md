@@ -41,8 +41,9 @@ Phoebe caller owns a place for them. Interpreter, JIT, and standalone tests
 exercise mutable forwarding and a shared borrow of a `val` temporary across
 the receive. This is tested behavior, not a general proof of region safety.
 
-This subset has no first-class reference variables, field or element borrows,
-region inference, or cross-task references. It does not establish safety for
-the future general borrow system. `docs/lexical-regions.md` records the next
-Core boundary, backed by a finite Maude design model; neither is implemented
-as a general source borrow checker yet.
+Call-site borrowing remains one subset. Scoped scalar reference aliases now
+use `with r = &x { ... }` or `with r = &mut x { ... }` and explicit Core begin/end
+operations. The two forms do not yet compose inside a live lexical loan:
+calls are rejected until their alias and suspension rules are checked together.
+Field or element borrows, region inference, and cross-task references remain
+unsupported. See `docs/lexical-regions.md` for that boundary.

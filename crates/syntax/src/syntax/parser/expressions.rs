@@ -15,6 +15,18 @@ impl Parser {
     pub(super) fn expr_inner(&mut self, min_bp: u8) -> Result<Expr, Diagnostic> {
         let mut lhs = match self.current().clone() {
             Token {
+                kind: TokenKind::Amp,
+                span,
+            } => {
+                self.pos += 1;
+                let mutable = self.eat(&TokenKind::Mut).is_some();
+                let (name, end) = self.name()?;
+                Expr {
+                    kind: ExprKind::Borrow { name, mutable },
+                    span: span.join(end),
+                }
+            }
+            Token {
                 kind: TokenKind::With,
                 span,
             } => {

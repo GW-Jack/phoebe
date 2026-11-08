@@ -85,9 +85,11 @@ pub(super) fn body_can_spawn(body: &Body, effects: &HashMap<String, bool>) -> bo
     }
     fn expr(value: &Expr, effects: &HashMap<String, bool>) -> bool {
         match &value.kind {
-            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(_, _) => {
-                false
-            }
+            ExprKind::Int(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Name(_)
+            | ExprKind::Borrow { .. }
+            | ExprKind::Member(_, _) => false,
             ExprKind::Copy(value)
             | ExprKind::Neg(value)
             | ExprKind::Not(value)
@@ -207,7 +209,11 @@ impl Scan<'_> {
 
     fn expr(&mut self, expr: &Expr) {
         match &expr.kind {
-            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(_, _) => {}
+            ExprKind::Int(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Name(_)
+            | ExprKind::Borrow { .. }
+            | ExprKind::Member(_, _) => {}
             ExprKind::Copy(value)
             | ExprKind::Neg(value)
             | ExprKind::Not(value)

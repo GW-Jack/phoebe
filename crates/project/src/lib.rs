@@ -658,7 +658,7 @@ fn rewrite_expr(
         )
     };
     match &mut expr.kind {
-        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) => {}
+        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Borrow { .. } => {}
         ExprKind::Copy(inner)
         | ExprKind::Neg(inner)
         | ExprKind::Not(inner)
@@ -907,7 +907,11 @@ fn shift_body(body: &mut Body, offset: usize) {
 fn shift_expr(expr: &mut Expr, offset: usize) {
     shift_span(&mut expr.span, offset);
     match &mut expr.kind {
-        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(_, _) => {}
+        ExprKind::Int(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Name(_)
+        | ExprKind::Borrow { .. }
+        | ExprKind::Member(_, _) => {}
         ExprKind::Copy(value)
         | ExprKind::Neg(value)
         | ExprKind::Not(value)

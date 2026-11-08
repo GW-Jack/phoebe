@@ -39,7 +39,7 @@ and products with primitive, earlier nominal, or communication capability fields
 `examples/capability_product.phoebe` closes a nested product with channel and
 request rights after an owned call.
 It supports arithmetic, conditions, exhaustive `when`, mutable locals, loops,
-concrete `Option<T>` values, call-site scalar borrows, and `?` on concrete
+concrete `Option<T>` values, call-site and scoped scalar borrows, and `?` on concrete
 `Result<T, E>` applications with finite payloads. Nominal values have affine move
 checking across branches and loops, and `copy(x)` records an explicit
 fixed-size copy cost. The compiler then

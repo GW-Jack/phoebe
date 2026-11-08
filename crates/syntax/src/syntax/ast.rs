@@ -182,6 +182,10 @@ pub enum ExprKind {
     Int(i64),
     Bool(bool),
     Name(String),
+    Borrow {
+        name: String,
+        mutable: bool,
+    },
     Copy(Box<Expr>),
     Neg(Box<Expr>),
     Not(Box<Expr>),

@@ -5,6 +5,7 @@ mod cleanup;
 mod communication;
 mod data;
 mod expr;
+mod lexical_borrow;
 mod request;
 mod reuse;
 mod spawn_scan;
@@ -58,6 +59,7 @@ struct Lowerer<'a> {
     scoped_cleanup_exits: Vec<(BlockId, ValueId, Span)>,
     task_scope_stack: Vec<(TaskScopeId, Span)>,
     task_scope_returns: Vec<(BlockId, Vec<(TaskScopeId, Span)>)>,
+    lexical_loans: Vec<ValueId>,
     next_task_scope: usize,
     automatic_checkpoints: bool,
 }
@@ -90,6 +92,7 @@ impl<'a> Lowerer<'a> {
             scoped_cleanup_exits: Vec::new(),
             task_scope_stack: Vec::new(),
             task_scope_returns: Vec::new(),
+            lexical_loans: Vec::new(),
             next_task_scope: 0,
             automatic_checkpoints,
         };
@@ -153,6 +156,10 @@ impl<'a> Lowerer<'a> {
     }
 
     fn implicit_return(&mut self, value: ValueId, span: Span) {
+        for index in (0..self.lexical_loans.len()).rev() {
+            let reference = self.lexical_loans[index];
+            self.emit_effect(Operation::BorrowEnd(reference), span);
+        }
         self.terminate(Terminator::Return(value));
         self.implicit_cleanup_returns.push((self.current, span));
         if !self.task_scope_stack.is_empty() {

@@ -155,9 +155,11 @@ Hand-built Core now has explicit scalar `borrow.begin`, `borrow.reborrow`, and
 `borrow.end` operations with an exact active and frozen loan CFG check. A
 lexical loan may cross `yield`, `channel.send`, or `channel.receive`: frame
 analysis retains the scalar root and reference value at stable addresses.
-Interpreter, JIT, and standalone tests exercise these paths. Source syntax
-does not yet emit lexical loans; other suspension points and failure unwind
-remain open. See `docs/lexical-regions.md`.
+Interpreter, JIT, and standalone tests exercise these paths. Source
+`with r = &x { ... }` or `with r = &mut x { ... }` now emits lexical scalar
+loans, including nested reborrows and reverse cleanup on `?` failure. Other
+suspension points, calls during a lexical loan, and failure unwind remain
+open. See `docs/lexical-regions.md`.
 The CLI now carries an immutable `CheckedProgram` from final Core verification
 through interpreter, JIT, object emission, and the optional object cache.
 Native child emission accepts a borrowed verification token rather than

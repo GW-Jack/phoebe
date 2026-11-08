@@ -254,6 +254,12 @@ impl Lowerer<'_> {
                     }
                 });
             }
+            ExprKind::Borrow { .. } => {
+                return Err(Diagnostic::new(
+                    expr.span,
+                    "borrow expression requires a with binding",
+                ));
+            }
             ExprKind::Copy(inner) => {
                 if let ExprKind::Name(name) = &inner.kind {
                     let binding = locals.get(name).copied().ok_or_else(|| {

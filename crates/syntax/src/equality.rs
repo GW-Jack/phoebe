@@ -193,6 +193,16 @@ fn expr(a: &Expr, b: &Expr, delta: isize) -> bool {
         (ExprKind::Int(a), ExprKind::Int(b)) => a == b,
         (ExprKind::Bool(a), ExprKind::Bool(b)) => a == b,
         (ExprKind::Name(a), ExprKind::Name(b)) => a == b,
+        (
+            ExprKind::Borrow {
+                name: an,
+                mutable: am,
+            },
+            ExprKind::Borrow {
+                name: bn,
+                mutable: bm,
+            },
+        ) => an == bn && am == bm,
         (ExprKind::Copy(a), ExprKind::Copy(b))
         | (ExprKind::Neg(a), ExprKind::Neg(b))
         | (ExprKind::Not(a), ExprKind::Not(b))
