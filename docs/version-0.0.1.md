@@ -32,6 +32,11 @@ future surface feature or optimization must land in 0.0.1, but memory safety,
 scoped concurrency, and the compiler's cost discipline cannot be represented
 only by prose at release.
 
+The general channel-message ownership and representation obligation is in
+[`typed-messages.md`](typed-messages.md). Its staged gates identify the
+remaining bridge from the existing `I64` and `Request<I64>` queues to
+capability-bearing aggregate messages.
+
 ## Current executable slice
 
 The Rust workspace currently parses functions over I64, Bool, Unit, nominal sums with

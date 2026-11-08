@@ -26,6 +26,15 @@ impl Shape {
     }
 }
 
+/// A concrete channel message's transport and ownership identity. Equal
+/// transport shapes do not imply equal types or equal cleanup behavior.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MessageLayout {
+    pub ty: Type,
+    pub shape: Shape,
+    pub close: ClosePlan,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CapabilityPart {
     pub part: usize,
@@ -75,6 +84,7 @@ pub struct Shapes {
     data: Vec<Shape>,
     capabilities: Vec<Vec<CapabilityPart>>,
     closes: Vec<ClosePlan>,
+    sendable: Vec<bool>,
 }
 
 impl Shapes {
@@ -85,6 +95,7 @@ impl Shapes {
             data: Vec::with_capacity(program.data.len()),
             capabilities: Vec::with_capacity(program.data.len()),
             closes: Vec::with_capacity(program.data.len()),
+            sendable: Vec::with_capacity(program.data.len()),
         };
         for definition in &program.data {
             if definition.fields.is_empty() == definition.variants.is_empty() {
@@ -94,6 +105,18 @@ impl Shapes {
                 ));
             }
             let mut capability_parts = Vec::new();
+            let sendable = if !definition.fields.is_empty() {
+                definition
+                    .fields
+                    .iter()
+                    .all(|(_, ty)| shapes.is_sendable(*ty))
+            } else {
+                definition
+                    .payloads
+                    .iter()
+                    .flatten()
+                    .all(|ty| shapes.is_sendable(*ty))
+            };
             let (parts, close) = if !definition.fields.is_empty() {
                 let mut parts = Vec::new();
                 let mut close_fields = Vec::new();
@@ -142,8 +165,35 @@ impl Shapes {
             shapes.data.push(Shape { parts });
             shapes.capabilities.push(capability_parts);
             shapes.closes.push(close);
+            shapes.sendable.push(sendable);
         }
         Ok(shapes)
+    }
+
+    fn is_sendable(&self, ty: Type) -> bool {
+        match ty {
+            Type::RefI64
+            | Type::RefMutI64
+            | Type::RefBool
+            | Type::RefMutBool
+            | Type::ReplyReceiverI64 => false,
+            Type::Data(id) => self.sendable.get(id.0).copied().unwrap_or(false),
+            _ => true,
+        }
+    }
+
+    /// Build a descriptor only for a closed or transferable concrete value.
+    /// The native runtime must additionally validate active rights before
+    /// publishing a queue slot; this is a static layout, not a runtime proof.
+    pub fn message_layout(&self, ty: Type) -> Result<MessageLayout, String> {
+        if !self.is_sendable(ty) {
+            return Err("message type is not sendable in the current ABI subset".into());
+        }
+        Ok(MessageLayout {
+            ty,
+            shape: self.shape(ty)?,
+            close: self.close_plan(ty)?,
+        })
     }
 
     pub fn shape(&self, ty: Type) -> Result<Shape, String> {
@@ -396,6 +446,86 @@ mod tests {
                     ],
                 },
             ])
+        );
+    }
+
+    #[test]
+    fn message_layout_distinguishes_equal_transport_and_rejects_nested_reference() {
+        let program = core::Program {
+            data: vec![
+                core::DataDef {
+                    name: "Closed".into(),
+                    variants: vec![],
+                    payloads: vec![],
+                    fields: vec![("value".into(), Type::I64)],
+                },
+                core::DataDef {
+                    name: "Right".into(),
+                    variants: vec![],
+                    payloads: vec![],
+                    fields: vec![("sender".into(), Type::SenderI64)],
+                },
+                core::DataDef {
+                    name: "Borrowed".into(),
+                    variants: vec![],
+                    payloads: vec![],
+                    fields: vec![("reference".into(), Type::RefI64)],
+                },
+                core::DataDef {
+                    name: "NestedBorrow".into(),
+                    variants: vec!["None".into(), "Some".into()],
+                    payloads: vec![None, Some(Type::Data(DataId(2)))],
+                    fields: vec![],
+                },
+            ],
+            functions: vec![],
+        };
+        let shapes = Shapes::new(&program).unwrap();
+        let closed = shapes.message_layout(Type::Data(DataId(0))).unwrap();
+        let right = shapes.message_layout(Type::Data(DataId(1))).unwrap();
+        assert_eq!(closed.shape, right.shape);
+        assert_ne!(closed.ty, right.ty);
+        assert_eq!(closed.close, ClosePlan::Empty);
+        assert_eq!(
+            right.close,
+            ClosePlan::Leaf {
+                part: 0,
+                kind: Type::SenderI64,
+            }
+        );
+        assert!(shapes.message_layout(Type::RefI64).is_err());
+        assert!(shapes.message_layout(Type::ReplyReceiverI64).is_err());
+        assert!(shapes.message_layout(Type::Data(DataId(3))).is_err());
+    }
+
+    #[test]
+    fn message_layout_keeps_tagged_cleanup_and_zero_width_occupancy() {
+        let program = core::Program {
+            data: vec![core::DataDef {
+                name: "MaybeRight".into(),
+                variants: vec!["None".into(), "Some".into()],
+                payloads: vec![None, Some(Type::ReplyToI64)],
+                fields: vec![],
+            }],
+            functions: vec![],
+        };
+        let shapes = Shapes::new(&program).unwrap();
+        assert_eq!(
+            shapes.message_layout(Type::Unit).unwrap().shape.parts(),
+            &[]
+        );
+        assert_eq!(
+            shapes.message_layout(Type::Data(DataId(0))).unwrap().close,
+            ClosePlan::Tagged {
+                tag_part: 0,
+                arms: vec![
+                    ClosePlan::Empty,
+                    ClosePlan::Leaf {
+                        part: 1,
+                        kind: Type::ReplyToI64,
+                    },
+                ],
+            }
         );
     }
 }
