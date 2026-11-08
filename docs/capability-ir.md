@@ -227,15 +227,18 @@ and derives graphs for creation, close, send/receive, and jump edges. Pending
 send/receive uses a `Retry` suspension edge: it records the retained live
 slots but does not re-enter the block or replay its instructions. Source
 lowering invokes the exact checker so `phoebe check` rejects a forgotten
-right. A `with` block closes one bare endpoint on lexical fall-through
-when its slot is still live after the body. Inner scopes are resolved first.
+right. A `with` block closes its bare right or all leaves of a product on
+lexical fall-through when that owner is still live after the body. The exact
+flow checker rejects partial ownership of a product at this edge; the source
+lowerer emits one `close.caps` for a live product. Inner scopes are resolved
+first.
 On `?`, the error-edge cleanup closes all live bare endpoints and product owners.
 Neither path emits a close after explicit close or successful transfer.
 An expression-valued `with` passes its capability-free result through a
 block parameter after the close. Returning the scoped endpoint is rejected.
-Capability-bearing sums, place replacement, match discard, and lexical
-`with` ownership of a product remain open. Explicit structural `close_caps()`
-is supported for products.
+Capability-bearing sums, place replacement, and match discard remain open.
+`examples/with_product.phoebe` exercises lexical structural close; nested
+aliases and spawn transfer have source tests.
 
 An internal Core function may own a bare endpoint parameter. A synchronous
 call transfers the caller's slot to the callee's entry slot; the callee must

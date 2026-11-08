@@ -1,0 +1,18 @@
+data Pair { sender: Sender<I64>, receiver: Receiver<I64> }
+
+fn acquire(capacity: I64) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  val pair = Pair(sender, receiver);
+  val answer = with owned = pair {
+    val (extra_sender, extra_receiver) = channel<I64>(capacity = capacity)?;
+    extra_sender.close();
+    extra_receiver.close();
+    Result<I64, ResourceError>.Ok(42)
+  };
+  answer
+}
+
+fn main() -> I64 = when (acquire(1)) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}

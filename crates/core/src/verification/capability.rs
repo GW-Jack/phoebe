@@ -58,7 +58,7 @@ pub(crate) fn capability_graph(
     };
     let mut lexical = vec![None; function.blocks.len()];
     for (block, value, _) in scoped_cleanup_exits {
-        lexical[block.0] = Some(slot(*value));
+        lexical[block.0] = Some(slots[value.0].clone());
     }
     let mut cleanup_return = vec![false; function.blocks.len()];
     for block in implicit_cleanup_returns {
@@ -143,8 +143,13 @@ pub(crate) fn capability_graph(
                 _ => {}
             }
         }
-        if let Some(slot) = lexical[block_id] {
-            actions.push(CapAction::CloseIfLive(slot));
+        if let Some(range) = &lexical[block_id] {
+            let leaves = range.clone().map(capability_flow::Slot).collect::<Vec<_>>();
+            if leaves.len() == 1 {
+                actions.push(CapAction::CloseIfLive(leaves[0]));
+            } else {
+                actions.push(CapAction::CloseGroupIfLive(leaves));
+            }
         }
         let edge = |target: CapTarget, actions| capability_flow::Edge { target, actions };
         let exits = match &block.terminator {

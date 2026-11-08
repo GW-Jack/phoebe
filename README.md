@@ -70,6 +70,7 @@ buck2 run //:phoebe -- run examples/reply_exchange.phoebe
 buck2 run //:phoebe -- run examples/request_exchange.phoebe
 buck2 run //:phoebe -- run examples/request_backpressure.phoebe
 buck2 run //:phoebe -- run examples/capability_product.phoebe
+buck2 run //:phoebe -- run examples/with_product.phoebe
 buck2 run //:phoebe -- run examples/multi_module
 buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 /tmp/phoebe-exchange

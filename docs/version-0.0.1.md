@@ -249,8 +249,8 @@ cleanup emits one structural close per live product, and interpreter, JIT,
 and standalone source tests cover nested close, owned call/return, whole
 unpack, spawn transfer, and resource failure cleanup. Interpreter and JIT
 tests also cover task-limit rejection before product transfer.
-Capability-bearing sums, mutable product places, and lexical `with` ownership
-of a product remain unsupported. The finite models and tests do not prove
+Capability-bearing sums and mutable product places remain unsupported. The
+finite models and tests do not prove
 correctness of the compiler or generated machine code.
 The bounded two-request Maude model explores both successful retry and
 receiver closure during a pending send. It checks encoded queue/right
@@ -306,7 +306,7 @@ only when used. General source capability safety and cancellation cleanup
 remain open. `docs/capability-ir.md` specifies
 the integration boundary.
 Source `with name = capability { ... }` provides lexical fall-through
-cleanup for one bare channel or reply capability. The grouped form
+cleanup for one bare right or a whole product that owns rights. The grouped form
 `with (output = sender, input = receiver) { ... }` nests those regions for
 several rights, including request channel endpoints. Exact capability flow
 adds a close only when that right remains live. Explicit close or successful
@@ -317,8 +317,10 @@ capability-free value through a Core block parameter; the endpoint closes
 before that value leaves the block. `examples/with_result.phoebe` exercises
 normal and `?` exits; `examples/with_wait.phoebe` retains the owner across
 channel suspension before cleanup. `examples/with_pair.phoebe` covers grouped
-rights on normal and `?` exits. Aggregate cleanup and general failure cleanup
-remain open.
+rights on normal and `?` exits. `examples/with_product.phoebe` covers
+structural product cleanup; source tests also cover nested aliases and spawn
+transfer. Capability-bearing sums, mutable product places, and general
+failure cleanup remain open.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
 retry across both operations. Generated send and receive leaves use retained

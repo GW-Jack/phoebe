@@ -2,7 +2,7 @@
 //! Core IR derives these graphs for channel creation, close, send, receive,
 //! and block edges. `Retry` resumes a terminator with its retained frame.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Slot(pub usize);
@@ -25,6 +25,10 @@ pub enum Action {
     Close(Slot),
     /// Provisional lexical cleanup: close only if this scope still owns it.
     CloseIfLive(Slot),
+    /// A product owner has one conditional close for all of its leaves.
+    /// Partial ownership is invalid; the first slot identifies the owner
+    /// when lowering this provisional action to Core.
+    CloseGroupIfLive(Vec<Slot>),
     Transfer(Slot),
 }
 
@@ -190,6 +194,42 @@ fn apply(actions: &[Action], state: &mut [bool], block: usize) -> Result<Vec<Slo
                 Some(_) => {}
                 None => return Err(format!("block {block}: invalid capability slot {}", slot.0)),
             },
+            Action::CloseGroupIfLive(slots) => {
+                let Some(first) = slots.first() else {
+                    return Err(format!("block {block}: empty lexical capability group"));
+                };
+                let mut live = 0;
+                let mut seen = HashSet::with_capacity(slots.len());
+                for slot in slots {
+                    if !seen.insert(*slot) {
+                        return Err(format!(
+                            "block {block}: duplicate lexical capability slot {}",
+                            slot.0
+                        ));
+                    }
+                    match state.get(slot.0) {
+                        Some(true) => live += 1,
+                        Some(false) => {}
+                        None => {
+                            return Err(format!(
+                                "block {block}: invalid capability slot {}",
+                                slot.0
+                            ));
+                        }
+                    }
+                }
+                if live != 0 && live != slots.len() {
+                    return Err(format!(
+                        "block {block}: partial lexical capability ownership"
+                    ));
+                }
+                if live == slots.len() {
+                    for slot in slots {
+                        state[slot.0] = false;
+                    }
+                    lexical_closes.push(*first);
+                }
+            }
         }
     }
     Ok(lexical_closes)
@@ -288,4 +328,36 @@ pub fn verify(graph: &Graph) -> Result<FlowFacts, String> {
         return Err("unreachable capability block".into());
     }
     Ok(facts)
+}
+
+#[cfg(test)]
+mod lexical_group_tests {
+    use super::*;
+
+    #[test]
+    fn lexical_product_closes_all_or_none() {
+        let slots = vec![Slot(0), Slot(1)];
+        let mut graph = Graph {
+            slots: 2,
+            entry_live: slots.clone(),
+            blocks: vec![Block {
+                actions: vec![
+                    Action::CloseGroupIfLive(slots.clone()),
+                    Action::CloseGroupIfLive(slots.clone()),
+                ],
+                exits: vec![Edge {
+                    target: Target::Return,
+                    actions: vec![],
+                }],
+            }],
+        };
+        assert_eq!(verify(&graph).unwrap().lexical_closes, vec![(0, Slot(0))]);
+
+        graph.blocks[0].actions.insert(0, Action::Close(Slot(0)));
+        assert!(
+            verify(&graph)
+                .unwrap_err()
+                .contains("partial lexical capability ownership")
+        );
+    }
 }

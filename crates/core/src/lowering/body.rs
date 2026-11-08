@@ -12,16 +12,7 @@ impl Lowerer<'_> {
         locals: &HashMap<String, Binding>,
     ) -> Result<Option<TypedValue>, Diagnostic> {
         let (owner, ty) = self.expr(value, locals)?;
-        if !matches!(
-            ty,
-            Type::SenderI64
-                | Type::ReceiverI64
-                | Type::ReplyToI64
-                | Type::ReplyReceiverI64
-                | Type::RequestI64
-                | Type::RequestSenderI64
-                | Type::RequestReceiverI64
-        ) {
+        if self.capability_layout.leaves(ty) == 0 {
             return Err(Diagnostic::new(
                 value.span,
                 "with requires a communication capability",
