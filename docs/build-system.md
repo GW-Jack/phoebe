@@ -52,8 +52,12 @@ buck2 test //:cost_acceptance_tests
 buck2 test //...
 ```
 
-The root `BUCK` declares each Cargo integration suite as its own Buck2 target;
-each `crates/*/BUCK` declares its crate tests. Buck2 can build independent
+The root `BUCK` declares the CLI and facade. `build_defs/integration_tests.bzl`
+declares each Cargo integration suite as its own Buck2 target in the root
+package. Keeping these targets in the root package preserves relative
+`include_str!` paths from `tests/` to `examples/`; each suite still lists only
+the example files it reads. Each `crates/*/BUCK` declares its crate tests.
+Buck2 can build independent
 crates concurrently and cache
 their outputs. The configuration currently uses Buck2's bundled prelude and
 system demo toolchains. No remote cache is configured. Build inputs and
