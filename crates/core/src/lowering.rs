@@ -2,6 +2,7 @@ use super::*;
 
 mod body;
 mod cleanup;
+mod communication;
 mod data;
 mod expr;
 mod request;

@@ -293,7 +293,12 @@ and standalone source tests cover nested close, owned call/return, whole
 unpack, spawn transfer, and resource failure cleanup. Interpreter and JIT
 tests also cover task-limit rejection before product transfer.
 Source and Core tests cover take, reassignment, suspension, and failure-edge
-cleanup of a live place. Bare rights in `var` remain unsupported. The
+cleanup of a live place. Bare channel, request, and reply rights can now live
+in `var` places. A use that consumes the right empties the place; channel and
+request traffic or `fork` restore the right to its place on both
+completed edges. Failed resource creation closes rights still held in places.
+`examples/mutable_channel_right.phoebe` runs through the interpreter, JIT,
+and standalone executable. The
 finite models and tests do not prove
 correctness of the compiler or generated machine code.
 The bounded two-request Maude model explores both successful retry and

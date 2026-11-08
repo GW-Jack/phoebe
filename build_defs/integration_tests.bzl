@@ -163,6 +163,20 @@ def integration_tests(rust_test):
     )
 
     rust_test(
+        name = "source_mutable_rights_tests",
+        crate_root = "tests/source_mutable_rights.rs",
+        srcs = [
+            "tests/source_mutable_rights.rs",
+            "examples/mutable_channel_right.phoebe",
+            "examples/channel_exchange.phoebe",
+            "examples/request_backpressure.phoebe",
+        ],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
         name = "project_tests",
         crate_root = "tests/project.rs",
         srcs = [

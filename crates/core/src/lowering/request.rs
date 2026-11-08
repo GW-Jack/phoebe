@@ -11,10 +11,14 @@ impl<'a> Lowerer<'a> {
         let ExprKind::QualifiedCall(name, method, args) = &subject.kind else {
             return Ok(None);
         };
-        let Some(Binding::Val(endpoint)) = locals.get(name).copied() else {
+        let Some(binding @ (Binding::Val(_) | Binding::Var(_))) = locals.get(name).copied() else {
             return Ok(None);
         };
-        let endpoint_type = self.value_types[endpoint.0];
+        let endpoint_type = match binding {
+            Binding::Val(value) => self.value_types[value.0],
+            Binding::Var(place) => self.place_types[place.0],
+            Binding::Ref(_, _) => unreachable!(),
+        };
         let (outcome, success_name, terminal_name, payload_type) =
             match (endpoint_type, method.as_str()) {
                 (Type::RequestSenderI64, "send") => {
@@ -74,6 +78,15 @@ impl<'a> Lowerer<'a> {
                 "request outcome payload binding does not match variant",
             ));
         }
+        let retained_place = match binding {
+            Binding::Var(place) => Some(place),
+            Binding::Val(_) | Binding::Ref(_, _) => None,
+        };
+        let endpoint = match binding {
+            Binding::Val(value) => value,
+            Binding::Var(place) => self.emit(Operation::Take(place), endpoint_type, subject.span),
+            Binding::Ref(_, _) => unreachable!(),
+        };
         let (success, terminal, payload) = if endpoint_type == Type::RequestSenderI64 {
             let [CallArgument::Value(request)] = args.as_slice() else {
                 return Err(Diagnostic::new(
@@ -124,6 +137,9 @@ impl<'a> Lowerer<'a> {
             ),
         ] {
             self.current = block;
+            if let Some(place) = retained_place {
+                self.emit_effect(Operation::Store(place, endpoint), subject.span);
+            }
             let mut arm_locals = locals.clone();
             if bound {
                 let (name, span) = arm.binding.as_ref().expect("validated payload binding");

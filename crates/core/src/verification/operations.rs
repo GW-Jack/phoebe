@@ -250,8 +250,12 @@ pub(super) fn op_type(
             None => Err("invalid place ID".into()),
         },
         Operation::Take(place) => match function.place_types.get(place.0) {
-            Some(ty @ Type::Data(_)) => Ok(Some(*ty)),
-            Some(_) => Err("take requires a nominal place".into()),
+            Some(ty)
+                if matches!(ty, Type::Data(_)) || capability_layout::Layout::bare_right(*ty) =>
+            {
+                Ok(Some(*ty))
+            }
+            Some(_) => Err("take requires an owned place".into()),
             None => Err("invalid place ID".into()),
         },
         Operation::CopyPlace(place) => match function.place_types.get(place.0) {

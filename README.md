@@ -47,6 +47,10 @@ lowers them to checked Core IR. Programs run
 through an interpreter or Cranelift JIT. The compiler can also
 build a standalone executable for a zero-argument `main` using Cranelift
 object output and the host C linker.
+Mutable locals can hold channel, request, and reply rights. Taking a right
+empties its place; channel traffic and `fork` preserve it across completed
+operations. `examples/mutable_channel_right.phoebe` exercises reassignment,
+send, receive, yield, and cleanup on resource failure.
 Local projects can use a `phoebe.toml` manifest and explicit module imports;
 `examples/multi_module/` runs in both engines and builds a standalone binary.
 `docs/modules.md` describes the format and current limits.
@@ -85,6 +89,7 @@ buck2 run //:phoebe -- run examples/option.phoebe
 buck2 run //:phoebe -- run examples/scoped_spawn.phoebe
 buck2 run //:phoebe -- run examples/with_pair.phoebe
 buck2 run //:phoebe -- run examples/channel_exchange.phoebe
+buck2 run //:phoebe -- run examples/mutable_channel_right.phoebe
 buck2 run //:phoebe -- run examples/reply_exchange.phoebe
 buck2 run //:phoebe -- run examples/request_exchange.phoebe
 buck2 run //:phoebe -- run examples/request_backpressure.phoebe

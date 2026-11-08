@@ -333,19 +333,20 @@ impl Lowerer<'_> {
                         && method == "fork"
                         && args.is_empty()
                     {
-                        if matches!(statement, Statement::Var(..)) {
-                            return Err(Diagnostic::new(*span, "fork result must bind to val"));
-                        }
-                        let endpoint = match locals.get(source).copied() {
-                            Some(Binding::Val(value)) => value,
+                        let source_binding = match locals.get(source).copied() {
+                            Some(binding @ (Binding::Val(_) | Binding::Var(_))) => binding,
                             _ => {
                                 return Err(Diagnostic::new(
                                     inner.span,
-                                    "fork requires a named val endpoint",
+                                    "fork requires a named endpoint",
                                 ));
                             }
                         };
-                        let ty = self.value_types[endpoint.0];
+                        let ty = match source_binding {
+                            Binding::Val(value) => self.value_types[value.0],
+                            Binding::Var(place) => self.place_types[place.0],
+                            Binding::Ref(_, _) => unreachable!(),
+                        };
                         if !matches!(ty, Type::SenderI64 | Type::ReceiverI64) {
                             return Err(Diagnostic::new(
                                 inner.span,
@@ -353,6 +354,13 @@ impl Lowerer<'_> {
                             ));
                         }
                         let result_id = self.resource_result_id(expr.span)?;
+                        let endpoint = match source_binding {
+                            Binding::Val(value) => value,
+                            Binding::Var(place) => {
+                                self.emit(Operation::Take(place), ty, inner.span)
+                            }
+                            Binding::Ref(_, _) => unreachable!(),
+                        };
                         let success = self.block();
                         let fresh = self.block_param(success, ty);
                         let failure = self.block();
@@ -363,6 +371,9 @@ impl Lowerer<'_> {
                             failure,
                         });
                         self.current = failure;
+                        if let Binding::Var(place) = source_binding {
+                            self.emit_effect(Operation::Store(place, endpoint), inner.span);
+                        }
                         let failed = self.emit(
                             Operation::Variant(result_id, 1, Some(error)),
                             self.return_type,
@@ -370,17 +381,20 @@ impl Lowerer<'_> {
                         );
                         self.implicit_return(failed, expr.span);
                         self.current = success;
-                        locals.insert(name.clone(), Binding::Val(fresh));
+                        if let Binding::Var(place) = source_binding {
+                            self.emit_effect(Operation::Store(place, endpoint), inner.span);
+                        }
+                        if matches!(statement, Statement::Var(..)) {
+                            let place = self.place(ty);
+                            self.emit_effect(Operation::PlaceInit(place, fresh), *span);
+                            locals.insert(name.clone(), Binding::Var(place));
+                        } else {
+                            locals.insert(name.clone(), Binding::Val(fresh));
+                        }
                         continue;
                     }
                     let (value, ty) = self.expr(expr, locals)?;
                     if matches!(statement, Statement::Var(..)) {
-                        if self.capability_layout.leaves(ty) > 0 && !matches!(ty, Type::Data(_)) {
-                            return Err(Diagnostic::new(
-                                *span,
-                                "bare communication rights cannot be stored in var yet",
-                            ));
-                        }
                         let place = self.place(ty);
                         self.emit_effect(Operation::PlaceInit(place, value), *span);
                         locals.insert(name.clone(), Binding::Var(place));
@@ -476,43 +490,31 @@ impl Lowerer<'_> {
                     self.current = exit;
                 }
                 Statement::Expr(expr) => {
-                    if let ExprKind::QualifiedCall(name, method, args) = &expr.kind
-                        && method == "close"
+                    let close = if let ExprKind::QualifiedCall(name, method, args) = &expr.kind
                         && args.is_empty()
-                        && let Some(Binding::Val(value)) = locals.get(name).copied()
-                        && matches!(
-                            self.value_types[value.0],
-                            Type::SenderI64
-                                | Type::ReceiverI64
-                                | Type::RequestSenderI64
-                                | Type::RequestReceiverI64
-                        )
+                        && let Some(binding @ (Binding::Val(_) | Binding::Var(_))) =
+                            locals.get(name).copied()
                     {
-                        self.emit_effect(Operation::CloseHandle(value), expr.span);
-                    } else if let ExprKind::QualifiedCall(name, method, args) = &expr.kind
-                        && method == "close"
-                        && args.is_empty()
-                        && let Some(Binding::Val(value)) = locals.get(name).copied()
-                        && matches!(
-                            self.value_types[value.0],
-                            Type::ReplyToI64 | Type::ReplyReceiverI64
-                        )
-                    {
-                        self.emit_effect(Operation::CloseReply(value), expr.span);
-                    } else if let ExprKind::QualifiedCall(name, method, args) = &expr.kind
-                        && method == "close"
-                        && args.is_empty()
-                        && let Some(Binding::Val(value)) = locals.get(name).copied()
-                        && self.value_types[value.0] == Type::RequestI64
-                    {
-                        self.emit_effect(Operation::CloseRequest(value), expr.span);
-                    } else if let ExprKind::QualifiedCall(name, method, args) = &expr.kind
-                        && method == "close_caps"
-                        && args.is_empty()
-                        && let Some(Binding::Val(value)) = locals.get(name).copied()
-                        && matches!(self.value_types[value.0], Type::Data(_))
-                    {
-                        self.emit_effect(Operation::CloseCaps(value), expr.span);
+                        let ty = match binding {
+                            Binding::Val(value) => self.value_types[value.0],
+                            Binding::Var(place) => self.place_types[place.0],
+                            Binding::Ref(_, _) => unreachable!(),
+                        };
+                        let permitted = (method == "close"
+                            && self.capability_layout.leaves(ty) > 0
+                            && !matches!(ty, Type::Data(_)))
+                            || (method == "close_caps" && matches!(ty, Type::Data(_)));
+                        permitted.then_some((binding, ty))
+                    } else {
+                        None
+                    };
+                    if let Some((binding, ty)) = close {
+                        let value = match binding {
+                            Binding::Val(value) => value,
+                            Binding::Var(place) => self.emit(Operation::Take(place), ty, expr.span),
+                            Binding::Ref(_, _) => unreachable!(),
+                        };
+                        self.emit_effect(cleanup::close_operation(value, ty), expr.span);
                     } else {
                         self.expr(expr, locals)?;
                     }

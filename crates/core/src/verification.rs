@@ -106,7 +106,9 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                     }
                     Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                         value_use(&mut state, *value, true, span)?;
-                        if matches!(function.place_types[place.0], Type::Data(_)) {
+                        if matches!(function.place_types[place.0], Type::Data(_))
+                            || capability_layout::Layout::bare_right(function.place_types[place.0])
+                        {
                             state.places[place.0] = true;
                         }
                     }

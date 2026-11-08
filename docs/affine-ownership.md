@@ -1,8 +1,8 @@
 # Affine ownership in the executable Core IR
 
-Status: implemented for nominal values in the current closed-value subset.
-This is a step toward capability ownership, not a memory-safety proof for
-tasks, channels, or references.
+Status: implemented for nominal values and mutable places in the current
+source subset. A separate exact capability-flow verifier checks communication
+rights. Neither checker is a proof of the compiler, runtime, or generated code.
 
 `I64`, `Bool`, and `Unit` are copyable. Every nominal `Data(id)` value is currently
 affine, even if its fields are small. The source can read primitive product
@@ -40,7 +40,10 @@ owner is rejected. Source lowering maps an owning name use to `move` or
 This is an affine rule: an unused closed value may be dropped. Reassignment
 currently drops an old closed value; a match arm can discard a payload. Once
 a type contains a communication capability, those transitions must close or
-transfer every live capability structurally. The current verifier does not
-establish that property. It also does not prove the Rust implementation of
-the dataflow algorithm; compiler tests include forged IR, branch and loop
-paths, and interpreter/native agreement as bounded evidence.
+transfer every live capability structurally. The exact capability-flow graph
+checks that property for the supported right types, including rights held in
+`var` places and restored after send, receive, or fork. An owned take empties
+the place; a second take and a store over a live right are rejected. This
+verification does not prove the Rust implementation of the dataflow algorithm;
+compiler tests include forged IR, branch and loop paths, and
+interpreter/native agreement as bounded evidence.

@@ -179,11 +179,10 @@ pub(crate) fn verify_structure(
             return Err(format!("{}: parameter mode count mismatch", function.name));
         }
         verify_loan_regions(function)?;
-        if function
-            .place_types
-            .iter()
-            .any(|ty| !matches!(ty, Type::I64 | Type::Bool | Type::Unit | Type::Data(_)))
-        {
+        if function.place_types.iter().any(|ty| {
+            !matches!(ty, Type::I64 | Type::Bool | Type::Unit | Type::Data(_))
+                && !capability_layout::Layout::bare_right(*ty)
+        }) {
             return Err(format!(
                 "{}: references cannot be stored in places",
                 function.name
