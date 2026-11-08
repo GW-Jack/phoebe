@@ -64,8 +64,10 @@ Core assigns a dense flow slot to each bare right. A static nominal product
 layout now enumerates capability leaves by declaration-order field path and
 reserves a contiguous slot range for each SSA value of that type. The slot
 number is separate from `ValueId`: adding scalar calculations cannot grow
-the ownership state. The product field restriction remains in force because
-pack, split, projection, and cleanup do not yet update those ranges. For a sum,
+the ownership state. Core flow now moves all leaves together for nominal
+`move`, product construction, owned calls, spawn transfer, and block arguments.
+The product field restriction remains in force because projection, structural
+cleanup, and the native/runtime paths do not yet cover these aggregates. For a sum,
 the active variant determines which paths exist, so the verifier must either
 split on its tag or carry a tagged slot state. A blind union of variant slots
 would report nonexistent rights; a blind intersection would lose live ones.

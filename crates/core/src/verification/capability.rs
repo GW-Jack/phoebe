@@ -43,6 +43,19 @@ pub(crate) fn capability_graph(
         );
         capability_flow::Slot(range.start)
     };
+    let moves_between = |from: ValueId, to: ValueId| {
+        let source = slots[from.0].clone();
+        let destination = slots[to.0].clone();
+        assert_eq!(
+            source.len(),
+            destination.len(),
+            "typed move has equal leaf layouts"
+        );
+        source
+            .zip(destination)
+            .map(|(from, to)| (capability_flow::Slot(from), capability_flow::Slot(to)))
+            .collect::<Vec<_>>()
+    };
     let mut lexical = vec![None; function.blocks.len()];
     for (block, value, _) in scoped_cleanup_exits {
         lexical[block.0] = Some(slot(*value));
@@ -56,277 +69,303 @@ pub(crate) fn capability_graph(
         .iter()
         .flat_map(|value| slots[value.0].clone().map(capability_flow::Slot))
         .collect();
-    let blocks = function
-        .blocks
-        .iter()
-        .enumerate()
-        .map(|(block_id, block)| {
-            let mut actions = Vec::new();
-            for instruction in &block.instructions {
-                match &instruction.operation {
-                    Operation::CloseHandle(value)
-                    | Operation::CloseReply(value)
-                    | Operation::CloseRequest(value) => {
-                        actions.push(CapAction::Close(slot(*value)))
+    let mut blocks = Vec::with_capacity(function.blocks.len());
+    for (block_id, block) in function.blocks.iter().enumerate() {
+        let mut actions = Vec::new();
+        for instruction in &block.instructions {
+            match &instruction.operation {
+                Operation::Move(value) => {
+                    let moved = instruction.result.expect("verified move has result");
+                    let moves = moves_between(*value, moved);
+                    if !moves.is_empty() {
+                        actions.push(CapAction::MoveGroup(moves));
                     }
-                    Operation::PackRequest { right, .. } => {
-                        let packed = instruction
-                            .result
-                            .expect("verified request pack has result");
-                        actions.push(CapAction::Move {
-                            from: slot(*right),
-                            to: slot(packed),
-                        });
-                    }
-                    Operation::Call(_, args) => {
-                        for arg in args {
-                            if let CallArg::Value(value) = arg
-                                && Layout::bare_right(function.value_types[value.0])
-                            {
-                                actions.push(CapAction::Transfer(slot(*value)));
-                            }
+                }
+                Operation::Product(_, fields) => {
+                    let product = instruction.result.expect("verified product has result");
+                    let mut destination = slots[product.0].start;
+                    let mut moves = Vec::new();
+                    for field in fields {
+                        for from in slots[field.0].clone() {
+                            moves.push((
+                                capability_flow::Slot(from),
+                                capability_flow::Slot(destination),
+                            ));
+                            destination += 1;
                         }
                     }
-                    _ => {}
+                    assert_eq!(
+                        destination, slots[product.0].end,
+                        "product leaf layout matches fields"
+                    );
+                    if !moves.is_empty() {
+                        actions.push(CapAction::MoveGroup(moves));
+                    }
                 }
+                Operation::CloseHandle(value)
+                | Operation::CloseReply(value)
+                | Operation::CloseRequest(value) => actions.push(CapAction::Close(slot(*value))),
+                Operation::PackRequest { right, .. } => {
+                    let packed = instruction
+                        .result
+                        .expect("verified request pack has result");
+                    actions.push(CapAction::Move {
+                        from: slot(*right),
+                        to: slot(packed),
+                    });
+                }
+                Operation::Call(_, args) => {
+                    for arg in args {
+                        if let CallArg::Value(value) = arg {
+                            actions.extend(
+                                slots[value.0]
+                                    .clone()
+                                    .map(|slot| CapAction::Transfer(capability_flow::Slot(slot))),
+                            );
+                        }
+                    }
+                }
+                _ => {}
             }
-            if let Some(slot) = lexical[block_id] {
-                actions.push(CapAction::CloseIfLive(slot));
+        }
+        if let Some(slot) = lexical[block_id] {
+            actions.push(CapAction::CloseIfLive(slot));
+        }
+        let edge = |target: CapTarget, actions| capability_flow::Edge { target, actions };
+        let exits = match &block.terminator {
+            Terminator::Yield { resume, .. } | Terminator::ScopeJoin { resume, .. } => {
+                vec![edge(CapTarget::Suspend(resume.0), vec![])]
             }
-            let edge = |target: CapTarget, actions| capability_flow::Edge { target, actions };
-            let exits = match &block.terminator {
-                Terminator::Yield { resume, .. } | Terminator::ScopeJoin { resume, .. } => {
-                    vec![edge(CapTarget::Suspend(resume.0), vec![])]
-                }
-                Terminator::Return(_) => vec![edge(
-                    if cleanup_return[block_id] {
-                        CapTarget::Failure
-                    } else {
-                        CapTarget::Return
-                    },
-                    vec![],
-                )],
-                Terminator::Jump(target, args) => {
-                    let moves = args
-                        .iter()
-                        .zip(&function.blocks[target.0].params)
-                        .filter(|(arg, _)| Layout::bare_right(function.value_types[arg.0]))
-                        .map(|(arg, param)| (slot(*arg), slot(*param)))
-                        .collect::<Vec<_>>();
-                    vec![edge(
-                        CapTarget::Block(target.0),
-                        vec![CapAction::MoveGroup(moves)],
-                    )]
-                }
-                Terminator::Branch {
-                    then_block,
-                    else_block,
-                    ..
-                } => vec![
-                    edge(CapTarget::Block(then_block.0), vec![]),
-                    edge(CapTarget::Block(else_block.0), vec![]),
-                ],
-                Terminator::Match { arms, .. } => arms
+            Terminator::Return(_) => vec![edge(
+                if cleanup_return[block_id] {
+                    CapTarget::Failure
+                } else {
+                    CapTarget::Return
+                },
+                vec![],
+            )],
+            Terminator::Jump(target, args) => {
+                let moves = args
                     .iter()
-                    .map(|arm| edge(CapTarget::Block(arm.target.0), vec![]))
-                    .collect(),
-                Terminator::ChannelNew {
-                    success, failure, ..
-                } => {
-                    let params = &function.blocks[success.0].params;
-                    vec![
-                        edge(
-                            CapTarget::Block(success.0),
-                            vec![CapAction::CreatePair {
-                                first: slot(params[0]),
-                                second: slot(params[1]),
-                            }],
-                        ),
-                        edge(CapTarget::Block(failure.0), vec![]),
-                    ]
-                }
-                Terminator::ReplyNew { success, failure } => {
-                    let params = &function.blocks[success.0].params;
-                    vec![
-                        edge(
-                            CapTarget::Block(success.0),
-                            vec![CapAction::CreatePair {
-                                first: slot(params[0]),
-                                second: slot(params[1]),
-                            }],
-                        ),
-                        edge(CapTarget::Block(failure.0), vec![]),
-                    ]
-                }
-                Terminator::RequestChannelNew {
-                    success, failure, ..
-                } => {
-                    let params = &function.blocks[success.0].params;
-                    vec![
-                        edge(
-                            CapTarget::Block(success.0),
-                            vec![CapAction::CreatePair {
-                                first: slot(params[0]),
-                                second: slot(params[1]),
-                            }],
-                        ),
-                        edge(CapTarget::Block(failure.0), vec![]),
-                    ]
-                }
-                Terminator::RequestUnpack { request, next } => {
-                    let params = &function.blocks[next.0].params;
-                    vec![edge(
-                        CapTarget::Block(next.0),
-                        vec![CapAction::Move {
-                            from: slot(*request),
-                            to: slot(params[1]),
+                    .zip(&function.blocks[target.0].params)
+                    .flat_map(|(arg, param)| moves_between(*arg, *param))
+                    .collect::<Vec<_>>();
+                vec![edge(
+                    CapTarget::Block(target.0),
+                    vec![CapAction::MoveGroup(moves)],
+                )]
+            }
+            Terminator::Branch {
+                then_block,
+                else_block,
+                ..
+            } => vec![
+                edge(CapTarget::Block(then_block.0), vec![]),
+                edge(CapTarget::Block(else_block.0), vec![]),
+            ],
+            Terminator::Match { arms, .. } => arms
+                .iter()
+                .map(|arm| edge(CapTarget::Block(arm.target.0), vec![]))
+                .collect(),
+            Terminator::ChannelNew {
+                success, failure, ..
+            } => {
+                let params = &function.blocks[success.0].params;
+                vec![
+                    edge(
+                        CapTarget::Block(success.0),
+                        vec![CapAction::CreatePair {
+                            first: slot(params[0]),
+                            second: slot(params[1]),
                         }],
-                    )]
-                }
-                Terminator::RequestSend {
-                    sender,
-                    request,
-                    sent,
-                    closed,
-                } => {
-                    let returned = function.blocks[closed.0].params[0];
-                    vec![
-                        edge(
-                            CapTarget::Block(sent.0),
-                            vec![
-                                CapAction::Require(slot(*sender)),
-                                CapAction::Transfer(slot(*request)),
-                            ],
-                        ),
-                        edge(
-                            CapTarget::Block(closed.0),
-                            vec![
-                                CapAction::Require(slot(*sender)),
-                                CapAction::Move {
-                                    from: slot(*request),
-                                    to: slot(returned),
-                                },
-                            ],
-                        ),
-                        edge(
-                            CapTarget::Retry,
-                            vec![
-                                CapAction::Require(slot(*sender)),
-                                CapAction::Require(slot(*request)),
-                            ],
-                        ),
-                    ]
-                }
-                Terminator::RequestReceive {
-                    receiver,
-                    value,
-                    end,
-                } => {
-                    let received = function.blocks[value.0].params[0];
-                    vec![
-                        edge(
-                            CapTarget::Block(value.0),
-                            vec![
-                                CapAction::Require(slot(*receiver)),
-                                CapAction::Create(slot(received)),
-                            ],
-                        ),
-                        edge(
-                            CapTarget::Block(end.0),
-                            vec![CapAction::Require(slot(*receiver))],
-                        ),
-                        edge(CapTarget::Retry, vec![CapAction::Require(slot(*receiver))]),
-                    ]
-                }
-                Terminator::Fork {
-                    source,
-                    success,
-                    failure,
-                } => {
-                    let fresh = function.blocks[success.0].params[0];
-                    vec![
-                        edge(
-                            CapTarget::Block(success.0),
-                            vec![
-                                CapAction::Require(slot(*source)),
-                                CapAction::Create(slot(fresh)),
-                            ],
-                        ),
-                        edge(
-                            CapTarget::Block(failure.0),
-                            vec![CapAction::Require(slot(*source))],
-                        ),
-                    ]
-                }
-                Terminator::ChannelSend {
-                    sender,
-                    sent,
-                    closed,
-                    ..
-                } => {
-                    let require = vec![CapAction::Require(slot(*sender))];
-                    vec![
-                        edge(CapTarget::Block(sent.0), require.clone()),
-                        edge(CapTarget::Block(closed.0), require.clone()),
-                        edge(CapTarget::Retry, require),
-                    ]
-                }
-                Terminator::ChannelReceive {
-                    receiver,
-                    value,
-                    end,
-                } => {
-                    let require = vec![CapAction::Require(slot(*receiver))];
-                    vec![
-                        edge(CapTarget::Block(value.0), require.clone()),
-                        edge(CapTarget::Block(end.0), require.clone()),
-                        edge(CapTarget::Retry, require),
-                    ]
-                }
-                Terminator::ReplyComplete {
-                    right,
-                    delivered,
-                    closed,
-                    ..
-                } => {
-                    let close = vec![CapAction::Close(slot(*right))];
-                    vec![
-                        edge(CapTarget::Block(delivered.0), close.clone()),
-                        edge(CapTarget::Block(closed.0), close),
-                    ]
-                }
-                Terminator::ReplyReceive {
-                    receiver,
-                    value,
-                    end,
-                } => {
-                    let close = vec![CapAction::Close(slot(*receiver))];
-                    vec![
-                        edge(CapTarget::Block(value.0), close.clone()),
-                        edge(CapTarget::Block(end.0), close),
-                        edge(CapTarget::Retry, vec![CapAction::Require(slot(*receiver))]),
-                    ]
-                }
-                Terminator::Spawn {
-                    args,
-                    success,
-                    failure,
-                    ..
-                } => {
-                    let transfers = args
-                        .iter()
-                        .filter(|value| Layout::bare_right(function.value_types[value.0]))
-                        .map(|value| CapAction::Transfer(slot(*value)))
-                        .collect();
-                    vec![
-                        edge(CapTarget::Block(success.0), transfers),
-                        edge(CapTarget::Block(failure.0), vec![]),
-                    ]
-                }
-            };
-            capability_flow::Block { actions, exits }
-        })
-        .collect();
+                    ),
+                    edge(CapTarget::Block(failure.0), vec![]),
+                ]
+            }
+            Terminator::ReplyNew { success, failure } => {
+                let params = &function.blocks[success.0].params;
+                vec![
+                    edge(
+                        CapTarget::Block(success.0),
+                        vec![CapAction::CreatePair {
+                            first: slot(params[0]),
+                            second: slot(params[1]),
+                        }],
+                    ),
+                    edge(CapTarget::Block(failure.0), vec![]),
+                ]
+            }
+            Terminator::RequestChannelNew {
+                success, failure, ..
+            } => {
+                let params = &function.blocks[success.0].params;
+                vec![
+                    edge(
+                        CapTarget::Block(success.0),
+                        vec![CapAction::CreatePair {
+                            first: slot(params[0]),
+                            second: slot(params[1]),
+                        }],
+                    ),
+                    edge(CapTarget::Block(failure.0), vec![]),
+                ]
+            }
+            Terminator::RequestUnpack { request, next } => {
+                let params = &function.blocks[next.0].params;
+                vec![edge(
+                    CapTarget::Block(next.0),
+                    vec![CapAction::Move {
+                        from: slot(*request),
+                        to: slot(params[1]),
+                    }],
+                )]
+            }
+            Terminator::RequestSend {
+                sender,
+                request,
+                sent,
+                closed,
+            } => {
+                let returned = function.blocks[closed.0].params[0];
+                vec![
+                    edge(
+                        CapTarget::Block(sent.0),
+                        vec![
+                            CapAction::Require(slot(*sender)),
+                            CapAction::Transfer(slot(*request)),
+                        ],
+                    ),
+                    edge(
+                        CapTarget::Block(closed.0),
+                        vec![
+                            CapAction::Require(slot(*sender)),
+                            CapAction::Move {
+                                from: slot(*request),
+                                to: slot(returned),
+                            },
+                        ],
+                    ),
+                    edge(
+                        CapTarget::Retry,
+                        vec![
+                            CapAction::Require(slot(*sender)),
+                            CapAction::Require(slot(*request)),
+                        ],
+                    ),
+                ]
+            }
+            Terminator::RequestReceive {
+                receiver,
+                value,
+                end,
+            } => {
+                let received = function.blocks[value.0].params[0];
+                vec![
+                    edge(
+                        CapTarget::Block(value.0),
+                        vec![
+                            CapAction::Require(slot(*receiver)),
+                            CapAction::Create(slot(received)),
+                        ],
+                    ),
+                    edge(
+                        CapTarget::Block(end.0),
+                        vec![CapAction::Require(slot(*receiver))],
+                    ),
+                    edge(CapTarget::Retry, vec![CapAction::Require(slot(*receiver))]),
+                ]
+            }
+            Terminator::Fork {
+                source,
+                success,
+                failure,
+            } => {
+                let fresh = function.blocks[success.0].params[0];
+                vec![
+                    edge(
+                        CapTarget::Block(success.0),
+                        vec![
+                            CapAction::Require(slot(*source)),
+                            CapAction::Create(slot(fresh)),
+                        ],
+                    ),
+                    edge(
+                        CapTarget::Block(failure.0),
+                        vec![CapAction::Require(slot(*source))],
+                    ),
+                ]
+            }
+            Terminator::ChannelSend {
+                sender,
+                sent,
+                closed,
+                ..
+            } => {
+                let require = vec![CapAction::Require(slot(*sender))];
+                vec![
+                    edge(CapTarget::Block(sent.0), require.clone()),
+                    edge(CapTarget::Block(closed.0), require.clone()),
+                    edge(CapTarget::Retry, require),
+                ]
+            }
+            Terminator::ChannelReceive {
+                receiver,
+                value,
+                end,
+            } => {
+                let require = vec![CapAction::Require(slot(*receiver))];
+                vec![
+                    edge(CapTarget::Block(value.0), require.clone()),
+                    edge(CapTarget::Block(end.0), require.clone()),
+                    edge(CapTarget::Retry, require),
+                ]
+            }
+            Terminator::ReplyComplete {
+                right,
+                delivered,
+                closed,
+                ..
+            } => {
+                let close = vec![CapAction::Close(slot(*right))];
+                vec![
+                    edge(CapTarget::Block(delivered.0), close.clone()),
+                    edge(CapTarget::Block(closed.0), close),
+                ]
+            }
+            Terminator::ReplyReceive {
+                receiver,
+                value,
+                end,
+            } => {
+                let close = vec![CapAction::Close(slot(*receiver))];
+                vec![
+                    edge(CapTarget::Block(value.0), close.clone()),
+                    edge(CapTarget::Block(end.0), close),
+                    edge(CapTarget::Retry, vec![CapAction::Require(slot(*receiver))]),
+                ]
+            }
+            Terminator::Spawn {
+                args,
+                success,
+                failure,
+                ..
+            } => {
+                let transfers = args
+                    .iter()
+                    .flat_map(|value| {
+                        slots[value.0]
+                            .clone()
+                            .map(|slot| CapAction::Transfer(capability_flow::Slot(slot)))
+                    })
+                    .collect();
+                vec![
+                    edge(CapTarget::Block(success.0), transfers),
+                    edge(CapTarget::Block(failure.0), vec![]),
+                ]
+            }
+        };
+        blocks.push(capability_flow::Block { actions, exits });
+    }
     Some((
         capability_flow::Graph {
             slots: slot_count,
@@ -338,48 +377,4 @@ pub(crate) fn capability_graph(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn product_parameter_allocates_one_flow_slot_per_right() {
-        let data = vec![DataDef {
-            name: "Pair".into(),
-            variants: vec![],
-            payloads: vec![],
-            fields: vec![
-                ("left".into(), Type::SenderI64),
-                ("right".into(), Type::ReplyToI64),
-            ],
-        }];
-        let function = Function {
-            name: "consume".into(),
-            param_modes: vec![syntax::ParamMode::Own],
-            return_type: Type::I64,
-            value_types: vec![Type::Data(DataId(0)), Type::I64],
-            place_types: vec![],
-            loan_regions: vec![],
-            blocks: vec![Block {
-                params: vec![ValueId(0)],
-                instructions: vec![Instruction {
-                    result: Some(ValueId(1)),
-                    operation: Operation::Const(0),
-                    span: Span { start: 0, end: 0 },
-                }],
-                terminator: Terminator::Return(ValueId(1)),
-            }],
-        };
-        let (graph, owners) = capability_graph(&function, &Layout::new(&data), &[], &[]).unwrap();
-        assert_eq!(graph.slots, 2);
-        assert_eq!(
-            graph.entry_live,
-            vec![capability_flow::Slot(0), capability_flow::Slot(1)]
-        );
-        assert_eq!(owners, vec![ValueId(0), ValueId(0)]);
-        assert!(
-            capability_flow::verify(&graph)
-                .unwrap_err()
-                .contains("normal return leaks")
-        );
-    }
-}
+mod tests;
