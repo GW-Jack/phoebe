@@ -1,10 +1,12 @@
 # Typed message transfer contract
 
-Status: design obligation for general `channel<T>` messages. The executable
+Status: source and interpreter path for concrete `channel<T>` messages; native
+code generation remains open. The executable
 kernel has a scalar `I64` queue and a preallocated fixed-width queue that
 carries `Request<I64>` and other messages containing `ReplyTo<I64>` rights. This document
-defines the bridge from checked Core values to a general bounded queue; it
-does not claim that bridge is implemented or proved.
+defines the bridge from checked Core values to a general bounded queue. The
+interpreter path is implemented for admitted concrete messages; the native
+generated path and a general proof remain open.
 
 ## Message admissibility
 
@@ -50,12 +52,13 @@ right kinds remain open.
 An executable aggregate witness now encodes a tagged product with an active
 reply right, transfers it through the runtime queue, decodes it, and closes
 the returned right. This exercises the bridge below source `channel<T>`;
-it does not establish the general source or native path.
+it does not establish the general native path.
 Checked Core now has `TypedChannelNew`, `TypedSend`, and `TypedReceive` for
 concrete message identities. The verifier checks exact endpoint and message
 types and derives capability actions for success, closed, retry, and value
 edges. Hand-built Core programs interpret nominal messages, including a
-product that owns a reply right. Native lowering reports an explicit
+product that owns a reply right. Source `channel<T>` lowers concrete nominal
+traffic and a closed send that returns an owned reply right. Native lowering reports an explicit
 unsupported operation until it can pass descriptors and flattened words.
 
 ## Ownership equations
@@ -116,9 +119,10 @@ occupancy so boundedness is preserved.
    closed sends. Tests exercise active and inactive tagged arms, duplicate or
    invalid rights, and a two-task full queue. Injected precommit allocation
    failure and transfer of channel handles remain open.
-3. Lower source `channel<T>` through the checked typed Core family. The
-   interpreter path now handles nominal and reply-right aggregate messages;
-   source lowering and native code generation remain open. The existing
+3. Complete source `channel<T>` and native code generation through the checked
+   typed Core family. The interpreter path handles nominal and reply-right
+   aggregate messages, and source lowering covers concrete nominal traffic;
+   native code generation remains open. The existing
    concrete `Request<I64>` native operations run through typed runtime adapters.
    The general native ABI must pass
    descriptor identity and flattened words, never treating a matching word

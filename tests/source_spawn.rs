@@ -317,11 +317,10 @@ fn source_spawn_rejects_ownership_and_signature_errors() {
     );
 
     let wrong_type = source().replace("Sender<I64>", "Sender<Bool>");
+    let error = core::lower(&syntax::parse(&wrong_type).unwrap()).unwrap_err();
     assert!(
-        syntax::parse(&wrong_type)
-            .unwrap_err()
-            .message
-            .contains("only I64 communication values")
+        error.message.contains("expected TypedSender(Bool)"),
+        "{error:?}"
     );
 
     let wrong_return = source().replace(

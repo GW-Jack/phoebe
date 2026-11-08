@@ -11,8 +11,38 @@ fn has_right(ty: Type, data_rights: &[bool]) -> bool {
         | Type::ReplyReceiverI64
         | Type::RequestI64
         | Type::RequestSenderI64
-        | Type::RequestReceiverI64 => true,
+        | Type::RequestReceiverI64
+        | Type::TypedSender(_)
+        | Type::TypedReceiver(_) => true,
         _ => false,
+    }
+}
+
+pub(super) fn message_type(
+    ty: &TypeName,
+    names: &HashMap<String, DataId>,
+    span: Span,
+) -> Result<MessageType, Diagnostic> {
+    match ty {
+        TypeName::I64 => Ok(MessageType::I64),
+        TypeName::Bool => Ok(MessageType::Bool),
+        TypeName::Unit => Ok(MessageType::Unit),
+        TypeName::RequestI64 => Ok(MessageType::RequestI64),
+        TypeName::ReplyToI64 => Ok(MessageType::ReplyToI64),
+        TypeName::Named(name) if name == "ResourceError" => Ok(MessageType::ResourceError),
+        TypeName::Named(_)
+        | TypeName::Option(_)
+        | TypeName::Result(_, _)
+        | TypeName::Send(_)
+        | TypeName::Receive(_) => names
+            .get(&ty.key())
+            .copied()
+            .map(MessageType::Data)
+            .ok_or_else(|| Diagnostic::new(span, format!("unknown message type {}", ty.key()))),
+        _ => Err(Diagnostic::new(
+            span,
+            "this type cannot be a channel message",
+        )),
     }
 }
 
@@ -39,6 +69,12 @@ fn register_application(
             TypeName::RequestI64 => Ok(Type::RequestI64),
             TypeName::RequestSenderI64 => Ok(Type::RequestSenderI64),
             TypeName::RequestReceiverI64 => Ok(Type::RequestReceiverI64),
+            TypeName::TypedSender(value) => {
+                message_type(value, data_names, span).map(Type::TypedSender)
+            }
+            TypeName::TypedReceiver(value) => {
+                message_type(value, data_names, span).map(Type::TypedReceiver)
+            }
             TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
             TypeName::Named(name) => {
                 let id = data_names
@@ -47,7 +83,10 @@ fn register_application(
                     .ok_or_else(|| Diagnostic::new(span, format!("unknown data type {name}")))?;
                 Ok(Type::Data(id))
             }
-            TypeName::Option(_) | TypeName::Result(_, _) => {
+            TypeName::Option(_)
+            | TypeName::Result(_, _)
+            | TypeName::Send(_)
+            | TypeName::Receive(_) => {
                 register_application(ty, span, data, data_names, data_rights).map(Type::Data)
             }
         }
@@ -60,6 +99,14 @@ fn register_application(
         TypeName::Result(ok, err) => (
             vec!["Ok".into(), "Err".into()],
             vec![Some(payload(ok)?), Some(payload(err)?)],
+        ),
+        TypeName::Send(value) => (
+            vec!["Sent".into(), "Closed".into()],
+            vec![None, Some(payload(value)?)],
+        ),
+        TypeName::Receive(value) => (
+            vec!["Value".into(), "End".into()],
+            vec![Some(payload(value)?), None],
         ),
         _ => unreachable!("only finite generic data applications are registered here"),
     };
@@ -133,6 +180,16 @@ pub(super) fn lower_data(
                 Some(TypeName::RequestI64) => Some(Type::RequestI64),
                 Some(TypeName::RequestSenderI64) => Some(Type::RequestSenderI64),
                 Some(TypeName::RequestReceiverI64) => Some(Type::RequestReceiverI64),
+                Some(TypeName::TypedSender(value)) => Some(Type::TypedSender(message_type(
+                    value,
+                    &data_names,
+                    variant.span,
+                )?)),
+                Some(TypeName::TypedReceiver(value)) => Some(Type::TypedReceiver(message_type(
+                    value,
+                    &data_names,
+                    variant.span,
+                )?)),
                 Some(TypeName::Named(name)) if name == "ResourceError" => Some(Type::ResourceError),
                 Some(TypeName::Named(name)) => {
                     let id = data_names.get(name).copied().ok_or_else(|| {
@@ -143,15 +200,18 @@ pub(super) fn lower_data(
                     })?;
                     Some(Type::Data(id))
                 }
-                Some(ty @ (TypeName::Option(_) | TypeName::Result(_, _))) => {
-                    Some(Type::Data(register_application(
-                        ty,
-                        variant.span,
-                        &mut data,
-                        &mut data_names,
-                        &mut data_rights,
-                    )?))
-                }
+                Some(
+                    ty @ (TypeName::Option(_)
+                    | TypeName::Result(_, _)
+                    | TypeName::Send(_)
+                    | TypeName::Receive(_)),
+                ) => Some(Type::Data(register_application(
+                    ty,
+                    variant.span,
+                    &mut data,
+                    &mut data_names,
+                    &mut data_rights,
+                )?)),
             };
             variants.push(variant.name.clone());
             payloads.push(payload);
@@ -177,6 +237,12 @@ pub(super) fn lower_data(
                     TypeName::RequestI64 => Type::RequestI64,
                     TypeName::RequestSenderI64 => Type::RequestSenderI64,
                     TypeName::RequestReceiverI64 => Type::RequestReceiverI64,
+                    TypeName::TypedSender(value) => {
+                        Type::TypedSender(message_type(value, &data_names, field.span)?)
+                    }
+                    TypeName::TypedReceiver(value) => {
+                        Type::TypedReceiver(message_type(value, &data_names, field.span)?)
+                    }
                     TypeName::Named(name) if name == "ResourceError" => Type::ResourceError,
                     TypeName::Named(name) => data_names
                         .get(name)
@@ -188,15 +254,16 @@ pub(super) fn lower_data(
                                 format!("product field type `{name}` must be declared earlier"),
                             )
                         })?,
-                    ty @ (TypeName::Option(_) | TypeName::Result(_, _)) => {
-                        Type::Data(register_application(
-                            ty,
-                            field.span,
-                            &mut data,
-                            &mut data_names,
-                            &mut data_rights,
-                        )?)
-                    }
+                    ty @ (TypeName::Option(_)
+                    | TypeName::Result(_, _)
+                    | TypeName::Send(_)
+                    | TypeName::Receive(_)) => Type::Data(register_application(
+                        ty,
+                        field.span,
+                        &mut data,
+                        &mut data_names,
+                        &mut data_rights,
+                    )?),
                 };
             owns_rights |= has_right(ty, &data_rights);
             fields.push((field.name.clone(), ty));

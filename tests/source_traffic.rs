@@ -444,6 +444,85 @@ fn main() -> I64 {
 }
 
 #[test]
+fn source_nominal_message_uses_checked_typed_channel() {
+    let source = r#"
+data Number { value: I64 }
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<Number>(capacity = 1)?;
+  val sent = sender.send(Number(42));
+  sender.close();
+  when (sent) {
+    Send<Number>.Sent -> {
+      val received = receiver.receive();
+      receiver.close();
+      when (received) {
+        Receive<Number>.Value(number) -> { Result<I64, ResourceError>.Ok(number.value) },
+        Receive<Number>.End -> { Result<I64, ResourceError>.Ok(-1) }
+      }
+    },
+    Send<Number>.Closed(number) -> {
+      receiver.close();
+      Result<I64, ResourceError>.Ok(number.value)
+    }
+  }
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { -2 }
+  }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let printed = program.to_string();
+    assert!(printed.contains("channel.new.typed"));
+    assert!(printed.contains("channel.send.typed"));
+    assert!(printed.contains("channel.receive.typed"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    let error = native::run(&program, "main", &[]).unwrap_err();
+    assert!(
+        error.contains("native typed channel lowering is not implemented"),
+        "{error}"
+    );
+}
+
+#[test]
+fn source_closed_typed_send_returns_aggregate_with_owned_right() {
+    let source = r#"
+data Envelope { number: I64, right: ReplyTo<I64> }
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<Envelope>(capacity = 1)?;
+  val (right, reply_receiver) = reply<I64>()?;
+  receiver.close();
+  val sent = sender.send(Envelope(42, right));
+  sender.close();
+  when (sent) {
+    Send<Envelope>.Sent -> {
+      reply_receiver.close();
+      Result<I64, ResourceError>.Ok(-1)
+    },
+    Send<Envelope>.Closed(envelope) -> {
+      val (number, returned_right) = envelope.unpack();
+      returned_right.close();
+      reply_receiver.close();
+      Result<I64, ResourceError>.Ok(number)
+    }
+  }
+}
+
+fn main() -> I64 = when (exchange()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { -2 },
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+}
+
+#[test]
 fn source_channel_methods_check_argument_shapes() {
     let source = include_str!("../examples/channel_exchange.phoebe");
     let bad_send = source.replace("sender.send(20)", "sender.send(true)");

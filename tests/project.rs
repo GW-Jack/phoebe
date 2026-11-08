@@ -5,6 +5,52 @@ use phoebe::{ProjectBuildSession, ProjectCompilerSession, core, native, package,
 
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
+#[test]
+fn imported_nominal_message_keeps_its_identity_through_typed_channel() {
+    let path = temp_project();
+    std::fs::write(
+        path.join("math.phoebe"),
+        "pub data Number { value: I64 }\npub fn make() -> Number = Number(42)\n",
+    )
+    .unwrap();
+    std::fs::write(
+        path.join("app.phoebe"),
+        r#"
+import math
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<math.Number>(capacity = 1)?;
+  val sent = sender.send(math.make());
+  sender.close();
+  when (sent) {
+    Send<math.Number>.Sent -> {
+      val received = receiver.receive();
+      receiver.close();
+      when (received) {
+        Receive<math.Number>.Value(number) -> { Result<I64, ResourceError>.Ok(number.value) },
+        Receive<math.Number>.End -> { Result<I64, ResourceError>.Ok(-1) }
+      }
+    },
+    Send<math.Number>.Closed(number) -> {
+      receiver.close();
+      Result<I64, ResourceError>.Ok(number.value)
+    }
+  }
+}
+
+fn main() -> I64 = when (exchange()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { -2 },
+}
+"#,
+    )
+    .unwrap();
+    let loaded = project::load(&path).unwrap();
+    let program = core::lower(&loaded.ast).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
 fn temp_project() -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "phoebe-project-test-{}-{}",

@@ -453,13 +453,22 @@ fn lower_internal(
             TypeName::RequestI64 => Ok(Type::RequestI64),
             TypeName::RequestSenderI64 => Ok(Type::RequestSenderI64),
             TypeName::RequestReceiverI64 => Ok(Type::RequestReceiverI64),
+            TypeName::TypedSender(value) => {
+                data::message_type(value, &data_names, span).map(Type::TypedSender)
+            }
+            TypeName::TypedReceiver(value) => {
+                data::message_type(value, &data_names, span).map(Type::TypedReceiver)
+            }
             TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
             TypeName::Named(name) => data_names
                 .get(name)
                 .copied()
                 .map(Type::Data)
                 .ok_or_else(|| Diagnostic::new(span, format!("unknown data type {name}"))),
-            TypeName::Option(_) | TypeName::Result(_, _) => data_names
+            TypeName::Option(_)
+            | TypeName::Result(_, _)
+            | TypeName::Send(_)
+            | TypeName::Receive(_) => data_names
                 .get(&name.key())
                 .copied()
                 .map(Type::Data)

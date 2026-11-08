@@ -18,8 +18,9 @@ impl Parser {
                 | "RequestReceiver"
         ) {
             self.expect(&TokenKind::Less, "< after channel endpoint type")?;
-            let (element, element_span) = self.name()?;
-            if element != "I64" {
+            let element_span = self.current().span;
+            let element = self.type_name(false)?;
+            if element != TypeName::I64 && !matches!(name.as_str(), "Sender" | "Receiver") {
                 return Err(Diagnostic::new(
                     element_span,
                     "only I64 communication values are implemented",
@@ -33,8 +34,16 @@ impl Parser {
                 ));
             }
             return Ok(match name.as_str() {
-                "Sender" => TypeName::SenderI64,
-                "Receiver" => TypeName::ReceiverI64,
+                "Sender" if element == TypeName::I64 => TypeName::SenderI64,
+                "Receiver" if element == TypeName::I64 => TypeName::ReceiverI64,
+                "Sender" => {
+                    self.register_typed_channel_outcomes(&element, span.join(end));
+                    TypeName::TypedSender(Box::new(element))
+                }
+                "Receiver" => {
+                    self.register_typed_channel_outcomes(&element, span.join(end));
+                    TypeName::TypedReceiver(Box::new(element))
+                }
                 "ReplyTo" => TypeName::ReplyToI64,
                 "ReplyReceiver" => {
                     self.uses_reply_outcome = true;
@@ -117,17 +126,27 @@ impl Parser {
     pub(super) fn channel_outcome_type_after_name(
         &mut self,
         name: &str,
-        _start: Span,
+        start: Span,
     ) -> Result<TypeName, Diagnostic> {
         self.expect(&TokenKind::Less, "< after channel outcome type")?;
-        let (element, element_span) = self.name()?;
-        if element != "I64" {
+        let element_span = self.current().span;
+        let element = self.type_name(false)?;
+        if element != TypeName::I64 && !matches!(name, "Send" | "Receive") {
             return Err(Diagnostic::new(
                 element_span,
                 "only I64 channels are implemented",
             ));
         }
-        self.expect(&TokenKind::Greater, ">")?;
+        let end = self.expect(&TokenKind::Greater, ">")?.span;
+        if element != TypeName::I64 {
+            let ty = match name {
+                "Send" => TypeName::Send(Box::new(element)),
+                "Receive" => TypeName::Receive(Box::new(element)),
+                _ => unreachable!(),
+            };
+            self.applied_types.push((ty.clone(), start.join(end)));
+            return Ok(ty);
+        }
         match name {
             "Send" => self.uses_send_outcome = true,
             "Receive" => self.uses_receive_outcome = true,
@@ -136,5 +155,14 @@ impl Parser {
             _ => unreachable!(),
         }
         Ok(TypeName::Named(format!("{name}<I64>")))
+    }
+
+    pub(super) fn register_typed_channel_outcomes(&mut self, element: &TypeName, span: Span) {
+        if element != &TypeName::I64 {
+            self.applied_types
+                .push((TypeName::Send(Box::new(element.clone())), span));
+            self.applied_types
+                .push((TypeName::Receive(Box::new(element.clone())), span));
+        }
     }
 }

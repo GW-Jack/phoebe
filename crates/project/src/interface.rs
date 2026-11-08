@@ -70,9 +70,25 @@ impl ModuleInterface {
                     bytes.push(11);
                     ty(bytes, value, binders);
                 }
+                TypeName::TypedSender(value) => {
+                    bytes.push(14);
+                    ty(bytes, value, binders);
+                }
+                TypeName::TypedReceiver(value) => {
+                    bytes.push(15);
+                    ty(bytes, value, binders);
+                }
+                TypeName::Send(value) => {
+                    bytes.push(16);
+                    ty(bytes, value, binders);
+                }
+                TypeName::Receive(value) => {
+                    bytes.push(17);
+                    ty(bytes, value, binders);
+                }
             }
         }
-        let mut bytes = b"PHOEBE-INTERFACE\0\x02".to_vec();
+        let mut bytes = b"PHOEBE-INTERFACE\0\x03".to_vec();
         let no_binders = HashMap::new();
         name(&mut bytes, &self.name);
         length(&mut bytes, self.data.len());

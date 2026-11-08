@@ -514,7 +514,11 @@ fn qualify_type(
             *name = format!("{module}.{name}");
         }
         TypeName::Named(name) => qualify_imported_data_name(name, imports, available)?,
-        TypeName::Option(value) => {
+        TypeName::Option(value)
+        | TypeName::TypedSender(value)
+        | TypeName::TypedReceiver(value)
+        | TypeName::Send(value)
+        | TypeName::Receive(value) => {
             qualify_type(value, module, binders, local_data, imports, available)?;
         }
         TypeName::Result(ok, err) => {
@@ -570,8 +574,24 @@ fn rewrite_body(
         match statement {
             Statement::Yield(_) => {}
             Statement::ReplyVal { .. } => {}
-            Statement::ChannelVal { capacity, .. }
-            | Statement::RequestChannelVal { capacity, .. } => rewrite(capacity)?,
+            Statement::ChannelVal {
+                capacity,
+                message,
+                span,
+                ..
+            } => {
+                qualify_type(
+                    message,
+                    module,
+                    &HashSet::new(),
+                    local_data,
+                    imports,
+                    available,
+                )
+                .map_err(|error| (*span, error))?;
+                rewrite(capacity)?;
+            }
+            Statement::RequestChannelVal { capacity, .. } => rewrite(capacity)?,
             Statement::UnpackVal { value, .. } => rewrite(value)?,
             Statement::Spawn { child, args, .. } => {
                 if local_functions.contains(child) {

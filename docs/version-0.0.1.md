@@ -345,8 +345,9 @@ the concrete two-word request layout.
 The interpreter creates its request queue from the checked message catalog
 and encodes and decodes the two words using the same flattened layout table.
 Checked Core also verifies and interprets a typed channel family for nominal
-messages. Its current hand-built witnesses include a product carrying a
-reply right; source `channel<T>` and native typed code generation remain open.
+messages. Source `channel<T>` lowers concrete nominal sends and receives,
+including a closed send that returns an aggregate with its reply right intact.
+Native typed code generation remains open.
 Runtime task failure now cancels remaining scope tasks immediately after
 closing the failing task's rights. A host regression catches the case where
 the parent retained another sender and would otherwise report a deadlock

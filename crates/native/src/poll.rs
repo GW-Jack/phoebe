@@ -1718,13 +1718,18 @@ fn validate_poll_function(
             function.blocks[point.block.0].terminator,
             Terminator::ChannelReceive { .. }
                 | Terminator::ChannelSend { .. }
+                | Terminator::TypedReceive { .. }
+                | Terminator::TypedSend { .. }
                 | Terminator::ReplyReceive { .. }
                 | Terminator::RequestReceive { .. }
                 | Terminator::RequestSend { .. }
                 | Terminator::Yield { .. }
                 | Terminator::ScopeJoin { .. }
         ) {
-            return Err("unsupported retained poll point".into());
+            return Err(format!(
+                "unsupported retained poll point: {:?}",
+                function.blocks[point.block.0].terminator
+            ));
         }
     }
     for (block_id, block) in function.blocks.iter().enumerate() {
@@ -1789,11 +1794,14 @@ fn validate_poll_function(
                 | Terminator::Branch { .. }
                 | Terminator::Match { .. }
                 | Terminator::ChannelNew { .. }
+                | Terminator::TypedChannelNew { .. }
                 | Terminator::ReplyNew { .. }
                 | Terminator::Fork { .. }
                 | Terminator::Spawn { .. }
                 | Terminator::ChannelReceive { .. }
                 | Terminator::ChannelSend { .. }
+                | Terminator::TypedReceive { .. }
+                | Terminator::TypedSend { .. }
                 | Terminator::ReplyComplete { .. }
                 | Terminator::ReplyReceive { .. }
                 | Terminator::RequestChannelNew { .. }
@@ -1807,6 +1815,8 @@ fn validate_poll_function(
             block.terminator,
             Terminator::ChannelReceive { .. }
                 | Terminator::ChannelSend { .. }
+                | Terminator::TypedReceive { .. }
+                | Terminator::TypedSend { .. }
                 | Terminator::ReplyReceive { .. }
                 | Terminator::RequestSend { .. }
                 | Terminator::RequestReceive { .. }

@@ -215,5 +215,7 @@ intact value on `Closed`, and retains it on retry. `channel.receive.typed` creat
 message's affine leaves on `Value`. The verifier checks the exact message
 type at each edge, including nominal identity rather than ABI width alone.
 Hand-built checked Core programs exercise a closed nominal product and a
-product containing `ReplyToI64` in the interpreter. Source lowering and
-native code generation for this family remain open.
+product containing `ReplyToI64` in the interpreter. Source `channel<T>` now
+lowers concrete nominal messages through these terminators, including a closed
+send returning a product with an owned reply right. Native code generation for
+this family remains open.

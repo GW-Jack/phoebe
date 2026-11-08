@@ -51,6 +51,7 @@ fn statement(a: &Statement, b: &Statement, delta: isize) -> bool {
         (
             Statement::ChannelVal {
                 mutable: am,
+                message: at,
                 sender: asend,
                 receiver: arecv,
                 capacity: ac,
@@ -58,6 +59,7 @@ fn statement(a: &Statement, b: &Statement, delta: isize) -> bool {
             },
             Statement::ChannelVal {
                 mutable: bm,
+                message: bt,
                 sender: bsend,
                 receiver: brecv,
                 capacity: bc,
@@ -65,6 +67,7 @@ fn statement(a: &Statement, b: &Statement, delta: isize) -> bool {
             },
         ) => {
             am == bm
+                && at == bt
                 && asend.0 == bsend.0
                 && span(asend.1, bsend.1, delta)
                 && arecv.0 == brecv.0

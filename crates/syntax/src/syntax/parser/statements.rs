@@ -72,8 +72,9 @@ impl Parser {
                         ));
                     }
                     self.expect(&TokenKind::Less, "<")?;
-                    let (element, element_span) = self.name()?;
-                    if element != "I64" {
+                    let element_span = self.current().span;
+                    let element = self.type_name(false)?;
+                    if element != TypeName::I64 && constructor != "channel" {
                         return Err(Diagnostic::new(
                             element_span,
                             "only I64 channels are implemented",
@@ -118,8 +119,10 @@ impl Parser {
                             span: start.join(question.span),
                         });
                     } else {
+                        self.register_typed_channel_outcomes(&element, start.join(question.span));
                         statements.push(Statement::ChannelVal {
                             mutable,
+                            message: element,
                             sender,
                             receiver,
                             capacity,

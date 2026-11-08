@@ -70,9 +70,13 @@ fn source_channel_creation_requires_explicit_failure_contract() {
     let error = core::lower(&syntax::parse(&wrong_return).unwrap()).unwrap_err();
     assert!(error.message.contains("requires Result<_, ResourceError>"));
 
-    let wrong_element = source(1).replace("channel<I64>", "channel<Bool>");
-    let error = syntax::parse(&wrong_element).unwrap_err();
-    assert!(error.message.contains("only I64 channels"));
+    let typed = source(1).replace("channel<I64>", "channel<Bool>");
+    let program = core::lower(&syntax::parse(&typed).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 7);
+
+    let unknown_element = source(1).replace("channel<I64>", "channel<Missing>");
+    let error = core::lower(&syntax::parse(&unknown_element).unwrap()).unwrap_err();
+    assert!(error.message.contains("Missing"), "{error:?}");
 }
 
 #[test]

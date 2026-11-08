@@ -80,6 +80,7 @@ impl Lowerer<'_> {
             match statement {
                 Statement::ChannelVal {
                     mutable,
+                    message,
                     sender,
                     receiver,
                     capacity,
@@ -101,15 +102,31 @@ impl Lowerer<'_> {
                     })?;
                     let (value, ty) = self.expr(capacity, locals)?;
                     self.require(ty, Type::I64, capacity.span)?;
+                    let typed_message = if *message == TypeName::I64 {
+                        None
+                    } else {
+                        Some(data::message_type(message, self.data_names, *span)?)
+                    };
+                    let sender_type = typed_message.map_or(Type::SenderI64, Type::TypedSender);
+                    let receiver_type =
+                        typed_message.map_or(Type::ReceiverI64, Type::TypedReceiver);
                     let success = self.block();
-                    let send_value = self.block_param(success, Type::SenderI64);
-                    let receive_value = self.block_param(success, Type::ReceiverI64);
+                    let send_value = self.block_param(success, sender_type);
+                    let receive_value = self.block_param(success, receiver_type);
                     let failure = self.block();
                     let error = self.block_param(failure, Type::ResourceError);
-                    self.terminate(Terminator::ChannelNew {
-                        capacity: value,
-                        success,
-                        failure,
+                    self.terminate(match typed_message {
+                        Some(message) => Terminator::TypedChannelNew {
+                            message,
+                            capacity: value,
+                            success,
+                            failure,
+                        },
+                        None => Terminator::ChannelNew {
+                            capacity: value,
+                            success,
+                            failure,
+                        },
                     });
                     self.current = failure;
                     let failed = self.emit(
@@ -124,7 +141,7 @@ impl Lowerer<'_> {
                         &sender.0,
                         sender.1,
                         send_value,
-                        Type::SenderI64,
+                        sender_type,
                         *mutable,
                     );
                     self.bind_pair_local(
@@ -132,7 +149,7 @@ impl Lowerer<'_> {
                         &receiver.0,
                         receiver.1,
                         receive_value,
-                        Type::ReceiverI64,
+                        receiver_type,
                         *mutable,
                     );
                 }
