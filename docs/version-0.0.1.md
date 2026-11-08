@@ -103,8 +103,9 @@ non-suspending concrete functions in the same Cranelift JIT module. Tests
 cover a transitive branch and a wide nominal return buffer. Single-file
 `phoebe build` emits the same planned instances and concrete callers into one
 linkable object; the resulting executable runs without the compiler process.
-Retained native tasks, project builds, and persistent generic object caching
-remain open.
+Single-shot projects resolve public generic calls across modules for `check`,
+`run`, `build`, and IR inspection. Retained native tasks, incremental project
+sessions, and persistent generic object caching remain open.
 The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures
@@ -501,6 +502,9 @@ buck2 run //:phoebe -- run examples/generic_call.phoebe
 buck2 run //:phoebe -- run examples/generic_call.phoebe --interp
 buck2 run //:phoebe -- build examples/generic_call.phoebe -o /tmp/phoebe-generic
 /tmp/phoebe-generic
+buck2 run //:phoebe -- run examples/generic_project
+buck2 run //:phoebe -- build examples/generic_project -o /tmp/phoebe-generic-project
+/tmp/phoebe-generic-project
 buck2 run //:phoebe -- build examples/borrow.phoebe -o /tmp/phoebe-borrow
 /tmp/phoebe-borrow
 buck2 test //...

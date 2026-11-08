@@ -298,6 +298,14 @@ fn lower_inner(source: &syntax::Function, signatures: &[Function]) -> Result<Fun
                 &function.value_types,
                 signatures,
             )?,
+            ExprKind::QualifiedCall(module, name, args) => call_operation(
+                &format!("{module}.{name}"),
+                args,
+                expr.span,
+                &locals,
+                &function.value_types,
+                signatures,
+            )?,
             _ => {
                 return Err(Diagnostic::new(
                     expr.span,
@@ -320,9 +328,14 @@ fn lower_inner(source: &syntax::Function, signatures: &[Function]) -> Result<Fun
         .ok_or_else(|| Diagnostic::new(source.name_span, "generic body needs a final value"))?;
     function.blocks[0].terminator = match &tail.kind {
         ExprKind::Name(name) => Terminator::Return(local(&locals, name, tail.span)?),
-        ExprKind::Call(name, args) => {
+        ExprKind::Call(_, _) | ExprKind::QualifiedCall(_, _, _) => {
+            let (name, args) = match &tail.kind {
+                ExprKind::Call(name, args) => (name.clone(), args),
+                ExprKind::QualifiedCall(module, name, args) => (format!("{module}.{name}"), args),
+                _ => unreachable!(),
+            };
             let (operation, result_type) = call_operation(
-                name,
+                &name,
                 args,
                 tail.span,
                 &locals,

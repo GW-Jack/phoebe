@@ -1,0 +1,9 @@
+[package]
+name = "generic_project"
+version = "0.0.1"
+root = "app"
+
+[modules]
+app = "app.phoebe"
+math = "math.phoebe"
+base = "base.phoebe"

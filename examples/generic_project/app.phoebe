@@ -1,0 +1,3 @@
+import math
+
+fn main() -> I64 = math.through(42)

@@ -304,6 +304,14 @@ fn suspendable_functions_verified(program: &Program) -> Vec<bool> {
 /// No frame is assigned to functions with no suspension point.
 pub fn analyze(program: &Program) -> Result<Vec<FunctionFrame>, String> {
     let suspendable = suspendable_functions(program)?;
+    analyze_verified(program, &suspendable)
+}
+
+pub fn analyze_linked(linked: &core::CheckedLinkedProgram) -> Result<Vec<FunctionFrame>, String> {
+    analyze_verified(linked.program(), &suspendable_functions_linked(linked))
+}
+
+fn analyze_verified(program: &Program, suspendable: &[bool]) -> Result<Vec<FunctionFrame>, String> {
     let mut frames = Vec::new();
     for (function_id, function) in program.functions.iter().enumerate() {
         if !suspendable[function_id] {
@@ -404,6 +412,14 @@ pub fn analyze(program: &Program) -> Result<Vec<FunctionFrame>, String> {
 /// Stable textual view of the planned frame payload and resume points.
 pub fn format(program: &Program) -> Result<String, String> {
     let frames = analyze(program)?;
+    format_frames(program, frames)
+}
+
+pub fn format_linked(linked: &core::CheckedLinkedProgram) -> Result<String, String> {
+    format_frames(linked.program(), analyze_linked(linked)?)
+}
+
+fn format_frames(program: &Program, frames: Vec<FunctionFrame>) -> Result<String, String> {
     let mut output = String::new();
     if frames.is_empty() {
         return Ok("no retained frames\n".into());

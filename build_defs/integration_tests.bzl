@@ -2,7 +2,14 @@ def integration_tests(rust_test):
     rust_test(
         name = "generic_cli_tests",
         crate_root = "tests/generic_cli.rs",
-        srcs = ["tests/generic_cli.rs", "examples/generic_call.phoebe"],
+        srcs = [
+            "tests/generic_cli.rs",
+            "examples/generic_call.phoebe",
+            "examples/generic_project/phoebe.toml",
+            "examples/generic_project/app.phoebe",
+            "examples/generic_project/math.phoebe",
+            "examples/generic_project/base.phoebe",
+        ],
         edition = "2024",
         env = {"PHOEBE_TEST_COMPILER": "$(location :phoebe)"},
     )

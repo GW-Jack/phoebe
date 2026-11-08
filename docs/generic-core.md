@@ -6,8 +6,8 @@ returns without choosing a concrete type or ABI shape. Source functions with
 explicit type binders can lower identity, `val` moves, and simple `if`
 forwarding and generic-to-generic calls into this IR through
 `phoebe generic-ir <file>`. The current source subset infers call binders
-from named owned arguments. Concrete call sites, dictionaries, and native
-emission are not yet accepted.
+from named owned arguments. Concrete call sites and native emission work for
+the non-suspending subset. Dictionaries remain open.
 
 ## The sharing rule
 
@@ -93,9 +93,8 @@ Source lowering can retain a `CheckedModule` after one body verification.
 `phoebe-core::generic_calls` infers concrete type arguments from the owned
 argument types already known to concrete lowering, or validates an explicit
 substitution against that checked signature. It rejects borrowed references
-at an owning binder and reports uninferred phantom binders. This resolver is
-signature-only: ordinary concrete Core call operations and CLI execution do
-not yet route through it.
+at an owning binder and reports uninferred phantom binders. Concrete Core
+lowering uses these checked signatures for generic calls.
 
 ## First executable acceptance cases
 
@@ -127,8 +126,9 @@ call verifies the caller-owned return-buffer path. A generated object links
 with a C entry and runs the transitive call without the compiler process.
 Moves and scalar copies alias existing SSA values, generating no explicit
 copy instruction. Non-suspending concrete source calls now use these planned
-instances in the same JIT module or standalone object. A persistent object
-cache key remains open. The current IR has no
+instances in the same JIT module or standalone object. Project qualification
+allows public generic calls across imported modules; incremental project
+sessions and a persistent object cache key remain open. The current IR has no
 suspension, hidden runtime context, or dictionary
 operations; adding any of them requires extending the sharing key and its
 soundness argument before emission.

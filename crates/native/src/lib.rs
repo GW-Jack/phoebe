@@ -84,6 +84,7 @@ fn plan_linked_calls<M: Module>(
     linked: &core::CheckedLinkedProgram,
     suspendable: &[bool],
     selected: Option<&[bool]>,
+    clif: Option<&mut String>,
 ) -> Result<GenericTargets, String> {
     let program = linked.program();
     let shapes = phoebe_abi::Shapes::new(program)?;
@@ -115,7 +116,10 @@ fn plan_linked_calls<M: Module>(
     let calls = if calls.is_empty() {
         HashMap::new()
     } else {
-        let (ids, _) = generic::emit_into(module, &planner, 0, false)?;
+        let (ids, generic_ir) = generic::emit_into(module, &planner, 0, false)?;
+        if let Some(output) = clif {
+            output.push_str(&generic_ir);
+        }
         calls
             .into_iter()
             .map(|(site, instance)| (site, ids[instance]))
@@ -265,7 +269,13 @@ fn compile_jit_impl(
     }
     let mut module = JITModule::new(jit);
     let targets = if let Some(linked) = linked {
-        Some(plan_linked_calls(&mut module, linked, &suspendable, None)?)
+        Some(plan_linked_calls(
+            &mut module,
+            linked,
+            &suspendable,
+            None,
+            None,
+        )?)
     } else {
         None
     };
@@ -498,6 +508,40 @@ pub fn clif_checked(program: &core::CheckedProgram) -> Result<String, String> {
     clif_verified(program.verified())
 }
 
+pub fn clif_linked(linked: &core::CheckedLinkedProgram) -> Result<String, String> {
+    let program = linked.program();
+    let suspendable = frame_layout::suspendable_functions_linked(linked);
+    if suspendable.iter().any(|suspendable| *suspendable) {
+        return Err(
+            "linked generic CLIF inspection for retained tasks is not available yet".into(),
+        );
+    }
+    let mut flags = settings::builder();
+    flags
+        .set("use_colocated_libcalls", "false")
+        .map_err(|error| error.to_string())?;
+    flags
+        .set("is_pic", "false")
+        .map_err(|error| error.to_string())?;
+    let isa = native_builder()
+        .map_err(|error| format!("unsupported native host: {error}"))?
+        .finish(settings::Flags::new(flags))
+        .map_err(|error| error.to_string())?;
+    let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
+    let mut output = String::new();
+    let targets = plan_linked_calls(&mut module, linked, &suspendable, None, Some(&mut output))?;
+    compile_functions(
+        &mut module,
+        program,
+        &program.runtime_context_functions(),
+        false,
+        Some(&mut output),
+        None,
+        Some(&targets),
+    )?;
+    Ok(output)
+}
+
 fn clif_verified(verified: core::VerifiedProgram<'_>) -> Result<String, String> {
     let program = verified.as_program();
     if let Some((main, _)) = program.function("main")
@@ -583,7 +627,7 @@ pub fn build_executable_linked(
     let builder = ObjectBuilder::new(isa, "phoebe", default_libcall_names())
         .map_err(|error| error.to_string())?;
     let mut module = ObjectModule::new(builder);
-    let targets = plan_linked_calls(&mut module, linked, &suspendable, Some(&direct))?;
+    let targets = plan_linked_calls(&mut module, linked, &suspendable, Some(&direct), None)?;
     compile_functions(
         &mut module,
         program,

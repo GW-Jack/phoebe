@@ -304,10 +304,18 @@ fn load_with_cache(
             ));
         }
         let mut application_names = HashMap::new();
+        let no_binders = HashSet::new();
         for (ty, span) in &mut module.ast.applied_types {
             let before = ty.key();
-            qualify_type(ty, &module.name, &local_data, &imports, &module.available)
-                .map_err(|message| source_error(path, source, *span, message))?;
+            qualify_type(
+                ty,
+                &module.name,
+                &no_binders,
+                &local_data,
+                &imports,
+                &module.available,
+            )
+            .map_err(|message| source_error(path, source, *span, message))?;
             application_names.insert(before, ty.key());
         }
         for definition in &mut module.ast.data {
@@ -316,6 +324,7 @@ fn load_with_cache(
                     qualify_type(
                         &mut payload.ty,
                         &module.name,
+                        &no_binders,
                         &local_data,
                         &imports,
                         &module.available,
@@ -327,6 +336,7 @@ fn load_with_cache(
                 qualify_type(
                     &mut field.ty,
                     &module.name,
+                    &no_binders,
                     &local_data,
                     &imports,
                     &module.available,
@@ -336,18 +346,16 @@ fn load_with_cache(
             definition.name = format!("{}.{}", module.name, definition.name);
         }
         for function in &mut module.ast.functions {
-            if !function.type_params.is_empty() {
-                return Err(source_error(
-                    path,
-                    source,
-                    function.name_span,
-                    "generic project functions are not executable yet".into(),
-                ));
-            }
+            let binders = function
+                .type_params
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<HashSet<_>>();
             for param in &mut function.params {
                 qualify_type(
                     &mut param.ty,
                     &module.name,
+                    &binders,
                     &local_data,
                     &imports,
                     &module.available,
@@ -357,6 +365,7 @@ fn load_with_cache(
             qualify_type(
                 &mut function.return_type,
                 &module.name,
+                &binders,
                 &local_data,
                 &imports,
                 &module.available,
@@ -484,6 +493,7 @@ fn symbol(module: &str, name: &str, root: &str) -> String {
 fn qualify_type(
     ty: &mut TypeName,
     module: &str,
+    binders: &HashSet<String>,
     local_data: &HashSet<String>,
     imports: &HashMap<String, ResolvedImport>,
     available: &HashMap<String, String>,
@@ -499,16 +509,17 @@ fn qualify_type(
         | TypeName::RequestI64
         | TypeName::RequestSenderI64
         | TypeName::RequestReceiverI64 => {}
+        TypeName::Named(name) if binders.contains(name) => {}
         TypeName::Named(name) if local_data.contains(name) => {
             *name = format!("{module}.{name}");
         }
         TypeName::Named(name) => qualify_imported_data_name(name, imports, available)?,
         TypeName::Option(value) => {
-            qualify_type(value, module, local_data, imports, available)?;
+            qualify_type(value, module, binders, local_data, imports, available)?;
         }
         TypeName::Result(ok, err) => {
-            qualify_type(ok, module, local_data, imports, available)?;
-            qualify_type(err, module, local_data, imports, available)?;
+            qualify_type(ok, module, binders, local_data, imports, available)?;
+            qualify_type(err, module, binders, local_data, imports, available)?;
         }
     }
     Ok(())

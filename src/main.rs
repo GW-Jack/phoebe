@@ -45,6 +45,126 @@ fn build_arguments(args: impl Iterator<Item = String>) -> Result<(String, Option
     Ok((output.ok_or_else(|| usage().to_owned())?, cache_dir))
 }
 
+fn print_shapes(program: &core::Program) -> Result<(), String> {
+    let shapes = abi::Shapes::new(program)?;
+    println!("function\tposition\tmode\tparts");
+    for function in &program.functions {
+        for (index, (&value, mode)) in function.blocks[0]
+            .params
+            .iter()
+            .zip(&function.param_modes)
+            .enumerate()
+        {
+            println!(
+                "{}\t{}\t{:?}\t{:?}",
+                function.name,
+                index,
+                mode,
+                shapes.parts(function.value_types[value.0])?
+            );
+        }
+        println!(
+            "{}\treturn\t-\t{:?}",
+            function.name,
+            shapes.parts(function.return_type)?
+        );
+    }
+    Ok(())
+}
+
+fn print_cost(program: &core::Program) {
+    println!("function\tblock\tinstruction\tstart\tend\tkind\ttype\treason");
+    for event in program.cost_events() {
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            event.function,
+            event.block,
+            event.instruction,
+            event.span.start,
+            event.span.end,
+            event.kind,
+            event.type_name,
+            event.reason
+        );
+    }
+}
+
+fn linked_command(
+    action: &str,
+    args: impl Iterator<Item = String>,
+    linked: &core::CheckedLinkedProgram,
+) -> Result<(), String> {
+    let mut args = args;
+    match action {
+        "check" => {
+            if args.next().is_some() {
+                return Err(usage().into());
+            }
+            println!(
+                "ok: {} function(s)",
+                linked.program().functions.len() + linked.generics().as_module().functions.len()
+            );
+        }
+        "ir" => {
+            if args.next().is_some() {
+                return Err(usage().into());
+            }
+            print!("{}{}", linked.generics().as_module(), linked.program());
+        }
+        "shapes" => {
+            if args.next().is_some() {
+                return Err(usage().into());
+            }
+            print_shapes(linked.program())?;
+        }
+        "frames" => {
+            if args.next().is_some() {
+                return Err(usage().into());
+            }
+            print!("{}", frame_layout::format_linked(linked)?);
+        }
+        "clif" => {
+            if args.next().is_some() {
+                return Err(usage().into());
+            }
+            print!("{}", native::clif_linked(linked)?);
+        }
+        "cost" => {
+            if args.next().is_some() {
+                return Err(usage().into());
+            }
+            print_cost(linked.program());
+        }
+        "run" => {
+            let rest = args.collect::<Vec<_>>();
+            let interpreted = rest.iter().any(|arg| arg == "--interp");
+            let (name, values) = run_arguments(&rest)?;
+            let result = if interpreted {
+                linked.interpret(&name, &values)?
+            } else {
+                native::run_linked(linked, &name, &values)?
+            };
+            println!("{result}");
+        }
+        "build" => {
+            let (output, cache_dir) = build_arguments(args)?;
+            if cache_dir.is_some() {
+                return Err(
+                    "linked generic builds do not have a persistent object cache yet".into(),
+                );
+            }
+            native::build_executable_linked(linked, Path::new(&output))?;
+            println!("built {output}");
+        }
+        _ => {
+            return Err(format!(
+                "{action} for linked generic programs is not available yet"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn command() -> Result<(), String> {
     let mut args = env::args().skip(1);
     let action = args.next().ok_or_else(|| usage().to_owned())?;
@@ -107,10 +227,22 @@ fn command() -> Result<(), String> {
     }
     let mut args = args.collect::<Vec<_>>().into_iter();
     let mut preloaded = None;
-    if matches!(action.as_str(), "run" | "build")
-        && !Path::new(&path).is_dir()
-        && !path.ends_with(".toml")
-    {
+    let mut preloaded_project = None;
+    let project_path = Path::new(&path).is_dir() || path.ends_with(".toml");
+    if project_path {
+        let loaded = project::load(Path::new(&path))?;
+        if loaded
+            .ast
+            .functions
+            .iter()
+            .any(|function| !function.type_params.is_empty())
+        {
+            let linked =
+                core::lower_linked_checked(&loaded.ast).map_err(|error| loaded.render(&error))?;
+            return linked_command(&action, args, &linked);
+        }
+        preloaded_project = Some(loaded);
+    } else {
         let source = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
         let ast = syntax::parse(&source).map_err(|e| format!("{path}:{}", e.render(&source)))?;
         let interpreted = args.clone().any(|arg| arg == "--interp");
@@ -121,30 +253,12 @@ fn command() -> Result<(), String> {
         if has_generics || (action == "run" && interpreted) {
             let linked = core::lower_linked_checked(&ast)
                 .map_err(|e| format!("{path}:{}", e.render(&source)))?;
-            if action == "build" {
-                let (output, cache_dir) = build_arguments(args)?;
-                if cache_dir.is_some() {
-                    return Err(
-                        "linked generic builds do not have a persistent object cache yet".into(),
-                    );
-                }
-                native::build_executable_linked(&linked, Path::new(&output))?;
-                println!("built {output}");
-            } else {
-                let (name, values) = run_arguments(&args.collect::<Vec<_>>())?;
-                let result = if interpreted {
-                    linked.interpret(&name, &values)?
-                } else {
-                    native::run_linked(&linked, &name, &values)?
-                };
-                println!("{result}");
-            }
-            return Ok(());
+            return linked_command(&action, args, &linked);
         }
         preloaded = Some((source, ast));
     }
-    let program = if Path::new(&path).is_dir() || path.ends_with(".toml") {
-        let loaded = project::load(Path::new(&path))?;
+    let program = if project_path {
+        let loaded = preloaded_project.expect("project loaded above");
         core::lower_checked(&loaded.ast).map_err(|error| loaded.render(&error))?
     } else {
         let (source, ast) = if let Some(preloaded) = preloaded {
@@ -174,30 +288,7 @@ fn command() -> Result<(), String> {
             if args.next().is_some() {
                 return Err(usage().into());
             }
-            let core = program.as_program();
-            let shapes = abi::Shapes::new(core)?;
-            println!("function\tposition\tmode\tparts");
-            for function in &core.functions {
-                for (index, (&value, mode)) in function.blocks[0]
-                    .params
-                    .iter()
-                    .zip(&function.param_modes)
-                    .enumerate()
-                {
-                    println!(
-                        "{}\t{}\t{:?}\t{:?}",
-                        function.name,
-                        index,
-                        mode,
-                        shapes.parts(function.value_types[value.0])?
-                    );
-                }
-                println!(
-                    "{}\treturn\t-\t{:?}",
-                    function.name,
-                    shapes.parts(function.return_type)?
-                );
-            }
+            print_shapes(program.as_program())?;
         }
         "frames" => {
             if args.next().is_some() {
@@ -215,20 +306,7 @@ fn command() -> Result<(), String> {
             if args.next().is_some() {
                 return Err(usage().into());
             }
-            println!("function\tblock\tinstruction\tstart\tend\tkind\ttype\treason");
-            for event in program.as_program().cost_events() {
-                println!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                    event.function,
-                    event.block,
-                    event.instruction,
-                    event.span.start,
-                    event.span.end,
-                    event.kind,
-                    event.type_name,
-                    event.reason
-                );
-            }
+            print_cost(program.as_program());
         }
         "run" => {
             let rest = args.collect::<Vec<_>>();
