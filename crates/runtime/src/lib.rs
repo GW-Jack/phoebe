@@ -1,11 +1,96 @@
 //! Scope-owned cooperative task, channel, and one-shot reply kernel.
 //! Compiler-generated continuations and typed message layouts are future work.
 
+use std::alloc::{Layout, alloc};
 use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::task::Poll;
+
+/// Allocate a task body without invoking Rust's infallible `Box::new` path.
+/// On allocation failure the caller retains the original, unmodified value.
+fn try_box<T>(value: T) -> Result<Box<T>, T> {
+    // SAFETY: the closure delegates to the global allocator for this layout.
+    unsafe { try_box_with(value, |layout| alloc(layout)) }
+}
+
+/// # Safety
+///
+/// A non-null result from `allocate` must be a fresh allocation from the
+/// global allocator for the supplied layout.
+unsafe fn try_box_with<T>(value: T, allocate: impl FnOnce(Layout) -> *mut u8) -> Result<Box<T>, T> {
+    let layout = Layout::new::<T>();
+    if layout.size() == 0 {
+        return Ok(Box::new(value));
+    }
+    // SAFETY: `alloc` returns memory aligned for `T` or null. We write one
+    // initialized `T` only after checking the pointer and give its exact
+    // allocation to Box, which owns both the value and deallocation.
+    let pointer = allocate(layout);
+    if pointer.is_null() {
+        return Err(value);
+    }
+    let pointer = pointer.cast::<T>();
+    unsafe {
+        pointer.write(value);
+        Ok(Box::from_raw(pointer))
+    }
+}
+
+#[cfg(test)]
+mod allocation_tests {
+    use super::*;
+
+    struct NeverRun {
+        sender: Sender,
+    }
+
+    impl Task for NeverRun {
+        fn poll(&mut self, _context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            panic!("allocation failure must not schedule the child")
+        }
+    }
+
+    struct FailedSpawnRoot;
+
+    impl Task for FailedSpawnRoot {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            let (sender, receiver) = context.channel(1)?;
+            let token = sender.token();
+            let error = context
+                .spawn_with_transfers(
+                    NeverRun { sender },
+                    [CapabilityTransfer::Channel(token)].into_iter(),
+                    Err,
+                )
+                .unwrap_err();
+            assert_eq!(error.resource_error, Some(ResourceError::Allocation));
+            assert_eq!(error.value.sender.token(), token);
+            context.close_sender(error.value.sender)?;
+            context.close_receiver(receiver)?;
+            Ok(Poll::Ready(42))
+        }
+    }
+
+    #[test]
+    fn failed_frame_allocation_returns_the_original_value() {
+        let owned = String::from("retained child");
+        let pointer = owned.as_ptr();
+        // SAFETY: the injected allocator returns null and never publishes memory.
+        let returned = unsafe { try_box_with(owned, |_| std::ptr::null_mut()) }.unwrap_err();
+        assert_eq!(returned, "retained child");
+        assert_eq!(returned.as_ptr(), pointer);
+    }
+
+    #[test]
+    fn failed_spawn_frame_allocation_keeps_child_and_transfer_with_parent() {
+        let mut scheduler = Scheduler::new(FailedSpawnRoot, 2, 1, 0).unwrap();
+        assert_eq!(scheduler.run().unwrap(), 42);
+        assert_eq!(scheduler.stats().tasks_created, 1);
+        scheduler.verify().unwrap();
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TaskId(usize);
@@ -362,14 +447,15 @@ impl Scheduler {
         tasks
             .try_reserve_exact(max_tasks)
             .map_err(|error| error.to_string())?;
-        tasks.push(TaskRecord {
-            body: Some(Box::new(root)),
-            state: TaskState::Runnable,
-        });
         let mut ready = VecDeque::new();
         ready
             .try_reserve_exact(max_tasks)
             .map_err(|error| error.to_string())?;
+        let root = try_box(root).map_err(|_| "root task frame allocation failed".to_owned())?;
+        tasks.push(TaskRecord {
+            body: Some(root),
+            state: TaskState::Runnable,
+        });
         ready.push_back(TaskId(0));
         Ok(Self {
             tasks,
@@ -1243,6 +1329,7 @@ impl Context<'_> {
         self.spawn_with_transfers(
             child,
             transfers.iter().copied().map(CapabilityTransfer::Channel),
+            try_box,
         )
     }
 
@@ -1253,13 +1340,14 @@ impl Context<'_> {
         child: T,
         transfers: &[CapabilityTransfer],
     ) -> Result<TaskId, OwnedError<T>> {
-        self.spawn_with_transfers(child, transfers.iter().copied())
+        self.spawn_with_transfers(child, transfers.iter().copied(), try_box)
     }
 
     fn spawn_with_transfers<T: Task + 'static>(
         &mut self,
         child: T,
         transfers: impl Iterator<Item = CapabilityTransfer> + Clone,
+        box_frame: impl FnOnce(T) -> Result<Box<T>, T>,
     ) -> Result<TaskId, OwnedError<T>> {
         if self.scheduler.tasks.len() >= self.scheduler.max_tasks {
             return Err(OwnedError {
@@ -1315,9 +1403,19 @@ impl Context<'_> {
                 value: child,
             });
         }
+        let child = match box_frame(child) {
+            Ok(boxed) => boxed,
+            Err(child) => {
+                return Err(OwnedError {
+                    message: "child task frame allocation failed".into(),
+                    resource_error: Some(ResourceError::Allocation),
+                    value: child,
+                });
+            }
+        };
         let id = TaskId(self.scheduler.tasks.len());
         self.scheduler.tasks.push(TaskRecord {
-            body: Some(Box::new(child)),
+            body: Some(child),
             state: TaskState::Runnable,
         });
         for transfer in transfers {

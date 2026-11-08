@@ -163,6 +163,9 @@ atomic scope cancellation and queued-message discard; it remains an abstract
 model, not a proof about the executable scheduler.
 Typed resource creation errors now distinguish invalid capacity, table
 limits, and allocation failure without publishing partial endpoint pairs.
+Task body boxing now fails before spawn transfers commit; an injected
+allocation failure test checks intact child and channel-right recovery.
+Uncontrolled host OOM, including error-string allocation, is not yet covered.
 `docs/runtime-kernel.md` describes the kernel and the compiler,
 general typed-message, and native-runtime integration still required.
 `crates/capability` separately checks exact slot ownership in abstract

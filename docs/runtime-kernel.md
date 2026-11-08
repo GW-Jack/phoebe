@@ -16,10 +16,10 @@ parks the sender with the original message still in its frame; a receive of an
 empty channel parks the receiver. Queue changes wake a waiting task. A
 one-slot channel never holds more than one message, and no task needs an OS
 thread while parked. `yield_now` requeues a runnable task without treating it
-as a blocked channel operation. Source `yield;` now lowers to a retained
-continuation in the interpreter and native ABI. Compiler-generated backedge
-checkpoints are still needed to make CPU-heavy Phoebe loops fair without an
-explicit yield.
+as a blocked channel operation. Source `yield;` lowers to a retained
+continuation in the interpreter and native ABI. The compiler inserts bounded
+backedge checkpoints in source call-graph components connected to `spawn`, so
+a CPU-heavy sibling can yield without an explicit source statement.
 The default source-run scope permits 64 tasks, 64 channels, 256 total
 channel handles, and 64 reply pairs; callers can set tighter limits through
 the Rust API. Task creation
@@ -104,9 +104,13 @@ does not run that scan.
 The kernel allocates bounded channel storage and retained frames under scope
 ownership, without a garbage collector or a general shared program heap.
 The task, channel, handle, and reply tables have explicit limits. Channel queues reserve
-their full capacity before use. Rust `Box` frame allocation and the host
-allocator are not yet fallible in this implementation, so this does not meet
-the release requirement for safe allocation failure. The public Rust `Task`
+their full capacity before use. Task body boxing now uses a fallible global
+allocation before any spawn transfer commits; allocation failure returns the
+intact child and a typed `ResourceError::Allocation`. An injected allocation
+failure test exercises this scheduler path and checks that the original child
+and its channel right remain with the parent. Other host allocations,
+including error strings, still assume the Rust allocator can provide memory;
+safe handling of every possible host OOM remains open. The public Rust `Task`
 trait also cannot by itself prevent a handwritten Rust task from sharing
 mutable memory; Phoebe's future type checker and frame lowering must enforce
 that boundary.
