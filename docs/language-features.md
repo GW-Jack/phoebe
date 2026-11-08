@@ -13,6 +13,9 @@ types are built in. There is no class inheritance, implicit numeric
 conversion, or general subtyping. `Option<T>` represents absence;
 `Result<T, E>` represents expected failure. Neither is implicitly converted
 to the other.
+Concrete `Option<T>` applications are executable for finite primitive and
+nominal payloads. They use `None` and `Some(T)` and require exhaustive `when`;
+generic function definitions remain a separate compiler milestone.
 
 `trait` describes a small set of named operations. Implementations obey a
 coherence rule: one implementation for a given trait and nominal type in the

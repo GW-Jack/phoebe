@@ -1,16 +1,13 @@
-//! Nominal declaration and concrete Result application registration.
+//! Nominal declaration and finite generic data application registration.
 
 use super::*;
 
-fn register_result_application(
+fn register_application(
     application: &TypeName,
     span: Span,
     data: &mut Vec<DataDef>,
     data_names: &mut HashMap<String, DataId>,
 ) -> Result<DataId, Diagnostic> {
-    let TypeName::Result(ok, err) = application else {
-        unreachable!("only Result applications are registered here")
-    };
     let name = application.key();
     if let Some(id) = data_names.get(&name) {
         return Ok(*id);
@@ -27,7 +24,7 @@ fn register_result_application(
             | TypeName::RequestSenderI64
             | TypeName::RequestReceiverI64 => Err(Diagnostic::new(
                 span,
-                "Result cannot carry communication capabilities yet",
+                "generic data cannot carry communication capabilities yet",
             )),
             TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
             TypeName::Named(name) => data_names
@@ -35,19 +32,28 @@ fn register_result_application(
                 .copied()
                 .map(Type::Data)
                 .ok_or_else(|| Diagnostic::new(span, format!("unknown data type {name}"))),
-            TypeName::Result(_, _) => {
-                register_result_application(ty, span, data, data_names).map(Type::Data)
+            TypeName::Option(_) | TypeName::Result(_, _) => {
+                register_application(ty, span, data, data_names).map(Type::Data)
             }
         }
     };
-    let ok = payload(ok)?;
-    let err = payload(err)?;
+    let (variants, payloads) = match application {
+        TypeName::Option(value) => (
+            vec!["None".into(), "Some".into()],
+            vec![None, Some(payload(value)?)],
+        ),
+        TypeName::Result(ok, err) => (
+            vec!["Ok".into(), "Err".into()],
+            vec![Some(payload(ok)?), Some(payload(err)?)],
+        ),
+        _ => unreachable!("only finite generic data applications are registered here"),
+    };
     let id = DataId(data.len());
     data_names.insert(name.clone(), id);
     data.push(DataDef {
         name,
-        variants: vec!["Ok".into(), "Err".into()],
-        payloads: vec![Some(ok), Some(err)],
+        variants,
+        payloads,
         fields: vec![],
     });
     Ok(id)
@@ -64,6 +70,7 @@ pub(super) fn lower_data(
             "I64"
                 | "Bool"
                 | "Result"
+                | "Option"
                 | "ResourceError"
                 | "Sender"
                 | "Receiver"
@@ -121,12 +128,9 @@ pub(super) fn lower_data(
                             )
                         })?,
                 ),
-                Some(ty @ TypeName::Result(_, _)) => Some(Type::Data(register_result_application(
-                    ty,
-                    variant.span,
-                    &mut data,
-                    &mut data_names,
-                )?)),
+                Some(ty @ (TypeName::Option(_) | TypeName::Result(_, _))) => Some(Type::Data(
+                    register_application(ty, variant.span, &mut data, &mut data_names)?,
+                )),
             };
             variants.push(variant.name.clone());
             payloads.push(payload);
@@ -163,12 +167,9 @@ pub(super) fn lower_data(
                                 format!("product field type `{name}` must be declared earlier"),
                             )
                         })?,
-                    ty @ TypeName::Result(_, _) => Type::Data(register_result_application(
-                        ty,
-                        field.span,
-                        &mut data,
-                        &mut data_names,
-                    )?),
+                    ty @ (TypeName::Option(_) | TypeName::Result(_, _)) => Type::Data(
+                        register_application(ty, field.span, &mut data, &mut data_names)?,
+                    ),
                 };
             fields.push((field.name.clone(), ty));
         }
@@ -217,8 +218,8 @@ pub(super) fn lower_data(
             fields: vec![],
         });
     }
-    for (application, span) in &ast.applied_results {
-        register_result_application(application, *span, &mut data, &mut data_names)?;
+    for (application, span) in &ast.applied_types {
+        register_application(application, *span, &mut data, &mut data_names)?;
     }
     Ok((data, data_names))
 }

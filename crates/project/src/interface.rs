@@ -58,6 +58,10 @@ impl ModuleInterface {
                     ty(bytes, ok);
                     ty(bytes, err);
                 }
+                TypeName::Option(value) => {
+                    bytes.push(11);
+                    ty(bytes, value);
+                }
             }
         }
         let mut bytes = b"PHOEBE-INTERFACE\0\x01".to_vec();
@@ -115,6 +119,7 @@ pub(super) fn from_program(name: &str, program: &syntax::Program) -> ModuleInter
                 collect_type(ok, needed);
                 collect_type(err, needed);
             }
+            TypeName::Option(value) => collect_type(value, needed),
             _ => {}
         }
     }

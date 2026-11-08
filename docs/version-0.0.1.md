@@ -37,15 +37,15 @@ only by prose at release.
 The Rust workspace currently parses functions over I64, Bool, nominal sums with
 at most one payload per variant, and nominal products with finite fields.
 User-declared payloads and fields may contain earlier nominal types and finite
-concrete `Result` applications; recursive data remains unsupported.
+concrete `Option` and `Result` applications; recursive data remains unsupported.
 It supports up to four owned parameters (I64 borrows only), `val` and
 `var` bindings, assignment, `while`, integer and boolean literals, unary
-numeric negation, Boolean `!`, `+`, `-`, `*`, `==`, `!=`, `<`, `<=`, `>`, `>=`, short-circuit `&&`
-and `||`, `if` expressions with block arms, exhaustive `when` expressions,
+numeric negation, Boolean `!`, `+`, `-`, `*`, `==`, `!=`, `<`, `<=`, `>`, `>=`,
+short-circuit `&&` and `||`, `if` expressions with block arms, exhaustive `when` expressions,
 acyclic direct calls, call-site `&I64` and `&mut I64`
 arguments, `?` on concrete built-in `Result<T, E>` applications with
-primitive or existing nominal payloads and the same error type as the
-enclosing function's `Result<U, E>`, and a matching tail expression.
+primitive, existing nominal, or finite `Option`/`Result` payloads and the same
+error type as the enclosing function's `Result<U, E>`, and a matching tail expression.
 Boolean operators require `Bool` on both sides even when the right side is
 skipped at runtime. Their precedence is `||` below `&&`, below comparisons;
 the right side is a separate Core CFG branch and may contain `?`.
@@ -62,6 +62,9 @@ Recursion is rejected until task stacks have safe growth limits. Arithmetic
 wraps at 64 bits in both interpreter and native execution. `phoebe check`,
 `phoebe ir`, `phoebe cost`, `phoebe run`, and
 `phoebe build <file> -o <output>` work on that subset.
+`Option<T>` is a concrete built-in sum with `None` and `Some(T)`, including
+finite nesting with `Result` and earlier nominal types. `when` must cover both
+variants. `?` accepts only `Result`, with no implicit `Option` conversion.
 The parser currently limits nested source constructs and chained expressions
 to 48 levels, and combined expression/body tree depth to 64, reporting a
 source location at the limit. These bound parser and lowering stack use; they
@@ -361,6 +364,7 @@ buck2 run //:phoebe -- run examples/product.phoebe
 buck2 run //:phoebe -- run examples/payload.phoebe
 buck2 run //:phoebe -- run examples/try.phoebe
 buck2 run //:phoebe -- run examples/nested_result.phoebe
+buck2 run //:phoebe -- run examples/option.phoebe
 buck2 run //:phoebe -- run examples/nested_variant.phoebe
 buck2 run //:phoebe -- run examples/copy.phoebe
 buck2 run //:phoebe -- run examples/channel_create.phoebe

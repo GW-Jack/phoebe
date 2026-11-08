@@ -303,11 +303,11 @@ fn lower_internal(
                 .copied()
                 .map(Type::Data)
                 .ok_or_else(|| Diagnostic::new(span, format!("unknown data type {name}"))),
-            TypeName::Result(_, _) => data_names
+            TypeName::Option(_) | TypeName::Result(_, _) => data_names
                 .get(&name.key())
                 .copied()
                 .map(Type::Data)
-                .ok_or_else(|| Diagnostic::new(span, "unknown Result application")),
+                .ok_or_else(|| Diagnostic::new(span, "unknown generic data application")),
         }
     };
     let mut functions = HashMap::new();

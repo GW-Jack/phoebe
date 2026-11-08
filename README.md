@@ -34,8 +34,8 @@ is erased from Core; `examples/scoped_spawn.phoebe` shows the source form.
 currently runs. The Rust workspace parses functions over I64, Bool, nominal sums
 and products with primitive or earlier nominal fields.
 It supports arithmetic, conditions, exhaustive `when`, mutable locals, loops,
-call-site scalar borrows, and `?` on concrete `Result<T, E>` applications
-with primitive or existing nominal payloads. Nominal values have affine move
+concrete `Option<T>` values, call-site scalar borrows, and `?` on concrete
+`Result<T, E>` applications with finite payloads. Nominal values have affine move
 checking across branches and loops, and `copy(x)` records an explicit
 fixed-size copy cost. The compiler then
 lowers them to checked Core IR. Programs run
@@ -57,6 +57,7 @@ Build and run the compiler with Buck2:
 buck2 build //:phoebe_dist
 buck2 run //:phoebe -- run examples/hello.phoebe
 buck2 run //:phoebe -- run examples/boolean_short_circuit.phoebe
+buck2 run //:phoebe -- run examples/option.phoebe
 buck2 run //:phoebe -- run examples/scoped_spawn.phoebe
 buck2 run //:phoebe -- run examples/channel_exchange.phoebe
 buck2 run //:phoebe -- run examples/reply_exchange.phoebe

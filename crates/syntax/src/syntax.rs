@@ -234,7 +234,7 @@ pub struct Program {
     pub imports: Vec<Import>,
     pub data: Vec<Data>,
     pub functions: Vec<Function>,
-    pub applied_results: Vec<(TypeName, Span)>,
+    pub applied_types: Vec<(TypeName, Span)>,
     pub uses_send_outcome: bool,
     pub uses_receive_outcome: bool,
     pub uses_complete_outcome: bool,
@@ -292,6 +292,7 @@ pub enum TypeName {
     RequestSenderI64,
     RequestReceiverI64,
     Named(String),
+    Option(Box<TypeName>),
     Result(Box<TypeName>, Box<TypeName>),
 }
 
@@ -308,6 +309,7 @@ impl TypeName {
             Self::RequestSenderI64 => "RequestSender<I64>".into(),
             Self::RequestReceiverI64 => "RequestReceiver<I64>".into(),
             Self::Named(name) => name.clone(),
+            Self::Option(value) => format!("Option<{}>", value.key()),
             Self::Result(ok, err) => format!("Result<{},{}>", ok.key(), err.key()),
         }
     }
@@ -444,7 +446,7 @@ struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     depth: usize,
-    applied_results: Vec<(TypeName, Span)>,
+    applied_types: Vec<(TypeName, Span)>,
     uses_send_outcome: bool,
     uses_receive_outcome: bool,
     uses_complete_outcome: bool,
@@ -525,23 +527,25 @@ impl Parser {
             }
             return self.channel_outcome_type_after_name(&name, span);
         }
-        if name == "Result" && self.eat(&TokenKind::Less).is_some() {
-            let ok = self.type_name(false)?;
-            self.expect(&TokenKind::Comma, ",")?;
-            let err = self.type_name(false)?;
-            let end = self.expect(&TokenKind::Greater, ">")?.span;
-            if borrowed {
+        if matches!(name.as_str(), "Option" | "Result") {
+            if self.current().kind != TokenKind::Less {
                 return Err(Diagnostic::new(
-                    span.join(end),
-                    "Result borrows are not implemented",
+                    span,
+                    if name == "Result" {
+                        "Result requires two type arguments"
+                    } else {
+                        "Option requires one type argument"
+                    },
                 ));
             }
-            let ty = TypeName::Result(Box::new(ok), Box::new(err));
-            self.applied_results.push((ty.clone(), span.join(end)));
+            let ty = self.applied_type_after_name(&name, span)?;
+            if borrowed {
+                return Err(Diagnostic::new(
+                    span,
+                    "generic data borrows are not implemented",
+                ));
+            }
             return Ok(ty);
-        }
-        if name == "Result" {
-            return Err(Diagnostic::new(span, "Result requires two type arguments"));
         }
         if self.eat(&TokenKind::Dot).is_some() {
             let (member, end) = self.name()?;
@@ -562,14 +566,18 @@ impl Parser {
         }
     }
 
-    fn result_type_after_name(&mut self, start: Span) -> Result<TypeName, Diagnostic> {
-        self.expect(&TokenKind::Less, "<")?;
-        let ok = self.type_name(false)?;
-        self.expect(&TokenKind::Comma, ",")?;
-        let err = self.type_name(false)?;
+    fn applied_type_after_name(&mut self, name: &str, start: Span) -> Result<TypeName, Diagnostic> {
+        self.expect(&TokenKind::Less, "< after generic data type")?;
+        let value = self.type_name(false)?;
+        let ty = if name == "Result" {
+            self.expect(&TokenKind::Comma, ",")?;
+            let err = self.type_name(false)?;
+            TypeName::Result(Box::new(value), Box::new(err))
+        } else {
+            TypeName::Option(Box::new(value))
+        };
         let end = self.expect(&TokenKind::Greater, ">")?.span;
-        let ty = TypeName::Result(Box::new(ok), Box::new(err));
-        self.applied_results.push((ty.clone(), start.join(end)));
+        self.applied_types.push((ty.clone(), start.join(end)));
         Ok(ty)
     }
 
@@ -1082,18 +1090,19 @@ impl Parser {
                 let mut arms = Vec::new();
                 loop {
                     let (type_name, start) = self.name()?;
-                    let mut type_name =
-                        if type_name == "Result" && self.current().kind == TokenKind::Less {
-                            self.result_type_after_name(start)?.key()
-                        } else if matches!(
-                            type_name.as_str(),
-                            "Send" | "Receive" | "Complete" | "Reply"
-                        ) {
-                            self.channel_outcome_type_after_name(&type_name, start)?
-                                .key()
-                        } else {
-                            type_name
-                        };
+                    let mut type_name = if matches!(type_name.as_str(), "Option" | "Result")
+                        && self.current().kind == TokenKind::Less
+                    {
+                        self.applied_type_after_name(&type_name, start)?.key()
+                    } else if matches!(
+                        type_name.as_str(),
+                        "Send" | "Receive" | "Complete" | "Reply"
+                    ) {
+                        self.channel_outcome_type_after_name(&type_name, start)?
+                            .key()
+                    } else {
+                        type_name
+                    };
                     self.expect(&TokenKind::Dot, ".")?;
                     let (first, first_end) = self.name()?;
                     let (variant, end) = if self.eat(&TokenKind::Dot).is_some() {
@@ -1138,8 +1147,10 @@ impl Parser {
                 span,
             } => {
                 self.pos += 1;
-                let name = if name == "Result" && self.current().kind == TokenKind::Less {
-                    self.result_type_after_name(span)?.key()
+                let name = if matches!(name.as_str(), "Option" | "Result")
+                    && self.current().kind == TokenKind::Less
+                {
+                    self.applied_type_after_name(&name, span)?.key()
                 } else if matches!(name.as_str(), "Send" | "Receive" | "Complete" | "Reply") {
                     self.channel_outcome_type_after_name(&name, span)?.key()
                 } else {
@@ -1304,7 +1315,7 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
         tokens: lex(source)?,
         pos: 0,
         depth: 0,
-        applied_results: Vec::new(),
+        applied_types: Vec::new(),
         uses_send_outcome: false,
         uses_receive_outcome: false,
         uses_complete_outcome: false,
@@ -1335,7 +1346,7 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
         imports,
         data,
         functions,
-        applied_results: parser.applied_results,
+        applied_types: parser.applied_types,
         uses_send_outcome: parser.uses_send_outcome,
         uses_receive_outcome: parser.uses_receive_outcome,
         uses_complete_outcome: parser.uses_complete_outcome,

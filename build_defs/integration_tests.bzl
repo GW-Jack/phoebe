@@ -34,6 +34,7 @@ def integration_tests(rust_test):
             "examples/borrow.phoebe",
             "examples/copy.phoebe",
             "examples/nested_result.phoebe",
+            "examples/option.phoebe",
             "examples/payload.phoebe",
             "examples/product.phoebe",
             "examples/result_in_data.phoebe",

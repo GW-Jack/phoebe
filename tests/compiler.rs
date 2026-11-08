@@ -881,6 +881,59 @@ fn nested_question_marks_handle_bool_errors_and_reversed_arms() {
 }
 
 #[test]
+fn concrete_option_nests_in_result_and_nominal_payloads() {
+    let program = compile(include_str!("../examples/option.phoebe"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-option-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+
+    for source in [
+        "data Option { None, Some(value: I64) } fn main() -> I64 = 0",
+        "fn main() -> I64 = Option<I64>.None?",
+        "fn main() -> I64 = when (Option<I64>.Some(1)) { Option<I64>.Some(value) -> { value } }",
+        "fn main() -> I64 = Option<Sender<I64>>.None",
+    ] {
+        assert!(
+            syntax::parse(source)
+                .and_then(|ast| core::lower(&ast))
+                .is_err(),
+            "unexpectedly accepted {source}"
+        );
+    }
+    let missing = syntax::parse("fn main() -> Option = 0").unwrap_err();
+    assert!(
+        missing
+            .message
+            .contains("Option requires one type argument")
+    );
+}
+
+#[test]
+fn option_of_result_can_live_in_a_product_field() {
+    let source = r#"
+data Slot { item: Option<Result<I64, Bool>> }
+fn main() -> I64 {
+  val slot = Slot(Option<Result<I64, Bool>>.Some(Result<I64, Bool>.Ok(42)));
+  when (slot.item) {
+    Option<Result<I64, Bool>>.None -> { 0 },
+    Option<Result<I64, Bool>>.Some(result) -> { when (result) {
+      Result<I64, Bool>.Ok(value) -> { value },
+      Result<I64, Bool>.Err(error) -> { 0 },
+    } },
+  }
+}
+"#;
+    let program = compile(source);
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
 fn nested_result_payloads_and_product_payloads_cross_all_backends() {
     let program = compile(include_str!("../examples/nested_result.phoebe"));
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);

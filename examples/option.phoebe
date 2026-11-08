@@ -1,0 +1,20 @@
+data Reading { value: I64, present: Bool }
+
+fn find(value: I64) -> Option<Reading> = if (value > 0) {
+  Option<Reading>.Some(Reading(value, true))
+} else {
+  Option<Reading>.None
+}
+
+fn wrap(value: I64) -> Result<Option<Reading>, Bool> =
+  Result<Option<Reading>, Bool>.Ok(find(value))
+
+fn inspect(result: Result<Option<Reading>, Bool>) -> I64 = when (result) {
+  Result<Option<Reading>, Bool>.Err(error) -> { 0 },
+  Result<Option<Reading>, Bool>.Ok(reading) -> { when (reading) {
+    Option<Reading>.None -> { 2 },
+    Option<Reading>.Some(item) -> { if (item.present) { item.value } else { 0 } },
+  } },
+}
+
+fn main() -> I64 = inspect(wrap(40)) + inspect(wrap(0))

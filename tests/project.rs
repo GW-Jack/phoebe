@@ -417,6 +417,34 @@ fn exported_signature_tracks_private_nominal_layout() {
 }
 
 #[test]
+fn option_signature_tracks_private_nominal_layout() {
+    let path = temp_project();
+    let math = path.join("math.phoebe");
+    let original = std::fs::read_to_string(&math).unwrap();
+    let exposed = format!(
+        "{original}\ndata Hidden {{ Value(value: I64) }}\npub fn maybe_hidden() -> Option<Hidden> = Option<Hidden>.Some(Hidden.Value(1))\n"
+    );
+    std::fs::write(&math, &exposed).unwrap();
+    let mut session = project::ProjectSession::new();
+    let (loaded, _) = session.load(&path).unwrap();
+    let interface = loaded
+        .interfaces
+        .iter()
+        .find(|interface| interface.name == "math")
+        .unwrap();
+    assert!(interface.data.iter().any(|data| data.name == "math.Hidden"));
+    std::fs::write(
+        &math,
+        exposed.replace("Value(value: I64)", "Value(value: Bool)"),
+    )
+    .unwrap();
+    let (_, report) = session.load(&path).unwrap();
+    assert_eq!(report.changed_interfaces, ["math"]);
+    assert_eq!(report.affected, ["app", "math"]);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
 fn project_session_reuses_parses_and_invalidates_by_exact_interface() {
     let path = temp_project();
     let mut session = project::ProjectSession::new();
@@ -973,6 +1001,7 @@ fn main() -> I64 {
     Result<math.Maybe, Bool>.Err(error) -> { 0 },
   }
 }
+
 "#,
     )
     .unwrap();
@@ -983,6 +1012,34 @@ fn main() -> I64 {
     std::fs::remove_dir_all(path).unwrap();
 }
 
+#[test]
+fn project_qualifies_option_of_imported_nominal_type() {
+    let path = temp_project();
+    let math = path.join("math.phoebe");
+    let source = std::fs::read_to_string(&math).unwrap();
+    std::fs::write(
+        &math,
+        format!(
+            "{source}\npub fn optional() -> Option<Maybe> = Option<Maybe>.Some(Maybe.Some(42))\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        path.join("app.phoebe"),
+        "import math\nfn main() -> I64 = when (math.optional()) { Option<math.Maybe>.None -> { 0 }, Option<math.Maybe>.Some(value) -> { math.unwrap(value) }, }\n",
+    )
+    .unwrap();
+    let loaded = project::load(&path).unwrap();
+    let program = core::lower(&loaded.ast).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let executable = path.join("app");
+    native::build_executable(&program, &executable).unwrap();
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+    std::fs::remove_dir_all(path).unwrap();
+}
 #[test]
 fn imported_spawn_call_keeps_lexical_scope() {
     let path = temp_project();

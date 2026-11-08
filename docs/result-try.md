@@ -3,7 +3,7 @@
 Status: concrete built-in `Result<T, E>` applications.
 
 The current source subset accepts concrete `Result<T, E>` applications with
-primitive, existing nominal, or nested `Result` arguments. `ResourceError` is
+primitive, existing nominal, or finite nested `Option`/`Result` arguments. `ResourceError` is
 also a closed error payload. Each application
 is a distinct checked type with `Ok` and `Err` variants carrying the
 corresponding payload. Constructors and patterns spell the application

@@ -257,7 +257,7 @@ fn load_with_cache(
         imports: Vec::new(),
         data: Vec::new(),
         functions: Vec::new(),
-        applied_results: Vec::new(),
+        applied_types: Vec::new(),
         uses_send_outcome: false,
         uses_receive_outcome: false,
         uses_complete_outcome: false,
@@ -303,12 +303,12 @@ fn load_with_cache(
                 module.path.display()
             ));
         }
-        let mut result_names = HashMap::new();
-        for (ty, span) in &mut module.ast.applied_results {
+        let mut application_names = HashMap::new();
+        for (ty, span) in &mut module.ast.applied_types {
             let before = ty.key();
             qualify_type(ty, &module.name, &local_data, &imports, &module.available)
                 .map_err(|message| source_error(path, source, *span, message))?;
-            result_names.insert(before, ty.key());
+            application_names.insert(before, ty.key());
         }
         for definition in &mut module.ast.data {
             for variant in &mut definition.variants {
@@ -362,7 +362,7 @@ fn load_with_cache(
                 &local_functions,
                 &imports,
                 &module.available,
-                &result_names,
+                &application_names,
             )
             .map_err(|(span, message)| source_error(path, source, span, message))?;
             function.name = symbol(&module.name, &function.name, &root);
@@ -375,7 +375,7 @@ fn load_with_cache(
         shift_program(&mut module.ast, offset);
         combined.data.extend(module.ast.data);
         combined.functions.extend(module.ast.functions);
-        combined.applied_results.extend(module.ast.applied_results);
+        combined.applied_types.extend(module.ast.applied_types);
         combined.uses_send_outcome |= module.ast.uses_send_outcome;
         combined.uses_receive_outcome |= module.ast.uses_receive_outcome;
         combined.uses_complete_outcome |= module.ast.uses_complete_outcome;
@@ -494,6 +494,9 @@ fn qualify_type(
             *name = format!("{module}.{name}");
         }
         TypeName::Named(name) => qualify_imported_data_name(name, imports, available)?,
+        TypeName::Option(value) => {
+            qualify_type(value, module, local_data, imports, available)?;
+        }
         TypeName::Result(ok, err) => {
             qualify_type(ok, module, local_data, imports, available)?;
             qualify_type(err, module, local_data, imports, available)?;
@@ -768,7 +771,7 @@ fn shift_span(span: &mut Span, offset: usize) {
 }
 
 fn shift_program(program: &mut syntax::Program, offset: usize) {
-    for (ty, span) in &mut program.applied_results {
+    for (ty, span) in &mut program.applied_types {
         let _ = ty;
         shift_span(span, offset);
     }
