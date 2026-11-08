@@ -30,6 +30,7 @@ mod cache;
 mod close;
 mod codegen;
 pub mod generic;
+mod message_layout;
 mod poll;
 mod reachability;
 mod runtime_imports;
@@ -41,6 +42,7 @@ pub use cache::{
     build_executable_cached_linked,
 };
 pub use codegen::frame_word_layouts;
+pub use message_layout::{RuntimeMessageDescriptor, runtime_message_descriptor};
 pub use poll::{PollExecutable, PollLeafExecutable, compile_poll_jit, compile_poll_leaf_jit};
 
 use build_session::emit_object_with_poll_layout;

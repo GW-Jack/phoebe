@@ -38,8 +38,11 @@ layout for eligible messages. `MessageLayout::visit_active_rights` walks the
 selected leaves without allocating on success, validates the ABI word count,
 and rejects an out-of-range active tag. The runtime has an independent
 `TypedRightPlan` for `ReplyTo<I64>` leaves, nested sequences, and tagged arms.
-Compiler generation of that plan and transfer of other right kinds remain
-open.
+`phoebe_native::runtime_message_descriptor` translates the checked ABI plan
+to that runtime plan, preserving flattened offsets and structural close order.
+Its type ID is unique within one linked program and must not be reused across
+independently linked programs. Checked Core channel operations, generated
+native calls, and transfer of other right kinds remain open.
 
 ## Ownership equations
 
@@ -86,8 +89,10 @@ occupancy so boundedness is preserved.
 1. Keep the backend-independent `MessageLayout` in `phoebe_abi` as the source
    for runtime descriptor generation. Its current tests cover nested
    products, `Request<I64>`, tagged sums, references, and recursive layout
-   rejection. The runtime descriptor must preserve its type identity and
-   active-leaf selection.
+   rejection. The native adapter now creates the runtime descriptor and tests
+   equal-width type distinction, active-arm offsets, and a tagged runtime
+   transfer. Core and code generation still need to request this descriptor
+   at checked channel creation sites.
 2. Extend the runtime's preallocated typed slots beyond `ReplyTo<I64>` rights.
    The current path checks type identity and width, validates all active reply
    rights before changing any owner, transfers multiple rights on enqueue and

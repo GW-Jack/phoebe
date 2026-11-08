@@ -114,6 +114,13 @@ impl Token {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ReplyToken(usize);
 
+impl ReplyToken {
+    /// Encodes a reply right in a flattened native message component.
+    pub fn native_word(self) -> Result<i64, String> {
+        i64::try_from(self.0).map_err(|_| "reply token exceeds native ABI word".into())
+    }
+}
+
 #[derive(Debug)]
 pub struct ReplyTo {
     token: ReplyToken,

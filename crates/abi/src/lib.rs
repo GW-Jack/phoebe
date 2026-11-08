@@ -30,12 +30,24 @@ impl Shape {
 /// transport shapes do not imply equal types or equal cleanup behavior.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MessageLayout {
-    pub ty: Type,
-    pub shape: Shape,
-    pub close: ClosePlan,
+    ty: Type,
+    shape: Shape,
+    close: ClosePlan,
 }
 
 impl MessageLayout {
+    pub fn ty(&self) -> Type {
+        self.ty
+    }
+
+    pub fn shape(&self) -> &Shape {
+        &self.shape
+    }
+
+    pub fn close_plan(&self) -> &ClosePlan {
+        &self.close
+    }
+
     /// Visit only the active rights in structural close order. A caller may
     /// use one read-only pass to validate ownership, then a nonfailing pass
     /// to commit transfers. The successful path allocates no temporary list.
