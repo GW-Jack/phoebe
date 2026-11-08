@@ -64,6 +64,13 @@ The union of point-local sets determines the function's payload slots. A
 call-only frame may have no payload slots but still needs a continuation
 header and child-frame link.
 
+For a live scalar lexical reference at a suspension point, the spill set
+also contains its transitive `borrow.begin` root place. This makes the
+reference address point into the stable frame instead of a poll invocation's
+stack slot. Hand-built checked Core exercises this through `yield`, channel
+send, and both channel receive outcomes. Other suspension operations still
+reject live lexical loans.
+
 `phoebe frames <file|project>` prints those point-local and union sets. For
 `examples/channel_exchange.phoebe`, it shows two send points in `producer`,
 two receive points in `exchange`, and a call continuation in `main`.

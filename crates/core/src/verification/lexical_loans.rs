@@ -275,8 +275,6 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                     block.terminator,
                     Terminator::Return(_)
                         | Terminator::ScopeJoin { .. }
-                        | Terminator::ChannelSend { .. }
-                        | Terminator::ChannelReceive { .. }
                         | Terminator::RequestSend { .. }
                         | Terminator::RequestReceive { .. }
                         | Terminator::ReplyReceive { .. }

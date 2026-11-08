@@ -35,17 +35,19 @@ grant a shared child. The verifier permits concurrent shared loans, rejects
 an exclusive overlap, blocks direct mutation or exclusive reads of a loaned
 root, rejects use after end or out-of-order parent end, and requires identical
 active and frozen loan states at joins.
-It requires loans to end before return, channel suspension, spawn, scope join,
-or a call. A loan may cross an explicit `yield`: frame analysis retains both
-the reference value and its root place, and the native poll frame gives the
-root a stable address. Interpreter, JIT, and standalone tests exercise direct
-loans, a loan created after yield, and a nested loan spanning yield. The
-source lowerer does not yet emit these operations.
+It requires loans to end before return, request or reply suspension, spawn,
+scope join, or a call. A loan may cross `yield`, `channel.send`, or
+`channel.receive`: frame analysis retains both the reference value and its
+root place, and the native poll frame gives the root a stable address.
+Interpreter, JIT, and standalone tests exercise direct loans, nested loans
+spanning yield, and loans spanning channel send and receive. The receive test
+runs both delivered and closed outcomes. The source lowerer does not yet emit
+these operations.
 
 Next, integrate this Core parent relation with the existing call-only
 `LoanRegion` metadata and source lowering. Ordinary ownership and
 capability-flow verification remain separate passes over the same explicit
-Core edges. The native frame plan must extend the stable-root check to other
+Core edges. The native frame plan must extend the stable-root check to remaining
 suspension points, and cancellation must release loans before their slots. These checks should
 remain linear in Core size apart from the existing CFG fixed point, with no
 optimization search during compilation.

@@ -150,6 +150,32 @@ fn lexical_loan_rejects_escape_reuse_and_overlap() {
 }
 
 #[test]
+fn lexical_reference_cannot_lose_identity_through_block_parameter() {
+    let mut program = lexical_write();
+    let function = &mut program.functions[0];
+    let span = function.blocks[0].instructions[2].span;
+    function
+        .value_types
+        .extend([core::Type::RefMutI64, core::Type::I64]);
+    function.blocks[0].terminator =
+        core::Terminator::Jump(core::BlockId(1), vec![core::ValueId(1)]);
+    function.blocks.push(core::Block {
+        params: vec![core::ValueId(4)],
+        instructions: vec![core::Instruction {
+            result: Some(core::ValueId(5)),
+            operation: core::Operation::LoadRef(core::ValueId(4)),
+            span,
+        }],
+        terminator: core::Terminator::Return(core::ValueId(5)),
+    });
+    let error = core::verify(&program).unwrap_err();
+    assert!(
+        error.contains("reference cannot be a block parameter"),
+        "{error}"
+    );
+}
+
+#[test]
 fn lexical_loan_requires_matching_cfg_join_and_ends_before_suspension() {
     let mut branch = core::lower(
         &syntax::parse("fn main() -> I64 { var x = 41; if (true) { x } else { x } }").unwrap(),
@@ -479,4 +505,90 @@ fn live_reborrow_crosses_yield_with_stable_root_and_reference() {
     std::fs::remove_file(path).unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn live_loan_crosses_channel_receive_with_stable_root_on_both_outcomes() {
+    let source = include_str!("../examples/channel_exchange.phoebe").replace(
+        "val first = receiver.receive();",
+        "var x = 41; val first = receiver.receive();",
+    );
+    for (closed, expected) in [(false, 42), (true, 0)] {
+        let source = if closed {
+            source.replace("spawn producer(sender)?;", "sender.close();")
+        } else {
+            source.clone()
+        };
+        let mut program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+        let exchange = program
+            .functions
+            .iter_mut()
+            .find(|function| function.name == "exchange")
+            .unwrap();
+        assert_eq!(exchange.place_types[0], core::Type::I64);
+        let (receive_block, value_block, end_block) = exchange
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(id, block)| match block.terminator {
+                core::Terminator::ChannelReceive { value, end, .. } => Some((id, value, end)),
+                _ => None,
+            })
+            .unwrap();
+        let reference = core::ValueId(exchange.value_types.len());
+        let value_read = core::ValueId(reference.0 + 1);
+        let end_read = core::ValueId(reference.0 + 2);
+        exchange
+            .value_types
+            .extend([core::Type::RefI64, core::Type::I64, core::Type::I64]);
+        let span = exchange.blocks[receive_block].instructions[0].span;
+        exchange.blocks[receive_block]
+            .instructions
+            .push(core::Instruction {
+                result: Some(reference),
+                operation: core::Operation::BorrowBegin(core::PlaceId(0), false),
+                span,
+            });
+        for (target, read) in [(value_block, value_read), (end_block, end_read)] {
+            exchange.blocks[target.0].instructions.splice(
+                0..0,
+                [
+                    core::Instruction {
+                        result: Some(read),
+                        operation: core::Operation::LoadRef(reference),
+                        span,
+                    },
+                    core::Instruction {
+                        result: None,
+                        operation: core::Operation::BorrowEnd(reference),
+                        span,
+                    },
+                ],
+            );
+        }
+        core::verify(&program).unwrap();
+        let frames = frame_layout::analyze(&program).unwrap();
+        let exchange_frame = frames
+            .iter()
+            .find(|frame| program.functions[frame.function.0].name == "exchange")
+            .unwrap();
+        let point = exchange_frame
+            .points
+            .iter()
+            .find(|point| point.block.0 == receive_block)
+            .unwrap();
+        assert!(point.values.contains(&reference));
+        assert!(point.places.contains(&core::PlaceId(0)));
+        assert_eq!(program.interpret("main", &[]).unwrap(), expected);
+        assert_eq!(native::run(&program, "main", &[]).unwrap(), expected);
+        let path = std::env::temp_dir().join(format!(
+            "phoebe-live-receive-{}-{closed}",
+            std::process::id()
+        ));
+        native::build_executable(&program, &path).unwrap();
+        let output = Command::new(&path).output().unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, format!("{expected}\n").as_bytes());
+    }
 }
