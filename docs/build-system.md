@@ -104,13 +104,13 @@ failed source edit prints an error and leaves the last linked executable in
 place. This is a trigger-driven local session; it does not watch files or
 persist typed interfaces across compiler processes. Retained poll objects can
 also be reused when their reachable code and data layouts are unchanged. The
-non-suspending generic project path reuses checked concrete bodies and an
-exact linked object on a warm build. Its object is currently emitted as one
-unit, so a source edit can rebuild more code than necessary. The separate
-`--cache-dir` mode of one-shot
+linked generic project path reuses checked concrete bodies and an exact
+linked object set on a warm build. A direct or retained root currently emits
+one root object, with separate spawned poll children as needed, so a source
+edit can rebuild more code than necessary. The separate `--cache-dir` mode of one-shot
 `build` persists exact-program native objects across processes, including the
-non-suspending generic project path. The linked generic cache stores one
-object. Its key uses names for reachable generic callees, so adding or editing
+linked generic project path. The linked generic cache stores the complete
+object set. Its key uses names for reachable generic callees, so adding or editing
 an unused generic definition does not rebuild it. Reachable changes and a new
 compiler executable invalidate the entry.
 

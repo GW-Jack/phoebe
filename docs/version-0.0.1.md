@@ -99,15 +99,17 @@ checks substitution and capability transfer; ordinary Core rejects unlinked
 calls. The interpreter executes this subset, including transitive calls and
 branches, through single-file `phoebe run <file> --interp`. The normal
 `phoebe run <file>` route now plans shape-shared instances and calls them from
-non-suspending concrete functions in the same Cranelift JIT module. Tests
+direct and retained concrete functions in a Cranelift JIT module. Tests
 cover a transitive branch and a wide nominal return buffer. Single-file
-`phoebe build` emits the same planned instances and concrete callers into one
-linkable object; the resulting executable runs without the compiler process.
+`phoebe build` emits the same planned instances and concrete callers into
+linkable objects; the resulting executable runs without the compiler process.
 Single-shot projects resolve public generic calls across modules for `check`,
 `run`, `build`, and IR inspection. Generic projects also rebuild through
-`build-session`, reusing checked concrete bodies and an exact linked object;
-one-shot `build --cache-dir` persists that object across processes. Retained
-native tasks and per-function linked object reuse remain open.
+`build-session`, reusing checked concrete bodies and an exact linked object set;
+one-shot `build --cache-dir` persists that object set across processes.
+Generic calls in retained tasks and spawned poll children run in JIT and
+standalone code. Generic bodies themselves cannot suspend, and per-function
+linked object reuse remains open.
 The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures
@@ -162,8 +164,8 @@ builds a standalone executable. `docs/modules.md` describes that path and
 the in-process parsed-module session with exact source-level interfaces and
 checked-Core function-body reuse. The `build-session` CLI keeps compiler and
 native sessions alive across explicit rebuild triggers and reports module,
-Core body, and object reuse. The non-suspending generic project path also
-supports warm `build-session` rebuilds with one exact linked object cache.
+Core body, and object reuse. The linked generic project path also
+supports warm `build-session` rebuilds with an exact linked object set cache.
 It does not persist typed interfaces between
 processes. The package resolver locks and verifies
 transitive local path dependencies by exact source content. Direct dependency

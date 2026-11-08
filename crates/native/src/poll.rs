@@ -44,7 +44,22 @@ pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable,
 }
 
 pub(crate) fn compile_poll_jit_verified(
-    program: core::VerifiedProgram<'_>,
+    verified: core::VerifiedProgram<'_>,
+    name: &str,
+) -> Result<PollExecutable, String> {
+    compile_poll_jit_impl(verified.as_program(), None, name)
+}
+
+pub(crate) fn compile_poll_jit_linked(
+    linked: &core::CheckedLinkedProgram,
+    name: &str,
+) -> Result<PollExecutable, String> {
+    compile_poll_jit_impl(linked.program(), Some(linked), name)
+}
+
+fn compile_poll_jit_impl(
+    program: &Program,
+    linked: Option<&core::CheckedLinkedProgram>,
     name: &str,
 ) -> Result<PollExecutable, String> {
     let mut flags = settings::builder();
@@ -127,7 +142,7 @@ pub(crate) fn compile_poll_jit_verified(
         runtime::phoebe_receive_request_i64 as *const u8,
     );
     let mut module = JITModule::new(jit);
-    let (entry, layout, clif) = compile_poll_module(&mut module, program, name, None)?;
+    let (entry, layout, clif) = compile_poll_module(&mut module, program, linked, name, None)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
     Ok(PollExecutable {
         module,
@@ -138,7 +153,24 @@ pub(crate) fn compile_poll_jit_verified(
 }
 
 pub(crate) fn emit_poll_object(
-    program: core::VerifiedProgram<'_>,
+    verified: core::VerifiedProgram<'_>,
+    name: &str,
+    symbol: &str,
+) -> Result<(Vec<u8>, usize), String> {
+    emit_poll_object_impl(verified.as_program(), None, name, symbol)
+}
+
+pub(crate) fn emit_poll_object_linked(
+    linked: &core::CheckedLinkedProgram,
+    name: &str,
+    symbol: &str,
+) -> Result<(Vec<u8>, usize), String> {
+    emit_poll_object_impl(linked.program(), Some(linked), name, symbol)
+}
+
+fn emit_poll_object_impl(
+    program: &Program,
+    linked: Option<&core::CheckedLinkedProgram>,
     name: &str,
     symbol: &str,
 ) -> Result<(Vec<u8>, usize), String> {
@@ -154,18 +186,18 @@ pub(crate) fn emit_poll_object(
     let builder =
         ObjectBuilder::new(isa, "phoebe", default_libcall_names()).map_err(|e| e.to_string())?;
     let mut module = ObjectModule::new(builder);
-    let (_, layout, _) = compile_poll_module(&mut module, program, name, Some(symbol))?;
+    let (_, layout, _) = compile_poll_module(&mut module, program, linked, name, Some(symbol))?;
     let object = module.finish().emit().map_err(|e| e.to_string())?;
     Ok((object, layout.total_words))
 }
 
 fn compile_poll_module<M: Module>(
     module: &mut M,
-    verified: core::VerifiedProgram<'_>,
+    program: &Program,
+    linked: Option<&core::CheckedLinkedProgram>,
     name: &str,
     export_symbol: Option<&str>,
 ) -> Result<(FuncId, FrameWords, String), String> {
-    let program = verified.as_program();
     let (root, entry_function) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
@@ -179,13 +211,22 @@ fn compile_poll_module<M: Module>(
     {
         return Err("external poll entry requires owned parameters".into());
     }
-    let suspendable = frame_layout::suspendable_functions(program)?;
+    let suspendable = if let Some(linked) = linked {
+        frame_layout::suspendable_functions_linked(linked)
+    } else {
+        frame_layout::suspendable_functions(program)?
+    };
     let graph = reachability::poll_graph(program, root, &suspendable)?;
     let reachable = graph.retained;
     let direct = graph.direct;
     let spawned_from_direct = graph.spawned_from_direct;
     let mut layouts = vec![None; program.functions.len()];
-    for layout in frame_word_layouts(program)? {
+    let frame_layouts = if let Some(linked) = linked {
+        codegen::frame_word_layouts_linked(linked)?
+    } else {
+        frame_word_layouts(program)?
+    };
+    for layout in frame_layouts {
         let index = layout.function.0;
         layouts[index] = Some(layout);
     }
@@ -205,6 +246,17 @@ fn compile_poll_module<M: Module>(
     for id in &reachable {
         selected[id.0] = true;
     }
+    let generic_targets = if let Some(linked) = linked {
+        Some(plan_linked_calls(
+            module,
+            linked,
+            &suspendable,
+            Some(&selected),
+            Some(&mut clif),
+        )?)
+    } else {
+        None
+    };
     let direct_ids = if direct.iter().any(|selected| *selected) {
         Some(compile_functions(
             module,
@@ -213,7 +265,7 @@ fn compile_poll_module<M: Module>(
             false,
             Some(&mut clif),
             Some(&selected),
-            None,
+            generic_targets.as_ref(),
         )?)
     } else {
         None
@@ -577,6 +629,32 @@ fn compile_poll_module<M: Module>(
                             .map(|var| builder.use_var(*var))
                             .collect::<Vec<_>>()
                     };
+                    if let Operation::GenericCall { args, .. } = &instruction.operation {
+                        let target = generic_targets
+                            .as_ref()
+                            .and_then(|targets| {
+                                targets.calls.get(&(id.0, block_id, instruction_id))
+                            })
+                            .ok_or("retained generic call has no planned native instance")?;
+                        let target_ref = module.declare_func_in_func(*target, builder.func);
+                        let operands = args
+                            .iter()
+                            .flat_map(|value| get(*value, &mut builder))
+                            .collect();
+                        let result = instruction.result.expect("verified generic call result");
+                        let returned = codegen::emit_direct_call(
+                            &mut builder,
+                            target_ref,
+                            operands,
+                            &shapes.types(function.value_types[result.0]),
+                            pointer,
+                            codegen::direct_register_results(module),
+                        )?;
+                        for (var, value) in variables[result.0].iter().zip(returned) {
+                            builder.def_var(*var, value);
+                        }
+                        continue;
+                    }
                     if let Operation::Call(target, args) = &instruction.operation {
                         if !suspendable[target.0] {
                             let (direct_id, _) = direct_ids
@@ -1660,6 +1738,7 @@ fn validate_poll_function(
                     | Operation::CloseRequest(_)
                     | Operation::CloseCaps(_)
                     | Operation::Call(_, _)
+                    | Operation::GenericCall { .. }
                     | Operation::ScopeEnter(_)
             ) {
                 return Err("operation is not yet supported by retained poll".into());

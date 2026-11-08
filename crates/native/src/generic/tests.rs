@@ -70,6 +70,17 @@ fn linked_generic_call_transfers_channel_right_in_both_engines() {
 }
 
 #[test]
+fn retained_poll_calls_a_generic_instance_after_yield() {
+    let ast = phoebe_syntax::parse(
+        "fn identity<T>(value: T) -> T = value\nfn main() -> I64 { yield; identity(42) }",
+    )
+    .unwrap();
+    let linked = phoebe_core::lower_linked_checked(&ast).unwrap();
+    assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(crate::run_linked(&linked, "main", &[]).unwrap(), 42);
+}
+
+#[test]
 fn generic_identity_and_transitive_call_run_as_native_i64() {
     let generic = source("fn identity<T>(x: T) -> T = x\nfn through<U>(x: U) -> U = identity(x)");
     let concrete = Program {

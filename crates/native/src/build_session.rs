@@ -28,7 +28,7 @@ pub struct NativeBuildSession {
     facts: BTreeMap<String, String>,
     objects: BTreeMap<String, (String, Vec<u8>)>,
     poll_objects: BTreeMap<String, (String, Vec<u8>, usize)>,
-    linked_object: Option<([u8; 32], Vec<u8>)>,
+    linked_object: Option<([u8; 32], ObjectEmission)>,
     linked_output: Option<LinkedOutput>,
 }
 
@@ -335,8 +335,8 @@ impl NativeBuildSession {
         self.link_or_reuse(next, program, emitted, output, reused)
     }
 
-    /// Linked generic programs currently emit one object. Reuse that object
-    /// only for the exact checked IR and skip linking only for an intact output.
+    /// Reuse the complete linked object set for equivalent checked codegen
+    /// inputs; skip linking only when the prior executable remains intact.
     pub fn build_executable_linked_report(
         &mut self,
         linked: &core::CheckedLinkedProgram,
@@ -344,16 +344,13 @@ impl NativeBuildSession {
     ) -> Result<NativeBuildReport, String> {
         let key: [u8; 32] = Sha256::digest(linked_program_key(linked)?).into();
         let mut next = self.clone();
-        let (object, reused) = match &self.linked_object {
-            Some((cached_key, object)) if *cached_key == key => (object.clone(), 1),
-            _ => (emit_object_linked(linked)?.root, 0),
+        let (emitted, reused) = match &self.linked_object {
+            Some((cached_key, object)) if *cached_key == key => {
+                (object.clone(), 1 + object.children.len())
+            }
+            _ => (emit_object_linked(linked)?, 0),
         };
-        next.linked_object = Some((key, object.clone()));
-        let emitted = ObjectEmission {
-            root: object,
-            poll_words: None,
-            children: Vec::new(),
-        };
+        next.linked_object = Some((key, emitted.clone()));
         self.link_or_reuse(next, linked.program(), emitted, output, reused)
     }
 

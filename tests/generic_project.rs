@@ -305,3 +305,221 @@ fn linked_disk_cache_rejects_changed_and_corrupt_inputs() {
     );
     std::fs::remove_dir_all(path).unwrap();
 }
+
+#[test]
+fn retained_generic_call_runs_in_jit_and_standalone() {
+    let ast = syntax::parse(
+        "fn identity<T>(value: T) -> T = value\nfn main() -> I64 { yield; identity(42) }",
+    )
+    .unwrap();
+    let linked = core::lower_linked_checked(&ast).unwrap();
+    assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run_linked(&linked, "main", &[]).unwrap(), 42);
+    assert!(
+        native::clif_linked(&linked)
+            .unwrap()
+            .contains("Phoebe generic instance")
+    );
+    let path = temp_generic_project();
+    let executable = path.join("retained");
+    native::build_executable_linked(&linked, &executable).unwrap();
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"42\n"
+    );
+    let mut session = native::NativeBuildSession::new();
+    assert!(
+        session
+            .build_executable_linked_report(&linked, &executable)
+            .unwrap()
+            .linked
+    );
+    let warm = session
+        .build_executable_linked_report(&linked, &executable)
+        .unwrap();
+    assert_eq!(warm.reused_objects, 1);
+    assert!(!warm.linked);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn direct_root_spawns_a_retained_generic_child() {
+    let ast = syntax::parse(
+        "fn identity<T>(value: T) -> T = value\n\
+         fn child() -> I64 { yield; identity(7) }\n\
+         fn start() -> Result<I64, ResourceError> { spawn child()?; Result<I64, ResourceError>.Ok(42) }\n\
+         fn main() -> I64 = when (start()) { Result<I64, ResourceError>.Ok(value) -> { value }, Result<I64, ResourceError>.Err(error) -> { 0 } }",
+    )
+    .unwrap();
+    let linked = core::lower_linked_checked(&ast).unwrap();
+    assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run_linked(&linked, "main", &[]).unwrap(), 42);
+    let path = temp_generic_project();
+    let executable = path.join("spawned");
+    native::build_executable_linked(&linked, &executable).unwrap();
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"42\n"
+    );
+    let cache = path.join("native-cache");
+    assert!(
+        !native::build_executable_cached_linked(&linked, &executable, &cache)
+            .unwrap()
+            .reused
+    );
+    assert!(
+        native::build_executable_cached_linked(&linked, &executable, &cache)
+            .unwrap()
+            .reused
+    );
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"42\n"
+    );
+    let mut session = native::NativeBuildSession::new();
+    assert!(
+        session
+            .build_executable_linked_report(&linked, &executable)
+            .unwrap()
+            .linked
+    );
+    let warm = session
+        .build_executable_linked_report(&linked, &executable)
+        .unwrap();
+    assert_eq!(warm.reused_objects, 2);
+    assert!(!warm.linked);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn channel_exchange_calls_generic_after_park_and_wake() {
+    let source = format!(
+        "fn identity<T>(value: T) -> T = value\n{}",
+        include_str!("../examples/channel_exchange.phoebe").replace("a + b", "identity(a + b)")
+    );
+    let ast = syntax::parse(&source).unwrap();
+    let linked = core::lower_linked_checked(&ast).unwrap();
+    assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run_linked(&linked, "main", &[]).unwrap(), 42);
+    let path = temp_generic_project();
+    let executable = path.join("exchange");
+    native::build_executable_linked(&linked, &executable).unwrap();
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"42\n"
+    );
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn generic_project_session_builds_and_reuses_retained_main() {
+    let path = temp_generic_project();
+    let app = path.join("app.phoebe");
+    std::fs::write(
+        &app,
+        "import math\nfn main() -> I64 { yield; math.through(42) }",
+    )
+    .unwrap();
+    let executable = path.join("program");
+    let mut session = ProjectBuildSession::new();
+    assert!(session.build(&path, &executable).unwrap().linked);
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"42\n"
+    );
+    let warm = session.build(&path, &executable).unwrap();
+    assert_eq!(warm.reused_native_objects, 1);
+    assert!(!warm.linked);
+    std::fs::write(
+        &app,
+        "import math\nfn main() -> I64 { yield; math.through(43) }",
+    )
+    .unwrap();
+    let edited = session.build(&path, &executable).unwrap();
+    assert_eq!(edited.reused_native_objects, 0);
+    assert!(edited.linked);
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"43\n"
+    );
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn retained_generic_move_preserves_channel_right_ownership() {
+    let ast = syntax::parse(
+        "fn identity<T>(value: T) -> T = value\n\
+         fn use_right() -> Result<I64, ResourceError> {\
+           val (sender, receiver) = channel<I64>(capacity = 1)?;\
+           yield;\
+           val moved = identity(sender);\
+           moved.close(); receiver.close();\
+           Result<I64, ResourceError>.Ok(42)\
+         }\n\
+         fn main() -> I64 = when (use_right()) {\
+           Result<I64, ResourceError>.Ok(value) -> { value },\
+           Result<I64, ResourceError>.Err(error) -> { 0 }\
+         }",
+    )
+    .unwrap();
+    let linked = core::lower_linked_checked(&ast).unwrap();
+    assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run_linked(&linked, "main", &[]).unwrap(), 42);
+    let path = temp_generic_project();
+    let executable = path.join("right");
+    native::build_executable_linked(&linked, &executable).unwrap();
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"42\n"
+    );
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn retained_generic_wide_result_uses_return_buffer() {
+    let ast = syntax::parse(
+        "data Triple { a: I64, b: I64, c: I64 }\n\
+         fn identity<T>(value: T) -> T = value\n\
+         fn main() -> I64 {\n\
+           yield;\n\
+           val triple = identity(Triple(10, 20, 12));\n\
+           triple.a + triple.b + triple.c\n\
+         }",
+    )
+    .unwrap();
+    let linked = core::lower_linked_checked(&ast).unwrap();
+    assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run_linked(&linked, "main", &[]).unwrap(), 42);
+    let path = temp_generic_project();
+    let executable = path.join("wide");
+    native::build_executable_linked(&linked, &executable).unwrap();
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"42\n"
+    );
+    std::fs::remove_dir_all(path).unwrap();
+}

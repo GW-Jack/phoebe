@@ -126,6 +126,18 @@ pub fn frame_word_layouts(program: &Program) -> Result<Vec<FrameWords>, String> 
         .collect()
 }
 
+pub(super) fn frame_word_layouts_linked(
+    linked: &core::CheckedLinkedProgram,
+) -> Result<Vec<FrameWords>, String> {
+    let program = linked.program();
+    let frames = frame_layout::analyze_linked(linked)?;
+    let shapes = AbiShapes::new(program, types::I64)?;
+    frames
+        .iter()
+        .map(|frame| frame_layout::word_layout(program, frame, |ty| shapes.types(ty).len()))
+        .collect()
+}
+
 #[derive(Clone)]
 struct SpawnEntry {
     id: FuncId,
@@ -136,6 +148,7 @@ struct SpawnEntry {
 pub(super) struct GenericTargets {
     pub calls: HashMap<(usize, usize, usize), FuncId>,
     pub suspendable: Vec<bool>,
+    pub frame_layouts: Vec<FrameWords>,
 }
 
 pub(super) fn compile_functions<M: Module>(
@@ -164,7 +177,12 @@ pub(super) fn compile_functions<M: Module>(
             matches!(block.terminator, Terminator::Spawn { child, .. } if suspendable[child.0])
         })
     }) {
-        for layout in frame_word_layouts(program)? {
+        let layouts = if let Some(generics) = generics {
+            generics.frame_layouts.clone()
+        } else {
+            frame_word_layouts(program)?
+        };
+        for layout in layouts {
             let index = layout.function.0;
             poll_layouts[index] = Some(layout);
         }

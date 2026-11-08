@@ -194,6 +194,7 @@ def integration_tests(rust_test):
             "examples/generic_project/app.phoebe",
             "examples/generic_project/math.phoebe",
             "examples/generic_project/base.phoebe",
+            "examples/channel_exchange.phoebe",
         ],
         edition = "2024",
         deps = [":phoebe_lib"],

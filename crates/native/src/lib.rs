@@ -131,6 +131,7 @@ fn plan_linked_calls<M: Module>(
     Ok(GenericTargets {
         calls,
         suspendable: suspendable.to_vec(),
+        frame_layouts: codegen::frame_word_layouts_linked(linked)?,
     })
 }
 
@@ -199,20 +200,21 @@ fn compile_jit_impl(
         .map_err(|e| e.to_string())?;
     let mut jit = JITBuilder::with_isa(isa, default_libcall_names());
     let mut poll_children = Vec::new();
-    let poll_children_ids = if linked.is_some() {
-        spawned_poll_children_with_suspendable(
-            program,
-            &vec![true; program.functions.len()],
-            &suspendable,
-        )
+    let direct = linked.map(|_| standalone_direct_functions(program, entry_id, &suspendable));
+    let poll_children_ids = if let Some(direct) = &direct {
+        spawned_poll_children_with_suspendable(program, direct, &suspendable)
     } else {
         spawned_poll_children(program)?
     };
     for child in poll_children_ids {
-        let verified = verified
-            .ok_or("linked generic calls in spawned poll tasks need native poll dispatch")?;
-        let executable =
-            poll::compile_poll_jit_verified(verified, &program.functions[child.0].name)?;
+        let executable = if let Some(linked) = linked {
+            poll::compile_poll_jit_linked(linked, &program.functions[child.0].name)?
+        } else {
+            poll::compile_poll_jit_verified(
+                verified.expect("ordinary JIT has a verified program"),
+                &program.functions[child.0].name,
+            )?
+        };
         jit.symbol(
             spawn_poll_symbol(&program.functions[child.0].name),
             unsafe { executable.entry() } as *const u8,
@@ -276,7 +278,7 @@ fn compile_jit_impl(
             &mut module,
             linked,
             &suspendable,
-            None,
+            direct.as_deref(),
             None,
         )?)
     } else {
@@ -288,7 +290,7 @@ fn compile_jit_impl(
         &context_functions,
         false,
         None,
-        None,
+        direct.as_deref(),
         targets.as_ref(),
     )?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
@@ -428,7 +430,19 @@ pub fn run_linked(
     name: &str,
     args: &[i64],
 ) -> Result<i64, String> {
-    compile_jit_linked(linked, name)?.run(args)
+    let program = linked.program();
+    let (id, function) = program
+        .function(name)
+        .ok_or_else(|| format!("unknown function `{name}`"))?;
+    if !frame_layout::suspendable_functions_linked(linked)[id.0] {
+        return compile_jit_linked(linked, name)?.run(args);
+    }
+    check_poll_entry(function, name, args)?;
+    run_poll_executable(
+        poll::compile_poll_jit_linked(linked, name)?,
+        args,
+        ScopeLimits::default(),
+    )
 }
 
 pub fn run_checked_with_limits(
@@ -453,6 +467,15 @@ fn run_verified(
     if !frame_layout::suspendable_functions(program)?[id.0] {
         return compile_jit_verified(verified, name)?.run_with_limits(args, limits);
     }
+    check_poll_entry(function, name, args)?;
+    run_poll_executable(
+        poll::compile_poll_jit_verified(verified, name)?,
+        args,
+        limits,
+    )
+}
+
+fn check_poll_entry(function: &core::Function, name: &str, args: &[i64]) -> Result<(), String> {
     if function.return_type != Type::I64
         || function
             .param_modes
@@ -472,7 +495,14 @@ fn run_verified(
             args.len()
         ));
     }
-    let executable = poll::compile_poll_jit_verified(verified, name)?;
+    Ok(())
+}
+
+fn run_poll_executable(
+    executable: poll::PollExecutable,
+    args: &[i64],
+    limits: ScopeLimits,
+) -> Result<i64, String> {
     // The executable owns the code until the scheduler and all child tasks exit.
     let mut root = unsafe {
         runtime::NativePollTask::new(executable.entry(), executable.layout().total_words)
@@ -496,6 +526,7 @@ pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
     Ok(emitted.root)
 }
 
+#[derive(Clone)]
 struct ObjectEmission {
     root: Vec<u8>,
     poll_words: Option<usize>,
@@ -514,10 +545,12 @@ pub fn clif_checked(program: &core::CheckedProgram) -> Result<String, String> {
 pub fn clif_linked(linked: &core::CheckedLinkedProgram) -> Result<String, String> {
     let program = linked.program();
     let suspendable = frame_layout::suspendable_functions_linked(linked);
-    if suspendable.iter().any(|suspendable| *suspendable) {
-        return Err(
-            "linked generic CLIF inspection for retained tasks is not available yet".into(),
-        );
+    if let Some((main, _)) = program.function("main")
+        && suspendable[main.0]
+    {
+        return Ok(poll::compile_poll_jit_linked(linked, "main")?
+            .clif()
+            .to_owned());
     }
     let mut flags = settings::builder();
     flags
@@ -542,6 +575,15 @@ pub fn clif_linked(linked: &core::CheckedLinkedProgram) -> Result<String, String
         None,
         Some(&targets),
     )?;
+    for child in spawned_poll_children_with_suspendable(
+        program,
+        &vec![true; program.functions.len()],
+        &suspendable,
+    ) {
+        output.push_str(
+            poll::compile_poll_jit_linked(linked, &program.functions[child.0].name)?.clif(),
+        );
+    }
     Ok(output)
 }
 
@@ -615,11 +657,19 @@ fn emit_object_linked(linked: &core::CheckedLinkedProgram) -> Result<ObjectEmiss
     }
     let suspendable = frame_layout::suspendable_functions_linked(linked);
     if suspendable[main.0] {
-        return Err("linked generic calls in retained native tasks need poll dispatch".into());
+        let (root, words) = poll::emit_poll_object_linked(linked, "main", "phoebe_main_poll")?;
+        return Ok(ObjectEmission {
+            root,
+            poll_words: Some(words),
+            children: Vec::new(),
+        });
     }
     let direct = standalone_direct_functions(program, main, &suspendable);
-    if !spawned_poll_children_with_suspendable(program, &direct, &suspendable).is_empty() {
-        return Err("linked generic calls in spawned poll tasks need native poll dispatch".into());
+    let mut children = Vec::new();
+    for child in spawned_poll_children_with_suspendable(program, &direct, &suspendable) {
+        let name = &program.functions[child.0].name;
+        let (object, _) = poll::emit_poll_object_linked(linked, name, &spawn_poll_symbol(name))?;
+        children.push(object);
     }
     let mut flags = settings::builder();
     flags
@@ -648,7 +698,7 @@ fn emit_object_linked(linked: &core::CheckedLinkedProgram) -> Result<ObjectEmiss
     Ok(ObjectEmission {
         root: module.finish().emit().map_err(|error| error.to_string())?,
         poll_words: None,
-        children: Vec::new(),
+        children,
     })
 }
 
