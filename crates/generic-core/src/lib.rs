@@ -1,16 +1,17 @@
 //! Parametric, ownership-checked Core for shape-shared generic definitions.
 //!
-//! This first IR slice admits opaque type parameters, scalar values, moves,
-//! and explicit block arguments. It has no type-specific operations or
-//! dictionary calls yet. Every type parameter is treated as affine, even
-//! when a later concrete substitution has no communication capabilities.
+//! This IR slice admits opaque type parameters, scalar values, moves,
+//! explicit block arguments, and owned generic-to-generic calls. It has no
+//! type-specific operations or dictionary calls yet. Every type parameter is
+//! treated as affine, even when a later concrete substitution has no
+//! communication capabilities.
 
 mod display;
 mod source;
 mod verification;
 
-pub use source::lower;
-pub use verification::verify;
+pub use source::{lower, lower_program};
+pub use verification::{verify, verify_module};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ValueId(pub usize);
@@ -37,6 +38,11 @@ pub struct Function {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Module {
+    pub functions: Vec<Function>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block {
     pub params: Vec<ValueId>,
     pub instructions: Vec<Instruction>,
@@ -53,6 +59,11 @@ pub struct Instruction {
 pub enum Operation {
     Move(ValueId),
     CopyScalar(ValueId),
+    Call {
+        callee: usize,
+        type_args: Vec<Type>,
+        args: Vec<ValueId>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

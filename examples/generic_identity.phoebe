@@ -10,3 +10,5 @@ fn forward<T>(value: T) -> T {
   val next = value;
   next
 }
+
+fn through<U>(value: U) -> U = identity(value)

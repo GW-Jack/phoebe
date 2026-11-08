@@ -1,9 +1,124 @@
 use std::collections::HashMap;
 
-use phoebe_syntax::syntax::{self, ExprKind, ParamMode, Statement, TypeName};
+use phoebe_syntax::syntax::{self, CallArgument, ExprKind, ParamMode, Statement, TypeName};
 use phoebe_syntax::{Diagnostic, Span};
 
-use crate::{Block, BlockId, Function, Instruction, Operation, Terminator, Type, ValueId, verify};
+use crate::verification::verify_module_at;
+use crate::{
+    Block, BlockId, Function, Instruction, Module, Operation, Terminator, Type, ValueId, verify,
+};
+
+fn signature(source: &syntax::Function) -> Result<Function, Diagnostic> {
+    let binders = source
+        .type_params
+        .iter()
+        .enumerate()
+        .map(|(index, (name, _))| (name.as_str(), index))
+        .collect::<HashMap<_, _>>();
+    let params = source
+        .params
+        .iter()
+        .map(|param| {
+            if param.mode != ParamMode::Own {
+                return Err(Diagnostic::new(
+                    param.span,
+                    "generic borrows are not implemented yet",
+                ));
+            }
+            source_type(&param.ty, &binders, param.span)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Function {
+        name: source.name.clone(),
+        type_params: source.type_params.len(),
+        params,
+        result: source_type(&source.return_type, &binders, source.name_span)?,
+        value_types: Vec::new(),
+        blocks: Vec::new(),
+    })
+}
+
+fn call_operation(
+    name: &str,
+    args: &[CallArgument],
+    span: Span,
+    locals: &HashMap<String, ValueId>,
+    value_types: &[Type],
+    signatures: &[Function],
+) -> Result<(Operation, Type), Diagnostic> {
+    let (callee, signature) = signatures
+        .iter()
+        .enumerate()
+        .find(|(_, signature)| signature.name == name)
+        .ok_or_else(|| Diagnostic::new(span, format!("unknown generic function {name}")))?;
+    if args.len() != signature.params.len() {
+        return Err(Diagnostic::new(
+            span,
+            format!("{name} argument count mismatch"),
+        ));
+    }
+    let mut inferred = vec![None; signature.type_params];
+    let mut values = Vec::with_capacity(args.len());
+    for (arg, formal) in args.iter().zip(&signature.params) {
+        let CallArgument::Value(expr) = arg else {
+            return Err(Diagnostic::new(
+                span,
+                "generic call borrows are not implemented yet",
+            ));
+        };
+        let ExprKind::Name(arg_name) = &expr.kind else {
+            return Err(Diagnostic::new(
+                expr.span,
+                "generic call arguments must be named values in this slice",
+            ));
+        };
+        let value = local(locals, arg_name, expr.span)?;
+        let actual = value_types[value.0];
+        match formal {
+            Type::Param(index) => match &mut inferred[*index] {
+                Some(previous) if *previous != actual => {
+                    return Err(Diagnostic::new(
+                        expr.span,
+                        format!("{name} repeated type parameter has mismatched arguments"),
+                    ));
+                }
+                slot => *slot = Some(actual),
+            },
+            concrete if *concrete != actual => {
+                return Err(Diagnostic::new(
+                    expr.span,
+                    format!("{name} argument type mismatch"),
+                ));
+            }
+            _ => {}
+        }
+        values.push(value);
+    }
+    let type_args = inferred
+        .into_iter()
+        .enumerate()
+        .map(|(index, ty)| {
+            ty.ok_or_else(|| {
+                Diagnostic::new(
+                    span,
+                    format!("cannot infer type parameter T{index} of {name}"),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let result = match signature.result {
+        Type::Param(index) => type_args[index],
+        concrete => concrete,
+    };
+    Ok((
+        Operation::Call {
+            callee,
+            type_args,
+            args: values,
+        },
+        result,
+    ))
+}
 
 fn source_type(
     name: &TypeName,
@@ -58,6 +173,34 @@ fn branch_result(
 /// Lower the first source subset for a generic definition into parametric
 /// Core. The result is independently verified before it is returned.
 pub fn lower(source: &syntax::Function) -> Result<Function, Diagnostic> {
+    let function = lower_inner(source, &[])?;
+    verify(&function).map_err(|message| Diagnostic::new(source.name_span, message))?;
+    Ok(function)
+}
+
+/// Lower and verify the generic definitions in one source module. Concrete
+/// definitions are left to the concrete Core pipeline.
+pub fn lower_program(source: &syntax::Program) -> Result<Module, Diagnostic> {
+    let definitions = source
+        .functions
+        .iter()
+        .filter(|function| !function.type_params.is_empty())
+        .collect::<Vec<_>>();
+    let signatures = definitions
+        .iter()
+        .map(|function| signature(function))
+        .collect::<Result<Vec<_>, _>>()?;
+    let functions = definitions
+        .iter()
+        .map(|function| lower_inner(function, &signatures))
+        .collect::<Result<Vec<_>, _>>()?;
+    let module = Module { functions };
+    verify_module_at(&module)
+        .map_err(|(index, message)| Diagnostic::new(definitions[index].name_span, message))?;
+    Ok(module)
+}
+
+fn lower_inner(source: &syntax::Function, signatures: &[Function]) -> Result<Function, Diagnostic> {
     if source.type_params.is_empty() {
         return Err(Diagnostic::new(
             source.name_span,
@@ -119,10 +262,10 @@ pub fn lower(source: &syntax::Function) -> Result<Function, Diagnostic> {
         if locals.contains_key(name) {
             return Err(Diagnostic::new(*span, format!("duplicate local {name}")));
         }
-        let (operation, input) = match &expr.kind {
+        let (operation, ty) = match &expr.kind {
             ExprKind::Name(source_name) => {
                 let input = local(&locals, source_name, expr.span)?;
-                (Operation::Move(input), input)
+                (Operation::Move(input), function.value_types[input.0])
             }
             ExprKind::Copy(inner) => {
                 let ExprKind::Name(source_name) = &inner.kind else {
@@ -138,8 +281,16 @@ pub fn lower(source: &syntax::Function) -> Result<Function, Diagnostic> {
                         "opaque type parameter cannot be copied",
                     ));
                 }
-                (Operation::CopyScalar(input), input)
+                (Operation::CopyScalar(input), function.value_types[input.0])
             }
+            ExprKind::Call(name, args) => call_operation(
+                name,
+                args,
+                expr.span,
+                &locals,
+                &function.value_types,
+                signatures,
+            )?,
             _ => {
                 return Err(Diagnostic::new(
                     expr.span,
@@ -148,7 +299,7 @@ pub fn lower(source: &syntax::Function) -> Result<Function, Diagnostic> {
             }
         };
         let value = ValueId(function.value_types.len());
-        function.value_types.push(function.value_types[input.0]);
+        function.value_types.push(ty);
         function.blocks[0].instructions.push(Instruction {
             result: value,
             operation,
@@ -162,6 +313,29 @@ pub fn lower(source: &syntax::Function) -> Result<Function, Diagnostic> {
         .ok_or_else(|| Diagnostic::new(source.name_span, "generic body needs a final value"))?;
     function.blocks[0].terminator = match &tail.kind {
         ExprKind::Name(name) => Terminator::Return(local(&locals, name, tail.span)?),
+        ExprKind::Call(name, args) => {
+            let (operation, result_type) = call_operation(
+                name,
+                args,
+                tail.span,
+                &locals,
+                &function.value_types,
+                signatures,
+            )?;
+            if result_type != result {
+                return Err(Diagnostic::new(
+                    tail.span,
+                    "generic call result type mismatch",
+                ));
+            }
+            let value = ValueId(function.value_types.len());
+            function.value_types.push(result_type);
+            function.blocks[0].instructions.push(Instruction {
+                result: value,
+                operation,
+            });
+            Terminator::Return(value)
+        }
         ExprKind::If(condition, when_true, when_false) => {
             let ExprKind::Name(condition_name) = &condition.kind else {
                 return Err(Diagnostic::new(
@@ -215,6 +389,5 @@ pub fn lower(source: &syntax::Function) -> Result<Function, Diagnostic> {
             ));
         }
     };
-    verify(&function).map_err(|message| Diagnostic::new(source.name_span, message))?;
     Ok(function)
 }

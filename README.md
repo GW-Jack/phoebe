@@ -59,9 +59,10 @@ native poll ABI work.
 shapes. `docs/generic-core.md` explains the additional proof and ABI work
 needed before generic functions can share native bodies by shape.
 The isolated `phoebe-generic-core` crate now verifies a first opaque-owner
-IR slice. `phoebe generic-ir <file>` lowers identity and simple forwarding
-definitions into printable parametric Core; generic calls and native emission
-are still unimplemented.
+IR slice. `phoebe generic-ir <file>` lowers identity, forwarding, and
+generic-to-generic calls into printable parametric Core. The module verifier
+checks call substitutions and owner transfer. Concrete call sites and native
+emission are still unimplemented.
 
 Build and run the compiler with Buck2:
 

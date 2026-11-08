@@ -215,3 +215,75 @@ fn source_generic_copy_and_unsupported_operations_get_spans() {
         assert!(error.span.end > error.span.start, "{error:?}");
     }
 }
+
+#[test]
+fn generic_calls_infer_binders_and_transfer_opaque_owners() {
+    let source = r#"
+fn identity<T>(x: T) -> T = x
+fn through<U>(value: U) -> U = identity(value)
+fn through_val<U>(value: U) -> U {
+  val next = identity(value);
+  next
+}
+"#;
+    let ast = phoebe_syntax::parse(source).unwrap();
+    let module = crate::lower_program(&ast).unwrap();
+    crate::verify_module(&module).unwrap();
+    assert_eq!(module.functions.len(), 3);
+    assert!(module.to_string().contains("call f0<T0>(v0)"));
+    assert!(matches!(
+        module.functions[1].blocks[0].instructions[0].operation,
+        Operation::Call { callee: 0, .. }
+    ));
+
+    let mut wrong_result = module.clone();
+    wrong_result.functions[1].value_types[1] = Type::I64;
+    assert!(
+        crate::verify_module(&wrong_result)
+            .unwrap_err()
+            .contains("result type mismatch")
+    );
+}
+
+#[test]
+fn generic_call_rejects_mismatched_and_reused_owners() {
+    let source = r#"
+fn first<T>(left: T, right: T) -> T = left
+fn bad<U>(left: U, right: I64) -> U = first(left, right)
+"#;
+    let ast = phoebe_syntax::parse(source).unwrap();
+    assert!(
+        crate::lower_program(&ast)
+            .unwrap_err()
+            .message
+            .contains("mismatched arguments")
+    );
+
+    let source = r#"
+fn identity<T>(x: T) -> T = x
+fn bad<U>(x: U) -> U {
+  val y = identity(x);
+  x
+}
+"#;
+    let ast = phoebe_syntax::parse(source).unwrap();
+    let error = crate::lower_program(&ast).unwrap_err();
+    assert!(error.message.contains("not live"));
+    assert_eq!(error.span, ast.functions[1].name_span);
+
+    let source = r#"
+fn identity<T>(x: T) -> T = x
+fn bad<U>(x: U) -> U {
+  val y = identity(x);
+  val z = identity(x);
+  y
+}
+"#;
+    let ast = phoebe_syntax::parse(source).unwrap();
+    assert!(
+        crate::lower_program(&ast)
+            .unwrap_err()
+            .message
+            .contains("not live")
+    );
+}

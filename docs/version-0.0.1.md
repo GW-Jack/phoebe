@@ -86,9 +86,9 @@ inspecting prospective generic shape classes; generic definitions and
 dictionaries remain open under `docs/generic-core.md`. An isolated
 parametric Core verifier checks opaque affine moves, block arguments, and
 returns once per definition without a concrete ABI shape. Source
-`fn identity<T>(value: T) -> T = value` and simple forwarding branches lower
-through `phoebe generic-ir <file>` to printable parametric Core. Generic
-calls and native emission remain open. The scalar
+`fn identity<T>(value: T) -> T = value`, simple forwarding branches, and
+generic-to-generic calls lower through `phoebe generic-ir <file>` to printable
+parametric Core. Concrete call sites and native emission remain open. The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures
 remain design sketches. `docs/performance-baseline.md` records a

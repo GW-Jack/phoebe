@@ -4,8 +4,10 @@ Status: implementation contract with an executable first verifier slice in
 `crates/generic-core`. It checks opaque owners, moves, branch arguments, and
 returns without choosing a concrete type or ABI shape. Source functions with
 explicit type binders can lower identity, `val` moves, and simple `if`
-forwarding into this IR through `phoebe generic-ir <file>`. Calls,
-dictionaries, and native emission are not yet accepted.
+forwarding and generic-to-generic calls into this IR through
+`phoebe generic-ir <file>`. The current source subset infers call binders
+from named owned arguments. Concrete call sites, dictionaries, and native
+emission are not yet accepted.
 
 ## The sharing rule
 
@@ -67,8 +69,11 @@ exists, tests and models are bounded evidence only.
 
 ## Dictionaries and ABI
 
-The first executable generic subset should support identity and forwarding
-through owned calls, branches, and returns. These require no dictionary.
+The first parametric IR subset supports identity and forwarding through owned
+generic calls, branches, and returns. The module verifier checks each body
+once and uses the callee signature to validate call substitutions. Its
+capability graph transfers opaque arguments and creates an opaque result.
+These operations require no dictionary.
 Later bounds add dictionary entries for operations that depend on `T`. A
 `Close` entry must use the same structural close plan as concrete Core,
 including the active tag of a sum; a trait entry carries its callable target

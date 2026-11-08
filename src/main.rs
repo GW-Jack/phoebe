@@ -63,19 +63,12 @@ fn command() -> Result<(), String> {
         let source = fs::read_to_string(&path).map_err(|error| format!("{path}: {error}"))?;
         let ast =
             syntax::parse(&source).map_err(|error| format!("{path}:{}", error.render(&source)))?;
-        let mut found = false;
-        for function in &ast.functions {
-            if function.type_params.is_empty() {
-                continue;
-            }
-            let lowered = generic_core::lower(function)
-                .map_err(|error| format!("{path}:{}", error.render(&source)))?;
-            println!("{lowered}");
-            found = true;
-        }
-        if !found {
+        let lowered = generic_core::lower_program(&ast)
+            .map_err(|error| format!("{path}:{}", error.render(&source)))?;
+        if lowered.functions.is_empty() {
             return Err(format!("{path}: no generic definitions"));
         }
+        print!("{lowered}");
         return Ok(());
     }
     let program = if Path::new(&path).is_dir() || path.ends_with(".toml") {

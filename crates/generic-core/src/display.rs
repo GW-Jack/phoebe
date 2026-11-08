@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::{Function, Operation, Terminator, Type};
+use crate::{Function, Module, Operation, Terminator, Type};
 
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -53,7 +53,7 @@ impl fmt::Display for Function {
             }
             f.write_str("):\n")?;
             for instruction in &block.instructions {
-                match instruction.operation {
+                match &instruction.operation {
                     Operation::Move(value) => {
                         writeln!(f, "    v{} = move v{}", instruction.result.0, value.0)?;
                     }
@@ -63,6 +63,22 @@ impl fmt::Display for Function {
                             "    v{} = copy.scalar v{}",
                             instruction.result.0, value.0
                         )?;
+                    }
+                    Operation::Call {
+                        callee,
+                        type_args,
+                        args,
+                    } => {
+                        write!(f, "    v{} = call f{}<", instruction.result.0, callee)?;
+                        for (index, ty) in type_args.iter().enumerate() {
+                            if index != 0 {
+                                f.write_str(", ")?;
+                            }
+                            write!(f, "{ty}")?;
+                        }
+                        f.write_str(">(")?;
+                        values(f, args)?;
+                        f.write_str(")\n")?;
                     }
                 }
             }
@@ -89,5 +105,17 @@ impl fmt::Display for Function {
             }
         }
         f.write_str("}")
+    }
+}
+
+impl fmt::Display for Module {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, function) in self.functions.iter().enumerate() {
+            if index != 0 {
+                f.write_str("\n")?;
+            }
+            writeln!(f, "f{index} = {function}")?;
+        }
+        Ok(())
     }
 }

@@ -1,8 +1,55 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use phoebe_capability::{Action, Edge, Graph, Slot, Target};
 
-use crate::{BlockId, Function, Operation, Terminator, Type, ValueId};
+use crate::{BlockId, Function, Module, Operation, Terminator, Type, ValueId};
+
+fn substitute(ty: Type, args: &[Type]) -> Result<Type, String> {
+    match ty {
+        Type::Param(index) => args
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("missing type argument T{index}")),
+        concrete => Ok(concrete),
+    }
+}
+
+fn check_call(
+    function: &Function,
+    functions: &[Function],
+    local: &HashSet<ValueId>,
+    result: ValueId,
+    callee: usize,
+    type_args: &[Type],
+    args: &[ValueId],
+) -> Result<(), String> {
+    let signature = functions
+        .get(callee)
+        .ok_or_else(|| format!("invalid generic callee {callee}"))?;
+    if type_args.len() != signature.type_params {
+        return Err(format!("{} type argument count mismatch", signature.name));
+    }
+    if args.len() != signature.params.len() {
+        return Err(format!("{} argument count mismatch", signature.name));
+    }
+    for ty in type_args {
+        if let Type::Param(index) = ty
+            && *index >= function.type_params
+        {
+            return Err(format!("unbound caller type parameter {index}"));
+        }
+    }
+    for (&arg, &param) in args.iter().zip(&signature.params) {
+        locally_defined(local, arg)?;
+        if value_type(function, arg)? != substitute(param, type_args)? {
+            return Err(format!("{} argument type mismatch", signature.name));
+        }
+    }
+    if value_type(function, result)? != substitute(signature.result, type_args)? {
+        return Err(format!("{} result type mismatch", signature.name));
+    }
+    Ok(())
+}
 
 fn value_type(function: &Function, value: ValueId) -> Result<Type, String> {
     function
@@ -90,9 +137,35 @@ fn move_edge(
     }
 }
 
-/// Verify a parametric definition without choosing concrete types or ABI
-/// shapes. Opaque parameters are checked as exact affine owners.
+/// Verify every parametric definition and all calls against their signatures.
+/// A body is visited once, independent of its eventual concrete uses.
+pub fn verify_module(module: &Module) -> Result<(), String> {
+    verify_module_at(module).map_err(|(_, message)| message)
+}
+
+pub(crate) fn verify_module_at(module: &Module) -> Result<(), (usize, String)> {
+    let mut names = HashMap::new();
+    for (index, function) in module.functions.iter().enumerate() {
+        if names.insert(&function.name, index).is_some() {
+            return Err((
+                index,
+                format!("duplicate generic function {}", function.name),
+            ));
+        }
+    }
+    for (index, function) in module.functions.iter().enumerate() {
+        verify_with_functions(function, &module.functions).map_err(|message| (index, message))?;
+    }
+    Ok(())
+}
+
+/// Verify one parametric definition. Calls can refer only to this function;
+/// use `verify_module` when a body calls other generic definitions.
 pub fn verify(function: &Function) -> Result<(), String> {
+    verify_with_functions(function, std::slice::from_ref(function))
+}
+
+fn verify_with_functions(function: &Function, functions: &[Function]) -> Result<(), String> {
     if function.blocks.is_empty() {
         return Err("generic function has no entry block".into());
     }
@@ -131,18 +204,32 @@ pub fn verify(function: &Function) -> Result<(), String> {
             local.insert(param);
         }
         for instruction in &block.instructions {
-            let input = match instruction.operation {
-                Operation::Move(value) | Operation::CopyScalar(value) => value,
-            };
-            locally_defined(&local, input)?;
-            let input_type = value_type(function, input)?;
-            if matches!(instruction.operation, Operation::CopyScalar(_))
-                && matches!(input_type, Type::Param(_))
-            {
-                return Err("opaque type parameter cannot be copied".into());
-            }
-            if value_type(function, instruction.result)? != input_type {
-                return Err(format!("v{} result type mismatch", instruction.result.0));
+            match &instruction.operation {
+                Operation::Move(input) | Operation::CopyScalar(input) => {
+                    locally_defined(&local, *input)?;
+                    let input_type = value_type(function, *input)?;
+                    if matches!(instruction.operation, Operation::CopyScalar(_))
+                        && matches!(input_type, Type::Param(_))
+                    {
+                        return Err("opaque type parameter cannot be copied".into());
+                    }
+                    if value_type(function, instruction.result)? != input_type {
+                        return Err(format!("v{} result type mismatch", instruction.result.0));
+                    }
+                }
+                Operation::Call {
+                    callee,
+                    type_args,
+                    args,
+                } => check_call(
+                    function,
+                    functions,
+                    &local,
+                    instruction.result,
+                    *callee,
+                    type_args,
+                    args,
+                )?,
             }
             let entry = &mut defined[instruction.result.0];
             if *entry {
@@ -205,11 +292,22 @@ pub fn verify(function: &Function) -> Result<(), String> {
             let actions = block
                 .instructions
                 .iter()
-                .filter_map(|instruction| match instruction.operation {
+                .flat_map(|instruction| match &instruction.operation {
                     Operation::Move(value) => slots[value.0]
                         .zip(slots[instruction.result.0])
-                        .map(|(from, to)| Action::Move { from, to }),
-                    Operation::CopyScalar(_) => None,
+                        .map(|(from, to)| vec![Action::Move { from, to }])
+                        .unwrap_or_default(),
+                    Operation::CopyScalar(_) => Vec::new(),
+                    Operation::Call { args, .. } => {
+                        let mut actions = args
+                            .iter()
+                            .filter_map(|value| slots[value.0].map(Action::Transfer))
+                            .collect::<Vec<_>>();
+                        if let Some(slot) = slots[instruction.result.0] {
+                            actions.push(Action::Create(slot));
+                        }
+                        actions
+                    }
                 })
                 .collect();
             let exits = match &block.terminator {
