@@ -23,8 +23,7 @@ For a concrete `T`, the compiler builds one immutable message descriptor:
 
 * `shape`: the flattened ABI parts and their alignment;
 * `close`: a structural, tag-aware plan for active capability leaves;
-* `transfer`: the same active leaves in declaration order, with their runtime
-  capability kinds;
+* `transfer`: the same active leaves with their runtime capability kinds;
 * `type_id`: an identity for the complete concrete type, not merely its ABI
   shape. Equal shapes may have different ownership behavior.
 
@@ -33,8 +32,10 @@ It contains no task-owned values. A sum's tag selects exactly one arm before
 its payload is inspected. Padding and inactive arms never carry a right.
 `Request<I64>` is a two-word first example: payload, then `ReplyTo<I64>`.
 `phoebe_abi::Shapes` now computes a concrete type, shape, and close-plan
-layout for eligible messages. It does not yet emit a runtime descriptor or a
-general active-leaf transfer plan.
+layout for eligible messages. `MessageLayout::visit_active_rights` walks the
+selected leaves without allocating on success, validates the ABI word count,
+and rejects an out-of-range active tag. The runtime descriptor and ownership
+transfer implementation remain open.
 
 ## Ownership equations
 
@@ -78,10 +79,11 @@ occupancy so boundedness is preserved.
 
 ## Implementation gates
 
-1. Extend the initial backend-independent `MessageLayout` in `phoebe_abi`
-   with an active-leaf transfer plan and tests for nested products,
-   `Request<I64>`, and tagged sums. References and unsupported recursive
-   layouts must be rejected before code generation.
+1. Keep the backend-independent `MessageLayout` in `phoebe_abi` as the source
+   for runtime descriptor generation. Its current tests cover nested
+   products, `Request<I64>`, tagged sums, references, and recursive layout
+   rejection. The runtime descriptor must preserve its type identity and
+   active-leaf selection.
 2. Add runtime-owned, preallocated typed slots and an atomic transfer API.
    Keep the existing scalar/request API as adapters while validating the new
    protocol. Test full, closed, dequeue, discard, and injected precommit

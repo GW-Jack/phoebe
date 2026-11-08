@@ -35,6 +35,22 @@ pub struct MessageLayout {
     pub close: ClosePlan,
 }
 
+impl MessageLayout {
+    /// Visit only the active rights in structural close order. A caller may
+    /// use one read-only pass to validate ownership, then a nonfailing pass
+    /// to commit transfers. The successful path allocates no temporary list.
+    pub fn visit_active_rights(
+        &self,
+        words: &[u64],
+        mut visit: impl FnMut(CapabilityPart, u64) -> Result<(), String>,
+    ) -> Result<(), String> {
+        if words.len() != self.shape.parts.len() {
+            return Err("message word count does not match its ABI shape".into());
+        }
+        self.close.visit_active(words, &mut visit)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CapabilityPart {
     pub part: usize,
@@ -58,6 +74,42 @@ pub enum ClosePlan {
 }
 
 impl ClosePlan {
+    fn visit_active(
+        &self,
+        words: &[u64],
+        visit: &mut impl FnMut(CapabilityPart, u64) -> Result<(), String>,
+    ) -> Result<(), String> {
+        match self {
+            Self::Empty => Ok(()),
+            Self::Leaf { part, kind } => {
+                let token = *words
+                    .get(*part)
+                    .ok_or("message capability part is missing")?;
+                visit(
+                    CapabilityPart {
+                        part: *part,
+                        kind: *kind,
+                    },
+                    token,
+                )
+            }
+            Self::Sequence(plans) => {
+                for plan in plans {
+                    plan.visit_active(words, visit)?;
+                }
+                Ok(())
+            }
+            Self::Tagged { tag_part, arms } => {
+                let tag = *words.get(*tag_part).ok_or("message tag part is missing")?;
+                let arm = usize::try_from(tag)
+                    .ok()
+                    .and_then(|index| arms.get(index))
+                    .ok_or("message variant tag is out of range")?;
+                arm.visit_active(words, visit)
+            }
+        }
+    }
+
     fn shifted(&self, offset: usize) -> Self {
         match self {
             Self::Empty => Self::Empty,
@@ -526,6 +578,89 @@ mod tests {
                     },
                 ],
             }
+        );
+    }
+
+    #[test]
+    fn active_message_rights_follow_nested_tags_and_reverse_field_order() {
+        let program = core::Program {
+            data: vec![
+                core::DataDef {
+                    name: "Choice".into(),
+                    variants: vec!["None".into(), "Request".into()],
+                    payloads: vec![None, Some(Type::RequestI64)],
+                    fields: vec![],
+                },
+                core::DataDef {
+                    name: "Packet".into(),
+                    variants: vec![],
+                    payloads: vec![],
+                    fields: vec![
+                        ("sender".into(), Type::SenderI64),
+                        ("choice".into(), Type::Data(DataId(0))),
+                        ("reply".into(), Type::ReplyToI64),
+                    ],
+                },
+            ],
+            functions: vec![],
+        };
+        let layout = Shapes::new(&program)
+            .unwrap()
+            .message_layout(Type::Data(DataId(1)))
+            .unwrap();
+        // sender, choice tag, request value, request reply, outer reply
+        let mut active = Vec::new();
+        layout
+            .visit_active_rights(&[11, 1, 99, 22, 33], |part, token| {
+                active.push((part, token));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            active,
+            [
+                (
+                    CapabilityPart {
+                        part: 4,
+                        kind: Type::ReplyToI64
+                    },
+                    33
+                ),
+                (
+                    CapabilityPart {
+                        part: 3,
+                        kind: Type::ReplyToI64
+                    },
+                    22
+                ),
+                (
+                    CapabilityPart {
+                        part: 0,
+                        kind: Type::SenderI64
+                    },
+                    11
+                ),
+            ]
+        );
+        active.clear();
+        layout
+            .visit_active_rights(&[11, 0, 99, 22, 33], |part, token| {
+                active.push((part, token));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(active.len(), 2);
+        assert_eq!(active[0].1, 33);
+        assert_eq!(active[1].1, 11);
+        assert!(
+            layout
+                .visit_active_rights(&[11, 2, 99, 22, 33], |_, _| Ok(()))
+                .is_err()
+        );
+        assert!(
+            layout
+                .visit_active_rights(&[11, 1, 99, 22], |_, _| Ok(()))
+                .is_err()
         );
     }
 }
