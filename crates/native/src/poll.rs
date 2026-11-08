@@ -1279,19 +1279,11 @@ fn compile_poll_module<M: Module>(
                         )?;
                         let mut transfers = Vec::new();
                         for arg in args {
-                            for leaf in shapes.capability_parts(function.value_types[arg.0]) {
-                                let kind = match leaf.kind {
-                                    Type::SenderI64
-                                    | Type::ReceiverI64
-                                    | Type::RequestSenderI64
-                                    | Type::RequestReceiverI64 => 0,
-                                    Type::ReplyToI64 => 1,
-                                    Type::ReplyReceiverI64 => 2,
-                                    _ => unreachable!("capability ABI leaf"),
-                                };
-                                transfers
-                                    .push((kind, builder.use_var(variables[arg.0][leaf.part])));
-                            }
+                            shapes.append_transfer_descriptors(
+                                function.value_types[arg.0],
+                                &mut transfers,
+                                |part| builder.use_var(variables[arg.0][part]),
+                            );
                         }
                         let transfer_count = i64::try_from(transfers.len())
                             .map_err(|_| "spawn transfer count overflow")?;

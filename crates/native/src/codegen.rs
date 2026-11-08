@@ -84,6 +84,28 @@ impl AbiShapes {
             .capability_parts(ty)
             .expect("checked Core type has an ABI capability layout")
     }
+
+    /// Native spawn transfer descriptors use one runtime kind and token per
+    /// capability leaf, including rights nested in products and requests.
+    pub(super) fn append_transfer_descriptors<T>(
+        &self,
+        ty: Type,
+        out: &mut Vec<(i64, T)>,
+        mut part: impl FnMut(usize) -> T,
+    ) {
+        for leaf in self.capability_parts(ty) {
+            let kind = match leaf.kind {
+                Type::SenderI64
+                | Type::ReceiverI64
+                | Type::RequestSenderI64
+                | Type::RequestReceiverI64 => 0,
+                Type::ReplyToI64 => 1,
+                Type::ReplyReceiverI64 => 2,
+                _ => unreachable!("capability ABI leaf"),
+            };
+            out.push((kind, part(leaf.part)));
+        }
+    }
 }
 
 /// Physical word ranges for the retained functions, derived from the same
@@ -999,18 +1021,11 @@ pub(super) fn compile_functions<M: Module>(
                         let mut transfers = Vec::new();
                         for arg in args {
                             let parts = get(*arg);
-                            for leaf in shapes.capability_parts(function.value_types[arg.0]) {
-                                let kind = match leaf.kind {
-                                    Type::SenderI64
-                                    | Type::ReceiverI64
-                                    | Type::RequestSenderI64
-                                    | Type::RequestReceiverI64 => 0,
-                                    Type::ReplyToI64 => 1,
-                                    Type::ReplyReceiverI64 => 2,
-                                    _ => unreachable!("capability ABI leaf"),
-                                };
-                                transfers.push((kind, parts[leaf.part]));
-                            }
+                            shapes.append_transfer_descriptors(
+                                function.value_types[arg.0],
+                                &mut transfers,
+                                |part| parts[part],
+                            );
                         }
                         let transfers_ptr = if transfers.is_empty() {
                             builder.ins().iconst(pointer_type, 0)
@@ -1273,4 +1288,45 @@ pub(super) fn compile_functions<M: Module>(
         module.clear_context(&mut ctx);
     }
     Ok(ids)
+}
+
+#[cfg(test)]
+mod abi_transfer_tests {
+    use super::*;
+    use phoebe_core::{DataDef, DataId};
+
+    #[test]
+    fn nested_spawn_descriptors_use_flattened_offsets_and_runtime_kinds() {
+        let program = Program {
+            data: vec![
+                DataDef {
+                    name: "Pair".into(),
+                    variants: vec![],
+                    payloads: vec![],
+                    fields: vec![
+                        ("sender".into(), Type::SenderI64),
+                        ("receiver".into(), Type::ReceiverI64),
+                    ],
+                },
+                DataDef {
+                    name: "Envelope".into(),
+                    variants: vec![],
+                    payloads: vec![],
+                    fields: vec![
+                        ("number".into(), Type::I64),
+                        ("pair".into(), Type::Data(DataId(0))),
+                        ("request".into(), Type::RequestI64),
+                        ("reply_receiver".into(), Type::ReplyReceiverI64),
+                    ],
+                },
+            ],
+            functions: vec![],
+        };
+        let shapes = AbiShapes::new(&program, types::I64).unwrap();
+        let mut transfers = Vec::new();
+        shapes.append_transfer_descriptors(Type::Data(DataId(1)), &mut transfers, |part| part);
+        assert_eq!(transfers, vec![(0, 1), (0, 2), (1, 4), (2, 5)]);
+        shapes.append_transfer_descriptors(Type::I64, &mut transfers, |_| unreachable!());
+        assert_eq!(transfers.len(), 4);
+    }
 }
