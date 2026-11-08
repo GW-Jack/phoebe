@@ -37,8 +37,10 @@ calls, returns, and joins; `docs/abi-shapes.md` specifies the current shape.
 `product.unpack` consumes a whole nominal product and passes one typed block
 parameter per field. Nested fields retain their flattened ABI shape. The
 interpreter, direct Cranelift path, retained task path, and standalone path
-agree on a nested closed-product example. Source syntax does not expose this
-terminator yet; capability-bearing product declarations remain rejected.
+agree on a nested closed-product example. Source `val (a, b, ...) =
+product.unpack();` lowers to this terminator and requires one name per field.
+The existing two-name request unpack uses the same binding syntax.
+Capability-bearing product declarations remain rejected.
 
 The first `?` lowering uses this same `match` terminator. Its `Err` target
 receives and returns the original sum value through a block parameter; its

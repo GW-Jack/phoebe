@@ -68,7 +68,7 @@ the ownership state. Core flow now moves all leaves together for nominal
 `move`, product construction, owned calls, spawn transfer, and block arguments.
 Whole-product `product.unpack` now moves each leaf to its corresponding field
 block parameter. The product field restriction remains in force because
-structural cleanup, source lowering, and native/runtime capability-product
+structural cleanup and native/runtime capability-product
 validation are incomplete. For a sum,
 the active variant determines which paths exist, so the verifier must either
 split on its tag or carry a tagged slot state. A blind union of variant slots

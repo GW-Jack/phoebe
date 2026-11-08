@@ -99,7 +99,11 @@ target's register return capacity use a caller-owned stack buffer, so x86-64
 and AArch64 both support finite nested results. `docs/abi-shapes.md` records the current internal
 calling convention and its unmeasured argument cost threshold. Core IR
 has typed values, conditional branches, variant matches, block parameters,
-and task-local places for `var`. Nested `Result` applications use a finite
+and task-local places for `var`. `val (a, b, ...) = product.unpack();`
+destructures a whole finite product, including nested fields, with one name
+per field; the existing request pair binding uses the same syntax.
+`examples/product_unpack.phoebe` agrees in interpreter, JIT, and standalone
+execution, including a retained task path. Nested `Result` applications use a finite
 flattened ABI shape; see `examples/nested_result.phoebe`. Its verifier checks
 definition uniqueness, dominance, place initialization, affine moves,
 block-argument types, call targets and modes, and return
@@ -234,7 +238,7 @@ flow moves all leaves through construction, nominal move, block arguments,
 owned calls, spawn transfer, and whole-product unpack. The interpreter,
 direct Cranelift path, retained task path, and standalone output agree on
 nested closed-product unpack. Product declarations containing capabilities
-remain rejected until source lowering, structural cleanup, and capability-
+remain rejected until structural cleanup and capability-
 product execution paths are verified together.
 The bounded two-request Maude model explores both successful retry and
 receiver closure during a pending send. It checks encoded queue/right
@@ -394,6 +398,7 @@ buck2 run //:phoebe -- run examples/loop.phoebe
 buck2 run //:phoebe -- run examples/borrow.phoebe
 buck2 run //:phoebe -- run examples/variant.phoebe
 buck2 run //:phoebe -- run examples/product.phoebe
+buck2 run //:phoebe -- run examples/product_unpack.phoebe
 buck2 run //:phoebe -- run examples/payload.phoebe
 buck2 run //:phoebe -- run examples/try.phoebe
 buck2 run //:phoebe -- run examples/nested_result.phoebe

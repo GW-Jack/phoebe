@@ -553,7 +553,7 @@ fn rewrite_body(
             Statement::ReplyVal { .. } => {}
             Statement::ChannelVal { capacity, .. }
             | Statement::RequestChannelVal { capacity, .. } => rewrite(capacity)?,
-            Statement::RequestUnpackVal { request, .. } => rewrite(request)?,
+            Statement::UnpackVal { value, .. } => rewrite(value)?,
             Statement::Spawn { child, args, .. } => {
                 if local_functions.contains(child) {
                     *child = symbol(module, child, root);
@@ -832,16 +832,12 @@ fn shift_body(body: &mut Body, offset: usize) {
                 shift_span(span, offset);
                 shift_expr(capacity, offset);
             }
-            Statement::RequestUnpackVal {
-                value,
-                right,
-                request,
-                span,
-            } => {
-                shift_span(&mut value.1, offset);
-                shift_span(&mut right.1, offset);
+            Statement::UnpackVal { names, value, span } => {
+                for (_, name_span) in names {
+                    shift_span(name_span, offset);
+                }
                 shift_span(span, offset);
-                shift_expr(request, offset);
+                shift_expr(value, offset);
             }
             Statement::Spawn { args, span, .. } => {
                 shift_span(span, offset);

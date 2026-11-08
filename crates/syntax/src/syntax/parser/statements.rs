@@ -25,24 +25,27 @@ impl Parser {
             };
             if let Some(mutable) = binding {
                 if !mutable && self.eat(&TokenKind::LParen).is_some() {
-                    let sender = self.name()?;
-                    self.expect(&TokenKind::Comma, ",")?;
-                    let receiver = self.name()?;
+                    let mut names = vec![self.name()?];
+                    while self.eat(&TokenKind::Comma).is_some() {
+                        names.push(self.name()?);
+                    }
                     self.expect(&TokenKind::RParen, ")")?;
                     self.expect(&TokenKind::Equal, "=")?;
                     let (constructor, start) = self.name()?;
                     if self.eat(&TokenKind::Dot).is_some() {
                         let (method, end) = self.name()?;
                         if method != "unpack" {
-                            return Err(Diagnostic::new(end, "pair binding requires unpack()"));
+                            return Err(Diagnostic::new(
+                                end,
+                                "destructuring binding requires unpack()",
+                            ));
                         }
                         self.expect(&TokenKind::LParen, "(")?;
                         self.expect(&TokenKind::RParen, ")")?;
                         self.expect(&TokenKind::Semicolon, "; after binding")?;
-                        statements.push(Statement::RequestUnpackVal {
-                            value: sender,
-                            right: receiver,
-                            request: Expr {
+                        statements.push(Statement::UnpackVal {
+                            names,
+                            value: Expr {
                                 kind: ExprKind::Name(constructor),
                                 span: start,
                             },
@@ -50,6 +53,15 @@ impl Parser {
                         });
                         continue;
                     }
+                    if names.len() != 2 {
+                        return Err(Diagnostic::new(
+                            start,
+                            "channel and reply bindings require two names",
+                        ));
+                    }
+                    let mut names = names.into_iter();
+                    let sender = names.next().expect("checked pair binding");
+                    let receiver = names.next().expect("checked pair binding");
                     if constructor != "request_channel"
                         && !matches!(constructor.as_str(), "channel" | "reply")
                     {

@@ -136,7 +136,7 @@ pub(super) fn body_can_spawn(body: &Body, effects: &HashMap<String, bool>) -> bo
         Statement::ChannelVal { capacity, .. } | Statement::RequestChannelVal { capacity, .. } => {
             expr(capacity, effects)
         }
-        Statement::RequestUnpackVal { request, .. } => expr(request, effects),
+        Statement::UnpackVal { value, .. } => expr(value, effects),
         Statement::With { value, body, .. } => {
             expr(value, effects) || body_can_spawn(body, effects)
         }
@@ -266,7 +266,7 @@ impl Scan<'_> {
             | Statement::Expr(value) => self.expr(value),
             Statement::ChannelVal { capacity, .. }
             | Statement::RequestChannelVal { capacity, .. } => self.expr(capacity),
-            Statement::RequestUnpackVal { request, .. } => self.expr(request),
+            Statement::UnpackVal { value, .. } => self.expr(value),
             Statement::With { value, body, .. } => {
                 self.expr(value);
                 self.body(body);

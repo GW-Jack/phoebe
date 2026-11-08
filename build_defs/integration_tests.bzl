@@ -290,6 +290,15 @@ def integration_tests(rust_test):
     )
 
     rust_test(
+        name = "source_product_unpack_tests",
+        crate_root = "tests/source_product_unpack.rs",
+        srcs = ["tests/source_product_unpack.rs", "examples/product_unpack.phoebe"],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
         name = "source_replies_tests",
         crate_root = "tests/source_replies.rs",
         srcs = ["tests/source_replies.rs", "examples/reply_exchange.phoebe"],

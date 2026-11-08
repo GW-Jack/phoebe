@@ -139,10 +139,9 @@ pub enum Statement {
         capacity: Expr,
         span: Span,
     },
-    RequestUnpackVal {
-        value: (String, Span),
-        right: (String, Span),
-        request: Expr,
+    UnpackVal {
+        names: Vec<(String, Span)>,
+        value: Expr,
         span: Span,
     },
     Spawn {

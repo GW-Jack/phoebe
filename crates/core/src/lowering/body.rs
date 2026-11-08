@@ -186,29 +186,61 @@ impl Lowerer<'_> {
                     locals.insert(sender.0.clone(), Binding::Val(send_value));
                     locals.insert(receiver.0.clone(), Binding::Val(receive_value));
                 }
-                Statement::RequestUnpackVal {
-                    value,
-                    right,
-                    request,
-                    span,
-                } => {
-                    for (name, name_span) in [value, right] {
-                        if locals.contains_key(name) || value.0 == right.0 {
+                Statement::UnpackVal { names, value, span } => {
+                    for (index, (name, name_span)) in names.iter().enumerate() {
+                        if locals.contains_key(name)
+                            || names[..index].iter().any(|(prior, _)| prior == name)
+                        {
                             return Err(Diagnostic::new(
                                 *name_span,
                                 format!("duplicate local {name}"),
                             ));
                         }
                     }
-                    let (request, ty) = self.expr(request, locals)?;
-                    self.require(ty, Type::RequestI64, *span)?;
+                    let (owner, ty) = self.expr(value, locals)?;
+                    let (field_types, request) = match ty {
+                        Type::RequestI64 => (vec![Type::I64, Type::ReplyToI64], true),
+                        Type::Data(id) if !self.data[id.0].fields.is_empty() => (
+                            self.data[id.0]
+                                .fields
+                                .iter()
+                                .map(|(_, ty)| *ty)
+                                .collect::<Vec<_>>(),
+                            false,
+                        ),
+                        _ => {
+                            return Err(Diagnostic::new(
+                                *span,
+                                "unpack requires a request or nominal product",
+                            ));
+                        }
+                    };
+                    if names.len() != field_types.len() {
+                        return Err(Diagnostic::new(
+                            *span,
+                            format!("unpack requires {} binding name(s)", field_types.len()),
+                        ));
+                    }
                     let next = self.block();
-                    let value_param = self.block_param(next, Type::I64);
-                    let right_param = self.block_param(next, Type::ReplyToI64);
-                    self.terminate(Terminator::RequestUnpack { request, next });
+                    let params = field_types
+                        .into_iter()
+                        .map(|ty| self.block_param(next, ty))
+                        .collect::<Vec<_>>();
+                    self.terminate(if request {
+                        Terminator::RequestUnpack {
+                            request: owner,
+                            next,
+                        }
+                    } else {
+                        Terminator::ProductUnpack {
+                            product: owner,
+                            next,
+                        }
+                    });
                     self.current = next;
-                    locals.insert(value.0.clone(), Binding::Val(value_param));
-                    locals.insert(right.0.clone(), Binding::Val(right_param));
+                    for ((name, _), param) in names.iter().zip(params) {
+                        locals.insert(name.clone(), Binding::Val(param));
+                    }
                 }
                 Statement::Spawn { child, args, span } => {
                     let result_id = self.resource_result_id(*span)?;

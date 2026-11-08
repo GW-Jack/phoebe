@@ -91,23 +91,22 @@ fn statement(a: &Statement, b: &Statement, delta: isize) -> bool {
                 && span(*asp, *bsp, delta)
         }
         (
-            Statement::RequestUnpackVal {
-                value: av,
-                right: ar,
-                request: aq,
+            Statement::UnpackVal {
+                names: an,
+                value: aq,
                 span: asp,
             },
-            Statement::RequestUnpackVal {
-                value: bv,
-                right: br,
-                request: bq,
+            Statement::UnpackVal {
+                names: bn,
+                value: bq,
                 span: bsp,
             },
         ) => {
-            av.0 == bv.0
-                && span(av.1, bv.1, delta)
-                && ar.0 == br.0
-                && span(ar.1, br.1, delta)
+            an.len() == bn.len()
+                && an
+                    .iter()
+                    .zip(bn)
+                    .all(|(a, b)| a.0 == b.0 && span(a.1, b.1, delta))
                 && expr(aq, bq, delta)
                 && span(*asp, *bsp, delta)
         }

@@ -1,0 +1,9 @@
+data Pair { left: I64, right: I64 }
+data Envelope { pair: Pair, bonus: I64 }
+
+fn main() -> I64 {
+  val envelope = Envelope(Pair(19, 22), 1);
+  val (pair, bonus) = envelope.unpack();
+  val (left, right) = pair.unpack();
+  left + right + bonus
+}
