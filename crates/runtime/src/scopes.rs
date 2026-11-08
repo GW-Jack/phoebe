@@ -155,7 +155,7 @@ impl Context<'_> {
             };
             ScopeId { slot, generation }
         } else {
-            if self.scheduler.scopes.len() - 1 >= self.scheduler.max_scopes {
+            if self.scheduler.scopes.len() > self.scheduler.max_scopes {
                 return Err("task scope capacity exhausted".into());
             }
             self.scheduler
