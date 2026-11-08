@@ -21,7 +21,7 @@ sit atop this graph.
   shape-shared generic instance planner.
 - `phoebe-frame`: suspension liveness and physical frame layout.
 - `phoebe-native`: Cranelift JIT, object emission, direct and retained codegen,
-  and isolated JIT emission for planned generic instances.
+  and isolated JIT/object emission for planned generic instances.
 - Root `phoebe`: compatibility facade and CLI.
 
 Within Syntax, `syntax/ast.rs` defines the public tree and `syntax/lexer.rs`

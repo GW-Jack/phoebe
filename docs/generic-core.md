@@ -112,12 +112,14 @@ shapes, and direct return-buffer decision. It deduplicates equal shapes,
 including a scalar and an opaque communication right when both use one word,
 and resolves generic callees transitively. Borrowed references cannot
 instantiate an owning binder. Recursive generic call graphs are rejected.
-`phoebe-native::generic` now emits the planned instances through Cranelift
-JIT. Tests execute scalar identity, branch, and transitive call bodies, plus
-zero-width `Unit`; a wide-product call verifies the caller-owned return-buffer
-path. Moves and scalar copies alias existing SSA values, generating no
-explicit copy instruction. This emitter does not yet connect ordinary source
-call sites, produce standalone objects, or supply a persistent object-cache
-key. The current IR has no suspension, hidden runtime context, or dictionary
+`phoebe-native::generic` now emits the planned instances through one Cranelift
+body generator for JIT and object modules. Tests execute scalar identity,
+branch, and transitive call bodies, plus zero-width `Unit`; a wide-product
+call verifies the caller-owned return-buffer path. A generated object links
+with a C entry and runs the transitive call without the compiler process.
+Moves and scalar copies alias existing SSA values, generating no explicit
+copy instruction. This emitter does not yet connect ordinary Phoebe source
+call sites or supply a persistent object-cache key. The current IR has no
+suspension, hidden runtime context, or dictionary
 operations; adding any of them requires extending the sharing key and its
 soundness argument before emission.

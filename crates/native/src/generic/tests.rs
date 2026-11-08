@@ -1,5 +1,6 @@
 use phoebe_abi::Shapes;
 use phoebe_core::{DataDef, DataId, Program, Type as ConcreteType};
+use std::process::Command;
 
 use super::*;
 
@@ -110,4 +111,55 @@ fn wide_generic_call_uses_the_direct_return_buffer_abi() {
     let executable = compile_jit(&planner, root).unwrap();
     assert_eq!(executable.instance_count(), 2);
     assert!(executable.clif().contains("stack_addr"));
+}
+
+#[test]
+fn standalone_object_runs_transitive_generic_call() {
+    let generic = source("fn identity<T>(x: T) -> T = x\nfn through<U>(x: U) -> U = identity(x)");
+    let concrete = Program {
+        data: vec![],
+        functions: vec![],
+    };
+    let shapes = Shapes::new(&concrete).unwrap();
+    let mut planner = Planner::new(&generic, &shapes, host_target_abi().unwrap()).unwrap();
+    let root = planner.plan(1, &[ConcreteType::I64]).unwrap();
+    let object = compile_object(&planner, root).unwrap();
+    assert!(!object.is_empty());
+    let directory = std::env::temp_dir().join(format!(
+        "phoebe-generic-object-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let object_path = directory.join("generic.o");
+    let wrapper_path = directory.join("main.c");
+    let executable_path = directory.join("generic-test");
+    std::fs::write(&object_path, object).unwrap();
+    std::fs::write(
+        &wrapper_path,
+        "extern long long phoebe_generic_entry(long long);\nint main(void) { return phoebe_generic_entry(41) == 41 ? 0 : 1; }\n",
+    )
+    .unwrap();
+    let link = Command::new("cc")
+        .arg(&wrapper_path)
+        .arg(&object_path)
+        .arg("-o")
+        .arg(&executable_path)
+        .output()
+        .unwrap();
+    assert!(
+        link.status.success(),
+        "{}",
+        String::from_utf8_lossy(&link.stderr)
+    );
+    let run = Command::new(&executable_path).output().unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    std::fs::remove_dir_all(directory).unwrap();
 }

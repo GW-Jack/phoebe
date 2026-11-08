@@ -60,7 +60,9 @@ shapes. `docs/generic-core.md` explains the additional proof and ABI work
 needed for generic functions to share native bodies by shape. A transient
 instance planner now groups the verified generic subset by target ABI shape;
 Cranelift JIT emission runs the first identity, branch, and generic-call
-subset. Ordinary source calls and standalone generic emission remain open.
+subset. The same emitter can produce a linkable object; a standalone smoke
+test executes a transitive generic call. Ordinary source calls and compiler
+build integration remain open.
 The isolated `phoebe-generic-core` crate now verifies a first opaque-owner
 IR slice. `phoebe generic-ir <file>` lowers identity, forwarding, and
 generic-to-generic calls into printable parametric Core. The module verifier

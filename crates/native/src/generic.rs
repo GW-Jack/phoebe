@@ -1,4 +1,4 @@
-//! Cranelift JIT emission for the currently verified, non-suspending
+//! Cranelift emission for the currently verified, non-suspending
 //! parametric Core subset. Each planned ABI instance is defined once.
 
 use std::fmt::Write as _;
@@ -11,6 +11,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use cranelift_native::builder as native_builder;
+use cranelift_object::{ObjectBuilder, ObjectModule};
 use phoebe_abi::generic::{Instance, Planner, TargetAbi};
 use phoebe_abi::{Part, Shape};
 use phoebe_generic_core::{self as generic_core, Operation, Terminator, Type};
@@ -42,13 +43,15 @@ impl GenericJitExecutable {
     }
 }
 
-fn native_isa() -> Result<std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>, String> {
+fn native_isa(
+    is_pic: bool,
+) -> Result<std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>, String> {
     let mut flags = settings::builder();
     flags
         .set("use_colocated_libcalls", "false")
         .map_err(|error| error.to_string())?;
     flags
-        .set("is_pic", "false")
+        .set("is_pic", if is_pic { "true" } else { "false" })
         .map_err(|error| error.to_string())?;
     native_builder()
         .map_err(|error| format!("unsupported native host: {error}"))?
@@ -57,7 +60,7 @@ fn native_isa() -> Result<std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>,
 }
 
 pub fn host_target_abi() -> Result<TargetAbi, String> {
-    let isa = native_isa()?;
+    let isa = native_isa(false)?;
     Ok(TargetAbi {
         triple: isa.triple().to_string(),
         direct_register_results: if isa.name() == "aarch64" { 8 } else { 2 },
@@ -131,11 +134,19 @@ fn get(values: &[Option<Vec<ClValue>>], value: generic_core::ValueId) -> Vec<ClV
 
 /// Emit every planned instance through the same direct-call convention as
 /// concrete Core. The planner has already checked bodies and call shapes.
-pub fn compile_jit(planner: &Planner<'_>, entry: usize) -> Result<GenericJitExecutable, String> {
-    let isa = native_isa()?;
+fn emit_into<M: Module>(
+    module: &mut M,
+    planner: &Planner<'_>,
+    entry: usize,
+    export_entry: bool,
+) -> Result<(Vec<FuncId>, String), String> {
     let host = TargetAbi {
-        triple: isa.triple().to_string(),
-        direct_register_results: if isa.name() == "aarch64" { 8 } else { 2 },
+        triple: module.isa().triple().to_string(),
+        direct_register_results: if module.isa().name() == "aarch64" {
+            8
+        } else {
+            2
+        },
     };
     if planner.target() != &host {
         return Err("generic planner target does not match the native host ABI".into());
@@ -144,17 +155,17 @@ pub fn compile_jit(planner: &Planner<'_>, entry: usize) -> Result<GenericJitExec
     if entry >= instances.len() {
         return Err(format!("invalid generic entry instance {entry}"));
     }
-    let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
     let pointer = module.target_config().pointer_type();
     let mut ids = Vec::with_capacity(instances.len());
     for (index, instance) in instances.iter().enumerate() {
         let signature = signature(&module, instance);
+        let (symbol, linkage) = if export_entry && index == entry {
+            ("phoebe_generic_entry".to_string(), Linkage::Export)
+        } else {
+            (format!("phoebe_generic_{index}"), Linkage::Local)
+        };
         let id = module
-            .declare_function(
-                &format!("phoebe_generic_{index}"),
-                Linkage::Local,
-                &signature,
-            )
+            .declare_function(&symbol, linkage, &signature)
             .map_err(|error| error.to_string())?;
         ids.push((id, signature));
     }
@@ -306,15 +317,33 @@ pub fn compile_jit(planner: &Planner<'_>, entry: usize) -> Result<GenericJitExec
             .map_err(|error| error.to_string())?;
         module.clear_context(&mut context);
     }
+    Ok((ids.into_iter().map(|(id, _)| id).collect(), clif))
+}
+
+pub fn compile_jit(planner: &Planner<'_>, entry: usize) -> Result<GenericJitExecutable, String> {
+    let isa = native_isa(false)?;
+    let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
+    let (ids, clif) = emit_into(&mut module, planner, entry, false)?;
     module
         .finalize_definitions()
         .map_err(|error| error.to_string())?;
     Ok(GenericJitExecutable {
         module,
-        entry: ids[entry].0,
+        entry: ids[entry],
         clif,
-        instance_count: instances.len(),
+        instance_count: ids.len(),
     })
+}
+
+/// Emit a linkable object with one exported `phoebe_generic_entry` symbol.
+/// The object uses the same flattened calling convention as the JIT path.
+pub fn compile_object(planner: &Planner<'_>, entry: usize) -> Result<Vec<u8>, String> {
+    let isa = native_isa(true)?;
+    let builder = ObjectBuilder::new(isa, "phoebe_generic", default_libcall_names())
+        .map_err(|error| error.to_string())?;
+    let mut module = ObjectModule::new(builder);
+    emit_into(&mut module, planner, entry, true)?;
+    module.finish().emit().map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
