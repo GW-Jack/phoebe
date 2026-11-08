@@ -382,6 +382,30 @@ fn retained_generic_call_runs_in_jit_and_standalone() {
 }
 
 #[test]
+fn owned_generic_call_runs_inside_live_lexical_loan() {
+    let path = temp_generic_project();
+    let executable = path.join("lexical-generic");
+    for prefix in ["", "yield; "] {
+        let source = format!(
+            "fn identity<T>(value: T) -> T = value\n\
+             fn main() -> I64 {{ var x = 41; with r = &mut x {{ {prefix}r = r + identity(1); }}; x }}"
+        );
+        let linked = core::lower_linked_checked(&syntax::parse(&source).unwrap()).unwrap();
+        assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
+        assert_eq!(native::run_linked(&linked, "main", &[]).unwrap(), 42);
+        native::build_executable_linked(&linked, &executable).unwrap();
+        assert_eq!(
+            std::process::Command::new(&executable)
+                .output()
+                .unwrap()
+                .stdout,
+            b"42\n"
+        );
+    }
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
 fn direct_root_spawns_a_retained_generic_child() {
     let ast = syntax::parse(
         "fn identity<T>(value: T) -> T = value\n\

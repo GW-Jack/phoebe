@@ -162,8 +162,9 @@ ordinary helper call may occur under a live loan, including a suspendable
 callee receiving its alias, after root and freeze checks. Incoming borrowed
 scalar parameters can be reborrowed in a shorter lexical region; the verifier
 tracks their external root and freezes an exclusive parent until its child
-ends. Other suspension points, generic calls under a live loan, and general
-failure unwind remain open. See `docs/lexical-regions.md`.
+ends. Owned-argument generic calls can run under a live loan; generic bodies
+still cannot suspend or borrow. Other suspension points and general failure
+unwind remain open. See `docs/lexical-regions.md`.
 The CLI now carries an immutable `CheckedProgram` from final Core verification
 through interpreter, JIT, object emission, and the optional object cache.
 Native child emission accepts a borrowed verification token rather than

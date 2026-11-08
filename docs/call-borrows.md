@@ -51,6 +51,7 @@ lexical `with` region. Core treats that parameter as an external storage root,
 freezes an exclusive parent while its child is live, and checks aliases when
 the child is forwarded to another call. The caller retains the owned place
 across suspension; the callee retains the reference value. Generic calls
-under a live loan remain unsupported.
+under a live loan are supported for the current owned-argument,
+non-suspending generic subset.
 Field or element borrows, region inference, and cross-task references remain
 unsupported. See `docs/lexical-regions.md` for that boundary.

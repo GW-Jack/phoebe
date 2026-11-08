@@ -7,7 +7,9 @@ explicit type binders can lower identity, `val` moves, and simple `if`
 forwarding and generic-to-generic calls into this IR through
 `phoebe generic-ir <file>`. The current source subset infers call binders
 from named owned arguments. Concrete call sites and native emission work for
-the non-suspending subset. Dictionaries remain open.
+the non-suspending subset. These owned-argument calls may occur while a
+concrete caller holds a lexical scalar loan; the generic body cannot receive
+that reference. Dictionaries remain open.
 
 ## The sharing rule
 

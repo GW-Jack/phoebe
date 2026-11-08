@@ -52,12 +52,13 @@ across yield, an exclusive loan across channel receive, and an alias forwarded
 to a suspendable helper. At a call, Core compares direct and lexical argument
 roots, rejects an exclusive overlap or a frozen parent, and allows compatible
 shared borrows. A deadlocked helper under a live loan has an interpreter and
-native unwind test. An incoming borrowed scalar parameter can parent a shorter
+native unwind test. An owned-argument generic call can run under a live loan;
+the current generic body subset cannot suspend or accept borrowed arguments.
+An incoming borrowed scalar parameter can parent a shorter
 lexical loan. The verifier gives it an external root identity, freezes an
 exclusive parent while the child is active, and checks call aliases against
 that identity. Across suspension, the caller retains the place and the callee
-retains its reference value. Generic calls under a live lexical loan remain
-restricted.
+retains its reference value.
 
 Ordinary ownership and capability-flow verification remain separate passes over the same explicit
 Core edges. The native frame plan must extend the stable-root check to remaining

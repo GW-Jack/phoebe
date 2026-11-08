@@ -308,12 +308,6 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                             }
                         }
                     }
-                    Operation::GenericCall { .. } if state.active.iter().any(|live| *live) => {
-                        return Err(format!(
-                            "{}: generic call inside lexical loan is not yet supported",
-                            function.name
-                        ));
-                    }
                     _ => {}
                 }
             }
