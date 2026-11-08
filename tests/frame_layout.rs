@@ -35,6 +35,20 @@ fn only_suspendable_functions_receive_frames() {
 }
 
 #[test]
+fn suspension_propagates_through_long_call_chain_without_marking_unrelated_code() {
+    let mut source = String::new();
+    for id in 0..127 {
+        source.push_str(&format!("fn f{id}() -> I64 = f{}()\n", id + 1));
+    }
+    source.push_str("fn f127() -> I64 { yield; 42 }\n");
+    source.push_str("fn detached() -> I64 = 7\n");
+    let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+    let suspendable = frame_layout::suspendable_functions(&program).unwrap();
+    assert_eq!(suspendable, [vec![true; 128], vec![false]].concat());
+    assert_eq!(frame_layout::analyze(&program).unwrap().len(), 128);
+}
+
+#[test]
 fn suspension_spills_only_future_values_and_live_places() {
     let source = r#"
 fn wait(receiver: Receiver<I64>) -> I64 {

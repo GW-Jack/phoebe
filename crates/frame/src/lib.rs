@@ -7,6 +7,7 @@ use phoebe_core::{
     self as core, BlockId, CallArg, Function, FunctionId, Operation, PlaceId, Program, Terminator,
     ValueId,
 };
+use std::collections::VecDeque;
 use std::fmt::Write;
 use std::ops::Range;
 
@@ -263,41 +264,41 @@ pub fn suspendable_functions_linked(linked: &core::CheckedLinkedProgram) -> Vec<
 }
 
 fn suspendable_functions_verified(program: &Program) -> Vec<bool> {
-    let mut suspendable = program
-        .functions
-        .iter()
-        .map(|function| {
-            function.blocks.iter().any(|block| {
-                matches!(
-                    block.terminator,
-                    Terminator::ChannelSend { .. }
-                        | Terminator::ChannelReceive { .. }
-                        | Terminator::RequestSend { .. }
-                        | Terminator::RequestReceive { .. }
-                        | Terminator::ReplyReceive { .. }
-                        | Terminator::Yield { .. }
-                        | Terminator::ScopeJoin { .. }
-                )
-            })
-        })
-        .collect::<Vec<_>>();
-    loop {
-        let mut changed = false;
-        for (id, function) in program.functions.iter().enumerate() {
-            if suspendable[id] {
-                continue;
-            }
-            if function.blocks.iter().flat_map(|block| &block.instructions).any(|instruction| {
-                matches!(&instruction.operation, Operation::Call(target, _) if suspendable[target.0])
-            }) {
+    let mut callers = vec![Vec::new(); program.functions.len()];
+    let mut suspendable = vec![false; program.functions.len()];
+    let mut ready = VecDeque::new();
+    for (id, function) in program.functions.iter().enumerate() {
+        for block in &function.blocks {
+            if matches!(
+                block.terminator,
+                Terminator::ChannelSend { .. }
+                    | Terminator::ChannelReceive { .. }
+                    | Terminator::RequestSend { .. }
+                    | Terminator::RequestReceive { .. }
+                    | Terminator::ReplyReceive { .. }
+                    | Terminator::Yield { .. }
+                    | Terminator::ScopeJoin { .. }
+            ) && !suspendable[id]
+            {
                 suspendable[id] = true;
-                changed = true;
+                ready.push_back(id);
             }
-        }
-        if !changed {
-            return suspendable;
+            for instruction in &block.instructions {
+                if let Operation::Call(target, _) = &instruction.operation {
+                    callers[target.0].push(id);
+                }
+            }
         }
     }
+    while let Some(callee) = ready.pop_front() {
+        for &caller in &callers[callee] {
+            if !suspendable[caller] {
+                suspendable[caller] = true;
+                ready.push_back(caller);
+            }
+        }
+    }
+    suspendable
 }
 
 /// Derive the point-local retained state for each function that can park.

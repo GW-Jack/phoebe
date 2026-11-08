@@ -29,10 +29,12 @@ continuing the caller. Reinvoking the call would repeat ownership transfer
 and any earlier effects.
 
 An explicit `yield;` spills live state and resumes at the following block,
-without replaying the yield. Let `S₀` be functions containing
-`channel.send.i64`, `channel.receive.i64`, or `yield`. The set of suspendable
+without replaying the yield. Let `S₀` be functions containing a channel or
+request send/receive, reply receive, scope join, or `yield`. The set of suspendable
 functions is the least fixed
-point `S = S₀ ∪ {f | f calls g and g ∈ S}`. `spawn` does not place its parent
+point `S = S₀ ∪ {f | f calls g and g ∈ S}`. The analysis builds reverse call
+edges and visits each reached function once, so a long call chain does not
+require repeated whole-program scans. `spawn` does not place its parent
 in `S`: the child is a separate task. A function outside `S` keeps its
 ordinary direct calling convention. Runtime-context use is a different
 property; channel creation and spawn need a context but do not by themselves
@@ -69,7 +71,8 @@ also contains its transitive `borrow.begin` root place. This makes the
 reference address point into the stable frame instead of a poll invocation's
 stack slot. Hand-built checked Core exercises this through `yield`, channel
 send, both channel receive outcomes, and an ordinary call to a suspendable
-callee. Other terminator suspension operations still reject live lexical loans.
+callee. Source tests also cover request and reply traffic and scope joins
+with live lexical loans.
 
 `phoebe frames <file|project>` prints those point-local and union sets. For
 `examples/channel_exchange.phoebe`, it shows two send points in `producer`,
