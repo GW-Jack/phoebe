@@ -40,6 +40,8 @@ impl Parser {
                 kind: TokenKind::Int(value),
                 span,
             } => {
+                let value = i64::try_from(value)
+                    .map_err(|_| Diagnostic::new(span, "integer literal exceeds I64"))?;
                 self.pos += 1;
                 Expr {
                     kind: ExprKind::Int(value),
@@ -223,11 +225,30 @@ impl Parser {
                 span,
             } => {
                 self.pos += 1;
-                let rhs = self.expr(11)?;
-                let end = rhs.span;
-                Expr {
-                    kind: ExprKind::Neg(Box::new(rhs)),
-                    span: span.join(end),
+                if let Token {
+                    kind: TokenKind::Int(value),
+                    span: magnitude,
+                } = self.current().clone()
+                    && value > i64::MAX as u64
+                {
+                    if value != (i64::MAX as u64) + 1 {
+                        return Err(Diagnostic::new(
+                            span.join(magnitude),
+                            "integer literal exceeds I64",
+                        ));
+                    }
+                    self.pos += 1;
+                    Expr {
+                        kind: ExprKind::Int(i64::MIN),
+                        span: span.join(magnitude),
+                    }
+                } else {
+                    let rhs = self.expr(11)?;
+                    let end = rhs.span;
+                    Expr {
+                        kind: ExprKind::Neg(Box::new(rhs)),
+                        span: span.join(end),
+                    }
                 }
             }
             Token {

@@ -66,7 +66,9 @@ an explicit independent nominal copy and records a `copy.value` cost site.
 Source `spawn` records a `task.create` cost site with its source span; this
 ledger identifies static sites rather than counting successful creations.
 Recursion is rejected until task stacks have safe growth limits. Arithmetic
-wraps at 64 bits in both interpreter and native execution. `phoebe check`,
+wraps at 64 bits in both interpreter and native execution. The full signed
+`I64` range is expressible, including `-9223372036854775808`; adjacent
+out-of-range literals receive a source-located diagnostic. `phoebe check`,
 `phoebe ir`, `phoebe cost`, `phoebe run`, and
 `phoebe build <file> -o <output>` work on that subset.
 `Option<T>` is a concrete built-in sum with `None` and `Some(T)`, including

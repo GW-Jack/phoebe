@@ -32,6 +32,28 @@ fn arithmetic_wraps_identically() {
 }
 
 #[test]
+fn minimum_i64_literal_and_adjacent_overflows_are_consistent() {
+    let source = "fn main() -> I64 = -9223372036854775808 + 1";
+    let program = compile(source);
+    assert_eq!(program.interpret("main", &[]).unwrap(), i64::MIN + 1);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), i64::MIN + 1);
+    let path = std::env::temp_dir().join(format!("phoebe-min-i64-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, format!("{}\n", i64::MIN + 1).as_bytes());
+
+    for literal in ["9223372036854775808", "-9223372036854775809"] {
+        let source = format!("fn main() -> I64 = {literal}");
+        let error = syntax::parse(&source).unwrap_err();
+        assert_eq!(&source[error.span.start..error.span.end], literal);
+        assert_eq!(error.message, "integer literal exceeds I64");
+        assert!(error.render(&source).starts_with("1:20:"));
+    }
+}
+
+#[test]
 fn comparison_family_preserves_types_and_native_results() {
     let source = r#"
 data Choice { A, B }

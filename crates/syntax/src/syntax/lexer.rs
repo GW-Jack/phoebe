@@ -21,7 +21,7 @@ pub(super) enum TokenKind {
     True,
     False,
     Ident(String),
-    Int(i64),
+    Int(u64),
     LParen,
     RParen,
     LBrace,
