@@ -75,13 +75,17 @@ not a deployed cache format or a stable external ABI.
 
 `phoebe::ProjectCompilerSession` extends this with in-process checked-Core
 function-body reuse. The compiler compares the old and new function ASTs,
-allowing a uniform source-span shift. It also requires every nominal data
-shape and function signature to retain its position and ABI. If the global
-layout changes, it lowers all functions afresh. A body edit recompiles that
+allowing a uniform source-span shift. Nominal data shapes must retain their
+positions and existing function signatures must retain their ABI. Functions
+may move to new indices when another function is inserted or removed: reused
+Core calls and spawn targets are remapped by function name. A nominal layout
+change still lowers all functions afresh. A body edit recompiles that
 function while unchanged functions can reuse verified bodies, even within
 the edited module. Core reruns its program-wide verifiers before publishing the new session state;
 failed compilation preserves the old state. `CompileReport` counts reused
 functions. Cached spans are rebased to the new combined source positions.
+Adding a private helper therefore need not re-lower existing checked bodies;
+native object reuse remains governed by its separate codegen keys.
 Core uses one traversal for every instruction and terminator source span,
 including `spawn` and `scope.join`. The native direct-object cache removes
 those spans from its function key, so moving unchanged source text does not

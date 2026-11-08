@@ -612,6 +612,80 @@ fn compiler_session_reuses_checked_core_bodies_and_rebases_spans() {
 }
 
 #[test]
+fn private_helper_insertion_preserves_checked_bodies_and_remaps_calls() {
+    let path = temp_project();
+    let mut session = ProjectCompilerSession::new();
+    let (before, _) = session.compile(&path).unwrap();
+    let old_count = before.functions.len();
+    let math = path.join("math.phoebe");
+    let source = std::fs::read_to_string(&math).unwrap();
+    let inserted = format!("fn helper() -> I64 = 0\n{source}");
+    std::fs::write(&math, &inserted).unwrap();
+    let (after, report) = session.compile(&path).unwrap();
+    assert_eq!(report.load.changed_interfaces, Vec::<String>::new());
+    assert_eq!(report.load.affected, ["math"]);
+    assert_eq!(report.reused_core_functions, old_count);
+    assert_eq!(after.functions.len(), old_count + 1);
+    assert_eq!(after.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&after, "main", &[]).unwrap(), 42);
+    let fresh = project::load(&path).unwrap();
+    assert_eq!(
+        after.to_string(),
+        core::lower(&fresh.ast).unwrap().to_string()
+    );
+    let executable = path.join("app");
+    native::build_executable(&after, &executable).unwrap();
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+
+    std::fs::write(&math, source).unwrap();
+    let (restored, report) = session.compile(&path).unwrap();
+    assert_eq!(report.reused_core_functions, old_count);
+    assert_eq!(restored.interpret("main", &[]).unwrap(), 42);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn inserting_a_function_remaps_reused_spawn_targets() {
+    let before = "fn child() -> I64 = 0\n\
+        fn launch() -> Result<I64, ResourceError> { spawn child()?; Result<I64, ResourceError>.Ok(42) }\n\
+        fn main() -> I64 = when (launch()) { Result<I64, ResourceError>.Ok(value) -> { value }, Result<I64, ResourceError>.Err(error) -> { 0 } }\n";
+    let after = format!("fn helper() -> I64 = 0\n{before}");
+    let old_ast = syntax::parse(before).unwrap();
+    let old_core = core::lower(&old_ast).unwrap();
+    let new_ast = syntax::parse(&after).unwrap();
+    let delta = "fn helper() -> I64 = 0\n".len() as isize;
+    let (reused, count) = core::lower_reusing(
+        &new_ast,
+        &old_ast,
+        &old_core,
+        &[false, true, true, true],
+        &[0, delta, delta, delta],
+    )
+    .unwrap();
+    assert_eq!(count, 3);
+    assert_eq!(
+        reused.to_string(),
+        core::lower(&new_ast).unwrap().to_string()
+    );
+    assert_eq!(reused.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&reused, "main", &[]).unwrap(), 42);
+}
+
+#[test]
+fn removing_a_referenced_function_cannot_reuse_its_caller() {
+    let old = "fn helper() -> I64 = 42\nfn main() -> I64 = helper()\n";
+    let new = "fn main() -> I64 = helper()\n";
+    let old_ast = syntax::parse(old).unwrap();
+    let old_core = core::lower(&old_ast).unwrap();
+    let new_ast = syntax::parse(new).unwrap();
+    let delta = -("fn helper() -> I64 = 42\n".len() as isize);
+    let error = core::lower_reusing(&new_ast, &old_ast, &old_core, &[true], &[delta]).unwrap_err();
+    assert!(error.message.contains("unknown function"), "{error:?}");
+}
+
+#[test]
 fn core_rejects_stale_reuse_hints() {
     let old_ast = syntax::parse("fn main() -> I64 = 1\n").unwrap();
     let old_core = core::lower(&old_ast).unwrap();

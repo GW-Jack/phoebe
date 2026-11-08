@@ -297,8 +297,9 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
 
 /// Reuse verified function bodies when their ASTs match under a source offset.
 /// The caller supplies reuse hints and span offsets. Core checks those hints,
-/// every global data shape, and every function signature before accepting a
-/// cached body. An unsafe hint falls back to lowering that body afresh.
+/// every global data shape, and existing function signatures before accepting
+/// a cached body. Function IDs in reused calls and spawns are remapped after
+/// insertions or removals. An unsafe hint falls back to lowering afresh.
 pub fn lower_reusing(
     ast: &syntax::Program,
     previous_ast: &syntax::Program,
@@ -329,6 +330,51 @@ fn rebase_function(function: &mut Function, delta: isize) -> Result<(), Diagnost
         *span = Span { start, end };
     });
     error.map_or(Ok(()), Err)
+}
+
+fn same_signature(cached: &Function, signature: &FunctionSignature) -> bool {
+    cached.return_type == signature.return_type
+        && cached.param_modes
+            == signature
+                .params
+                .iter()
+                .map(|(mode, _)| *mode)
+                .collect::<Vec<_>>()
+        && cached.blocks.first().is_some_and(|entry| {
+            entry.params.len() == signature.params.len()
+                && entry
+                    .params
+                    .iter()
+                    .zip(&signature.params)
+                    .all(|(value, (mode, ty))| {
+                        cached.value_types.get(value.0).copied()
+                            == Some(match mode {
+                                ParamMode::Own => *ty,
+                                ParamMode::Shared => Type::RefI64,
+                                ParamMode::Exclusive => Type::RefMutI64,
+                            })
+                    })
+        })
+}
+
+fn remap_function_targets(function: &mut Function, old_to_new: &[Option<FunctionId>]) -> bool {
+    for block in &mut function.blocks {
+        for instruction in &mut block.instructions {
+            if let Operation::Call(target, _) = &mut instruction.operation {
+                let Some(mapped) = old_to_new.get(target.0).copied().flatten() else {
+                    return false;
+                };
+                *target = mapped;
+            }
+        }
+        if let Terminator::Spawn { child, .. } = &mut block.terminator {
+            let Some(mapped) = old_to_new.get(child.0).copied().flatten() else {
+                return false;
+            };
+            *child = mapped;
+        }
+    }
+    true
 }
 
 fn lower_internal(
@@ -573,55 +619,63 @@ fn lower_internal(
             ));
         }
     }
+    let previous_indices = reuse
+        .map(|(previous_ast, _, _, _)| {
+            previous_ast
+                .functions
+                .iter()
+                .enumerate()
+                .map(|(index, function)| (function.name.as_str(), index))
+                .collect::<HashMap<_, _>>()
+        })
+        .unwrap_or_default();
     let stable_environment = reuse.is_some_and(|(previous_ast, previous, _, _)| {
-        previous_ast.functions.len() == ast.functions.len()
-            && previous.data == data
-            && previous.functions.len() == ast.functions.len()
-            && ast.functions.iter().enumerate().all(|(index, source)| {
-                let signature = &functions[&source.name];
-                let cached = &previous.functions[index];
-                cached.name == source.name
-                    && cached.return_type == signature.return_type
-                    && cached.param_modes
-                        == signature
-                            .params
-                            .iter()
-                            .map(|(mode, _)| *mode)
-                            .collect::<Vec<_>>()
-                    && cached.blocks[0].params.len() == signature.params.len()
-                    && cached.blocks[0].params.iter().zip(&signature.params).all(
-                        |(value, (mode, ty))| {
-                            cached.value_types[value.0]
-                                == match mode {
-                                    ParamMode::Own => *ty,
-                                    ParamMode::Shared => Type::RefI64,
-                                    ParamMode::Exclusive => Type::RefMutI64,
-                                }
-                        },
-                    )
-            })
+        previous.data == data
+            && previous.functions.len() == previous_ast.functions.len()
+            && previous_ast
+                .functions
+                .iter()
+                .zip(&previous.functions)
+                .all(|(source, cached)| {
+                    source.name == cached.name
+                        && functions
+                            .get(&source.name)
+                            .is_none_or(|signature| same_signature(cached, signature))
+                })
     });
+    let old_to_new = reuse
+        .map(|(_, previous, _, _)| {
+            previous
+                .functions
+                .iter()
+                .map(|function| functions.get(&function.name).map(|signature| signature.id))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let mut reused = 0;
     let mut lowered = Vec::with_capacity(ast.functions.len());
     let mut cleanup_sites = Vec::with_capacity(ast.functions.len());
     for (index, function) in ast.functions.iter().enumerate() {
         if stable_environment
+            && let Some(&previous_index) = previous_indices.get(function.name.as_str())
             && previous_spawn_analysis.as_ref().is_some_and(|previous| {
-                previous.checkpointed[index] == spawn_analysis.checkpointed[index]
+                previous.checkpointed[previous_index] == spawn_analysis.checkpointed[index]
             })
             && previous_spawn_analysis.as_ref().is_some_and(|previous| {
-                previous.call_effects[index] == spawn_analysis.call_effects[index]
+                previous.call_effects[previous_index] == spawn_analysis.call_effects[index]
             })
             && let Some((previous_ast, previous, reusable, deltas)) = reuse
             && reusable[index]
             && phoebe_syntax::same_function_with_shift(
-                &previous_ast.functions[index],
+                &previous_ast.functions[previous_index],
                 function,
                 deltas[index],
             )
         {
-            let mut cached = previous.functions[index].clone();
-            if rebase_function(&mut cached, deltas[index]).is_ok() {
+            let mut cached = previous.functions[previous_index].clone();
+            if remap_function_targets(&mut cached, &old_to_new)
+                && rebase_function(&mut cached, deltas[index]).is_ok()
+            {
                 lowered.push(cached);
                 cleanup_sites.push(CleanupSites {
                     returns: Vec::new(),

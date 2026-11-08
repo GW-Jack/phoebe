@@ -1,5 +1,6 @@
 //! In-process project compilation with checked function-body reuse.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -46,20 +47,25 @@ impl ProjectCompilerSession {
                 start: function.name_span.start,
             })
             .collect::<Vec<_>>();
+        let previous = self
+            .previous_functions
+            .iter()
+            .map(|function| {
+                (
+                    (function.module.as_str(), function.name.as_str()),
+                    function.start,
+                )
+            })
+            .collect::<HashMap<_, _>>();
         let (reusable, deltas): (Vec<_>, Vec<_>) = current
             .iter()
-            .enumerate()
-            .map(|(index, function)| {
-                let Some(previous) = self.previous_functions.get(index) else {
+            .map(|function| {
+                let Some(&start) =
+                    previous.get(&(function.module.as_str(), function.name.as_str()))
+                else {
                     return (false, 0);
                 };
-                if previous.module != function.module || previous.name != function.name {
-                    return (false, 0);
-                }
-                match (
-                    isize::try_from(function.start),
-                    isize::try_from(previous.start),
-                ) {
+                match (isize::try_from(function.start), isize::try_from(start)) {
                     (Ok(now), Ok(before)) => (true, now - before),
                     _ => (false, 0),
                 }

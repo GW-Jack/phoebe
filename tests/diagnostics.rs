@@ -24,11 +24,13 @@ fn nearby_malformed_programs_return_diagnostics() {
         include_str!("../examples/spawn_pair.phoebe"),
         include_str!("../examples/nested_variant.phoebe"),
         include_str!("../examples/try.phoebe"),
+        include_str!("../examples/boolean_short_circuit.phoebe"),
     ];
-    let insertions: [&[u8]; 12] = [
-        b"(", b")", b"{", b"}", b"?", b".", b"\n", b"fn ", b"val ", b"0", b"&mut ", b"send",
+    let insertions: [&[u8]; 15] = [
+        b"(", b")", b"{", b"}", b"?", b".", b"\n", b"fn ", b"val ", b"0", b"&mut ", b"send", b"&&",
+        b"||", b"!",
     ];
-    let replacements = b" (){}?.,:;=+*-&<>0az\n";
+    let replacements = b" (){}?.,:;=+*-&|!<>0az\n";
     let mut state = 0x1c5e_8532_72db_9f31_u64;
     for seed in seeds {
         check_source(seed);

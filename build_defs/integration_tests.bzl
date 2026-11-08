@@ -171,6 +171,7 @@ def integration_tests(rust_test):
         crate_root = "tests/diagnostics.rs",
         srcs = [
             "tests/diagnostics.rs",
+            "examples/boolean_short_circuit.phoebe",
             "examples/spawn_pair.phoebe",
             "examples/nested_variant.phoebe",
             "examples/try.phoebe",
