@@ -101,6 +101,16 @@ pending message. A successful send copies the closed bytes once and moves
 only the active rights. For an empty `Unit` message, the queue still records
 occupancy so boundedness is preserved.
 
+The native typed queue C ABI now accepts a concrete type ID, flattened width,
+and a versioned structural right plan at creation. The plan is a preorder word
+tree: version `1`, then `Empty = [0]`, `ReplyTo(part) = [1, part]`,
+`Sequence(children) = [2, count, children...]`, or
+`Tagged(tag, arms) = [3, tag, count, arms...]`. The runtime validates the full
+encoding before publishing either endpoint. Native send and receive shims pass
+the same type ID and a contiguous word slice; success moves active rights,
+while pending and closed sends retain the caller's words. Generated Cranelift
+calls to these shims remain to be implemented.
+
 ## Implementation gates
 
 1. Keep the backend-independent `MessageLayout` in `phoebe_layout` as the source
@@ -111,7 +121,7 @@ occupancy so boundedness is preserved.
    recursive layout rejection. Native integration tests cover
    equal-width type distinction, active-arm offsets, and a tagged runtime
    transfer. The interpreter's concrete request and checked typed channel
-   creation paths request it; native creation remains open.
+   creation paths request it; generated native creation remains open.
 2. Extend the runtime's preallocated typed slots beyond `ReplyTo<I64>` rights.
    The current path checks type identity and width, validates all active reply
    rights before changing any owner, transfers multiple rights on enqueue and

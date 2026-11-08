@@ -21,7 +21,10 @@ rights, tagged inactive payloads, rejection, discard, and two-task parking.
 The existing checked Core `Request<I64>` operations now use the typed queue
 through the request runtime adapters, including in JIT and standalone output.
 Descriptor generation for a checked ABI layout is available in
-`phoebe_native`; general generated `channel<T>` operations and other
+`phoebe_native`. Versioned native typed-channel shims now create a queue from
+that descriptor and send or receive flattened words. A host ABI witness moves
+a reply right through the queue and checks closed-send retention. Generated
+Cranelift calls for general `channel<T>` and other
 transferable right kinds are the next steps in
 [`typed-messages.md`](typed-messages.md).
 

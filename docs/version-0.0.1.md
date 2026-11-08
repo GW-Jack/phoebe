@@ -348,6 +348,9 @@ Checked Core also verifies and interprets a typed channel family for nominal
 messages. Source `channel<T>` lowers concrete nominal sends and receives,
 including a closed send that returns an aggregate with its reply right intact.
 Native typed code generation remains open.
+The native runtime now exposes versioned typed-channel create, send, and
+receive shims. A host ABI witness passes a two-word message with a reply right
+through them and checks that a closed send retains its original right.
 Runtime task failure now cancels remaining scope tasks immediately after
 closing the failing task's rights. A host regression catches the case where
 the parent retained another sender and would otherwise report a deadlock

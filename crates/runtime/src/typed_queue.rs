@@ -2,6 +2,9 @@
 
 use super::{REQUEST_I64_MESSAGE_TYPE_ID, ReplyToken, ResourceError};
 
+mod wire;
+pub(crate) use wire::{MAX_WORDS as NATIVE_PLAN_MAX_WORDS, PlanDecodeError};
+
 /// Runtime ownership path for the first transferable typed-message right.
 /// The compiler will derive this from the ABI close plan. Closed messages use
 /// `Empty`; each tagged arm visits only its active payload.

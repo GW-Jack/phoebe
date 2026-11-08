@@ -295,6 +295,8 @@ pub use native_reply::*;
 pub use native_scope::{phoebe_scope_enter, phoebe_scope_join};
 mod native_request;
 pub use native_request::*;
+mod native_typed;
+pub use native_typed::*;
 
 #[derive(Debug)]
 pub enum RequestReceiveResult {
