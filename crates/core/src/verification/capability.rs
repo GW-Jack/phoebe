@@ -132,6 +132,13 @@ pub(crate) fn capability_graph(
                             );
                         }
                     }
+                    if let Some(result) = instruction.result {
+                        actions.extend(
+                            slots[result.0]
+                                .clone()
+                                .map(|slot| CapAction::Create(capability_flow::Slot(slot))),
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -144,13 +151,16 @@ pub(crate) fn capability_graph(
             Terminator::Yield { resume, .. } | Terminator::ScopeJoin { resume, .. } => {
                 vec![edge(CapTarget::Suspend(resume.0), vec![])]
             }
-            Terminator::Return(_) => vec![edge(
+            Terminator::Return(value) => vec![edge(
                 if cleanup_return[block_id] {
                     CapTarget::Failure
                 } else {
                     CapTarget::Return
                 },
-                vec![],
+                slots[value.0]
+                    .clone()
+                    .map(|slot| CapAction::Transfer(capability_flow::Slot(slot)))
+                    .collect(),
             )],
             Terminator::Jump(target, args) => {
                 let moves = args

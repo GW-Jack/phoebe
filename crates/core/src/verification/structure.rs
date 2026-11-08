@@ -144,6 +144,7 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
             }
         }
     }
+    let capability_layout = capability_layout::Layout::new(&program.data);
     for function in &program.functions {
         for ty in function
             .value_types
@@ -183,6 +184,16 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
         {
             return Err(format!(
                 "{}: references cannot be stored in places",
+                function.name
+            ));
+        }
+        if function
+            .place_types
+            .iter()
+            .any(|ty| capability_layout.leaves(*ty) > 0)
+        {
+            return Err(format!(
+                "{}: capability products cannot be stored in places yet",
                 function.name
             ));
         }
@@ -459,7 +470,12 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
                 for operand in operands(&instruction.operation) {
                     check_use(operand, block_id, index)?;
                 }
-                let expected = op_type(program, function, &instruction.operation)?;
+                let expected = op_type(
+                    program,
+                    function,
+                    &instruction.operation,
+                    &capability_layout,
+                )?;
                 if instruction
                     .result
                     .map(|result| function.value_types[result.0])

@@ -66,13 +66,18 @@ reserves a contiguous slot range for each SSA value of that type. The slot
 number is separate from `ValueId`: adding scalar calculations cannot grow
 the ownership state. Core flow now moves all leaves together for nominal
 `move`, product construction, owned calls, spawn transfer, and block arguments.
+An owned call transfers every argument leaf to the callee and creates every
+leaf in its returned value; a return transfers its result leaves out of the
+function. Synthetic Core flow tests check both transitions and detect a
+returned product that the caller fails to dispose of.
 Whole-product `product.unpack` now moves each leaf to its corresponding field
 block parameter. `close.caps` closes all of an owned product's leaves in
 reverse field order. The ABI computes each leaf's flattened component offset,
 including the nested reply right in `Request<I64>`. The product field
-restriction remains in force until implicit cleanup, place and variant
-restrictions, owned returns, and end-to-end capability-product execution are
-verified together. For a sum,
+restriction remains in force until implicit cleanup and end-to-end
+capability-product execution are verified together. Core rejects copying or
+partially projecting a product with rights, and rejects storing one in a
+mutable place until owning place operations are specified. For a sum,
 the active variant determines which paths exist, so the verifier must either
 split on its tag or carry a tagged slot state. A blind union of variant slots
 would report nonexistent rights; a blind intersection would lose live ones.

@@ -6,6 +6,7 @@ pub(super) fn op_type(
     program: &Program,
     function: &Function,
     operation: &Operation,
+    layout: &capability_layout::Layout,
 ) -> Result<Option<Type>, String> {
     let ty = |id: ValueId| function.value_types[id.0];
     match operation {
@@ -22,6 +23,9 @@ pub(super) fn op_type(
         Operation::Copy(value) => {
             if !matches!(ty(*value), Type::Data(_)) {
                 return Err("copy requires a nominal value".into());
+            }
+            if layout.leaves(ty(*value)) > 0 {
+                return Err("copy cannot duplicate communication capabilities".into());
             }
             Ok(Some(ty(*value)))
         }
@@ -54,6 +58,9 @@ pub(super) fn op_type(
             let Type::Data(id) = ty(*value) else {
                 return Err("field access requires a product".into());
             };
+            if layout.leaves(ty(*value)) > 0 {
+                return Err("capability product requires whole-product unpack".into());
+            }
             program
                 .data
                 .get(id.0)
@@ -279,5 +286,46 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
                 CallArg::Borrow(_, _) => None,
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capability_product_cannot_be_copied_or_partially_projected() {
+        let program = Program {
+            data: vec![DataDef {
+                name: "Envelope".into(),
+                variants: vec![],
+                payloads: vec![],
+                fields: vec![("sender".into(), Type::SenderI64), ("n".into(), Type::I64)],
+            }],
+            functions: vec![],
+        };
+        let function = Function {
+            name: "f".into(),
+            param_modes: vec![],
+            return_type: Type::I64,
+            value_types: vec![Type::Data(DataId(0))],
+            place_types: vec![],
+            loan_regions: vec![],
+            blocks: vec![],
+        };
+        let layout = capability_layout::Layout::new(&program.data);
+        assert_eq!(
+            op_type(&program, &function, &Operation::Copy(ValueId(0)), &layout),
+            Err("copy cannot duplicate communication capabilities".into())
+        );
+        assert_eq!(
+            op_type(
+                &program,
+                &function,
+                &Operation::Field(ValueId(0), 1),
+                &layout
+            ),
+            Err("capability product requires whole-product unpack".into())
+        );
     }
 }

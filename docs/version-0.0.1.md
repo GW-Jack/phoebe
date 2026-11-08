@@ -240,9 +240,12 @@ direct Cranelift path, retained task path, and standalone output agree on
 nested closed-product unpack. Product declarations containing capabilities
 remain rejected. Source `product.close_caps();` now consumes a nominal
 product; closed products generate no native close calls or runtime context.
-Core and ABI code enumerate nested capability leaves in reverse field order,
-but implicit cleanup, owned returns, and capability-product execution still
-need end-to-end validation.
+Core and ABI code enumerate nested capability leaves in reverse field order.
+The abstract ownership graph now transfers all leaves on return and creates
+all leaves in an owned call result; synthetic tests check that a caller must
+dispose of the result. The Core verifier rejects copying, partial field
+projection, and mutable place storage of a product with rights. Implicit
+cleanup and capability-product execution still need end-to-end validation.
 The bounded two-request Maude model explores both successful retry and
 receiver closure during a pending send. It checks encoded queue/right
 ownership and terminal cleanup over 25 states; it is not a proof about the

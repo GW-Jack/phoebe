@@ -236,3 +236,90 @@ fn structural_close_disposes_product_leaves_in_reverse_field_order() {
     );
     capability_flow::verify(&graph).unwrap();
 }
+
+#[test]
+fn owned_call_and_return_transfer_every_product_leaf() {
+    let data = vec![DataDef {
+        name: "Pair".into(),
+        variants: vec![],
+        payloads: vec![],
+        fields: vec![
+            ("sender".into(), Type::SenderI64),
+            ("reply".into(), Type::ReplyToI64),
+        ],
+    }];
+    let pair = Type::Data(DataId(0));
+    let span = Span { start: 0, end: 0 };
+    let callee = Function {
+        name: "identity".into(),
+        param_modes: vec![syntax::ParamMode::Own],
+        return_type: pair,
+        value_types: vec![pair],
+        place_types: vec![],
+        loan_regions: vec![],
+        blocks: vec![Block {
+            params: vec![ValueId(0)],
+            instructions: vec![],
+            terminator: Terminator::Return(ValueId(0)),
+        }],
+    };
+    let layout = Layout::new(&data);
+    let (graph, _) = capability_graph(&callee, &layout, &[], &[]).unwrap();
+    assert_eq!(
+        graph.blocks[0].exits[0].actions,
+        vec![
+            CapAction::Transfer(capability_flow::Slot(0)),
+            CapAction::Transfer(capability_flow::Slot(1)),
+        ]
+    );
+    capability_flow::verify(&graph).unwrap();
+
+    let mut caller = Function {
+        name: "caller".into(),
+        param_modes: vec![syntax::ParamMode::Own],
+        return_type: Type::I64,
+        value_types: vec![pair, pair, Type::I64],
+        place_types: vec![],
+        loan_regions: vec![],
+        blocks: vec![Block {
+            params: vec![ValueId(0)],
+            instructions: vec![
+                Instruction {
+                    result: Some(ValueId(1)),
+                    operation: Operation::Call(FunctionId(0), vec![CallArg::Value(ValueId(0))]),
+                    span,
+                },
+                Instruction {
+                    result: None,
+                    operation: Operation::CloseCaps(ValueId(1)),
+                    span,
+                },
+                Instruction {
+                    result: Some(ValueId(2)),
+                    operation: Operation::Const(42),
+                    span,
+                },
+            ],
+            terminator: Terminator::Return(ValueId(2)),
+        }],
+    };
+    let (graph, _) = capability_graph(&caller, &layout, &[], &[]).unwrap();
+    assert_eq!(
+        graph.blocks[0].actions[..4],
+        [
+            CapAction::Transfer(capability_flow::Slot(0)),
+            CapAction::Transfer(capability_flow::Slot(1)),
+            CapAction::Create(capability_flow::Slot(2)),
+            CapAction::Create(capability_flow::Slot(3)),
+        ]
+    );
+    capability_flow::verify(&graph).unwrap();
+
+    caller.blocks[0].instructions.remove(1);
+    let (graph, _) = capability_graph(&caller, &layout, &[], &[]).unwrap();
+    assert!(
+        capability_flow::verify(&graph)
+            .unwrap_err()
+            .contains("normal return leaks")
+    );
+}
