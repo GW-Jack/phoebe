@@ -9,6 +9,10 @@ this backend when `main` can suspend. A direct parent can spawn a suspendable
 child through a separately compiled poll entry; its own calls retain the
 direct ABI. A suspendable function can call an owned-value, direct-only
 helper synchronously using the direct ABI; the helper gets no retained frame.
+A direct helper may spawn a suspendable child even when called from a retained
+function. The poll module includes that child's retained entry in the same
+native closure, including when the helper is reached through other direct
+helpers.
 A suspendable parent can also spawn a direct-only child through a small
 poll-compatible wrapper; the child body stays on the direct ABI.
 The object path uses the same poll lowering as the JIT;

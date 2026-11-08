@@ -180,35 +180,10 @@ fn compile_poll_module<M: Module>(
         return Err("external poll entry requires owned parameters".into());
     }
     let suspendable = frame_layout::suspendable_functions(program)?;
-    let mut reachable = Vec::new();
-    let mut seen = vec![false; program.functions.len()];
-    let mut pending = vec![root];
-    while let Some(id) = pending.pop() {
-        if seen[id.0] {
-            continue;
-        }
-        seen[id.0] = true;
-        reachable.push(id);
-        for instruction in program.functions[id.0]
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instructions)
-        {
-            if let Operation::Call(child, _) = &instruction.operation
-                && suspendable[child.0]
-            {
-                pending.push(*child);
-            }
-        }
-        for block in &program.functions[id.0].blocks {
-            if let Terminator::Spawn { child, .. } = block.terminator
-                && suspendable[child.0]
-            {
-                pending.push(child);
-            }
-        }
-    }
-    reachable.sort_by_key(|id| id.0);
+    let graph = reachability::poll_graph(program, root, &suspendable)?;
+    let reachable = graph.retained;
+    let direct = graph.direct;
+    let spawned_from_direct = graph.spawned_from_direct;
     let mut layouts = vec![None; program.functions.len()];
     for layout in frame_word_layouts(program)? {
         let index = layout.function.0;
@@ -220,51 +195,12 @@ fn compile_poll_module<M: Module>(
             .ok_or("retained poll graph contains a direct-only callee")?;
         validate_poll_function(&program.functions[id.0], layout, &layouts)?;
     }
-    let mut direct = vec![false; program.functions.len()];
-    let mut pending_direct = reachable
-        .iter()
-        .flat_map(|id| &program.functions[id.0].blocks)
-        .flat_map(|block| &block.instructions)
-        .filter_map(|instruction| match instruction.operation {
-            Operation::Call(child, _) if !suspendable[child.0] => Some(child),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    pending_direct.extend(
-        reachable
-            .iter()
-            .flat_map(|id| &program.functions[id.0].blocks)
-            .filter_map(|block| match block.terminator {
-                Terminator::Spawn { child, .. } if !suspendable[child.0] => Some(child),
-                _ => None,
-            }),
-    );
-    while let Some(id) = pending_direct.pop() {
-        if direct[id.0] {
-            continue;
-        }
-        direct[id.0] = true;
-        for block in &program.functions[id.0].blocks {
-            for instruction in &block.instructions {
-                if let Operation::Call(child, _) = instruction.operation {
-                    pending_direct.push(child);
-                }
-            }
-            if let Terminator::Spawn { child, .. } = block.terminator {
-                if suspendable[child.0] {
-                    return Err("direct helper spawning a suspendable child is not yet supported in a poll module".into());
-                }
-                pending_direct.push(child);
-            }
-        }
-    }
     let root_layout = layouts[root.0].clone().expect("validated root frame");
     let pointer = module.target_config().pointer_type();
     let shapes = AbiShapes::new(program, pointer)?;
     let context_functions = program.runtime_context_functions();
     let mut clif = String::new();
-    // The direct pass defines direct callees and spawned direct children.
-    // It scans only reachable poll parents for their spawn wrappers.
+    // The direct pass defines direct callees and their spawn wrappers.
     let mut selected = direct.clone();
     for id in &reachable {
         selected[id.0] = true;
@@ -447,6 +383,11 @@ fn compile_poll_module<M: Module>(
                 Some(symbol) => (symbol.to_owned(), Linkage::Export),
                 None => (local_symbol, Linkage::Local),
             }
+        } else if spawned_from_direct[id.0] {
+            (
+                spawn_poll_symbol(&program.functions[id.0].name),
+                Linkage::Local,
+            )
         } else {
             (local_symbol, Linkage::Local)
         };

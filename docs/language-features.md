@@ -19,7 +19,8 @@ Scoped task bodies may return `Unit` instead of a dummy integer.
 Concrete `Option<T>` applications are executable for finite primitive,
 nominal, and capability-bearing payloads. They use `None` and `Some(T)` and
 require exhaustive `when`; capability-bearing applications are affine and
-cannot yet cross `spawn`. `Result<T, E>` follows the same ownership rule;
+can cross `spawn` by transferring the active variant's rights.
+`Result<T, E>` follows the same ownership rule;
 generic function definitions remain a separate compiler milestone.
 
 `trait` describes a small set of named operations. Implementations obey a
@@ -123,7 +124,8 @@ only active, owned fields; it invokes no user destructor and cannot fail.
 The executable subset also accepts `with (a = sender, b = receiver) { ... }`
 for several bare capabilities. It nests the existing single-owner cleanup
 regions, preserving left-to-right binding and reverse-order cleanup. Owned
-aggregates and `close_caps()` remain design targets.
+aggregates and `close_caps()` are executable for finite nominal products and
+concrete capability-bearing `Option` and `Result` values.
 
 ```text
 fn publish(out: Sender<Count>, input: &String)

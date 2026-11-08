@@ -301,7 +301,11 @@ pub(super) fn compile_functions<M: Module>(
                     let id = module
                         .declare_function(
                             &spawn_poll_symbol(&program.functions[child.0].name),
-                            Linkage::Import,
+                            if selected.is_some_and(|set| set[child.0]) {
+                                Linkage::Local
+                            } else {
+                                Linkage::Import
+                            },
                             &signature,
                         )
                         .map_err(|error| error.to_string())?;

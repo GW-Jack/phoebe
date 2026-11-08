@@ -232,7 +232,7 @@ executable. Source now has `request_channel<I64>(capacity)?`,
 JIT, and standalone execution for delivery, closed-send recovery, cleanup,
 resource limits, and a full request queue. The two-request, one-slot example
 retains the second request's nested reply right across a pending send and
-resumes after the first dequeue. Capability-bearing sums remain open. Core now
+resumes after the first dequeue. Core now
 computes static capability leaf paths for acyclic nominal
 products and reserves one ownership slot per leaf in each SSA value. Core
 flow moves all leaves through construction, nominal move, block arguments,
@@ -250,7 +250,7 @@ cleanup emits one structural close per live product, and interpreter, JIT,
 and standalone source tests cover nested close, owned call/return, whole
 unpack, spawn transfer, and resource failure cleanup. Interpreter and JIT
 tests also cover task-limit rejection before product transfer.
-Capability-bearing sums and mutable product places remain unsupported. The
+Mutable product places remain unsupported. The
 finite models and tests do not prove
 correctness of the compiler or generated machine code.
 The bounded two-request Maude model explores both successful retry and
@@ -350,6 +350,10 @@ receive a flattened nominal result without allocating a child frame; the
 helper exchange runs in the interpreter, JIT, and standalone object path.
 A suspendable parent can spawn a direct-only child through a poll-compatible
 wrapper. An executable test parks the parent until that child closes a sender.
+A retained parent can call a chain of direct helpers that spawns a suspendable
+child. The poll module includes that child's entry, and interpreter, JIT, and
+standalone tests cover the transfer and task-limit failure path. A standalone
+poll child may also reach a direct helper that spawns another retained child.
 Core now checks scalar send/receive terminators and derives live-right maps
 for retry suspension. Its interpreter retains frames and places across a
 pending operation, and executes buffered scalar traffic. Core `spawn` now

@@ -184,6 +184,118 @@ fn source_spawn_transfers_endpoint_and_failure_closes_parent_rights() {
 }
 
 #[test]
+fn retained_parent_calls_direct_helpers_that_spawn_a_suspending_child() {
+    let source = r#"
+fn child(maybe: Option<Sender<I64>>) -> Unit {
+  yield;
+  maybe.close_caps();
+}
+
+fn launch(maybe: Option<Sender<I64>>) -> Result<Unit, ResourceError> {
+  spawn child(maybe)?;
+  Result<Unit, ResourceError>.Ok(Unit)
+}
+
+fn forward(maybe: Option<Sender<I64>>) -> Result<Unit, ResourceError> = launch(maybe)
+
+fn run() -> Result<I64, ResourceError> {
+  yield;
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  val maybe = Option<Sender<I64>>.Some(sender);
+  forward(maybe)?;
+  val empty = Option<Sender<I64>>.None;
+  spawn child(empty)?;
+  val outcome = receiver.receive();
+  receiver.close();
+  Result<I64, ResourceError>.Ok(when (outcome) {
+    Receive<I64>.End -> { 42 },
+    Receive<I64>.Value(value) -> { 0 },
+  })
+}
+
+fn main() -> I64 = when (run()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let suspendable = phoebe::frame_layout::suspendable_functions(&program).unwrap();
+    assert!(suspendable[0]);
+    assert!(!suspendable[1]);
+    assert!(!suspendable[2]);
+    assert!(suspendable[3]);
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let limited = ScopeLimits {
+        tasks: 1,
+        ..ScopeLimits::default()
+    };
+    assert_eq!(
+        program.interpret_with_limits("main", &[], limited).unwrap(),
+        0
+    );
+    assert_eq!(
+        native::run_with_limits(&program, "main", &[], limited).unwrap(),
+        0
+    );
+    let path =
+        std::env::temp_dir().join(format!("phoebe-direct-poll-spawn-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn standalone_poll_child_contains_a_direct_helper_spawn_closure() {
+    let source = r#"
+fn grandchild() -> Unit { yield; }
+
+fn launch() -> Result<Unit, ResourceError> {
+  spawn grandchild()?;
+  Result<Unit, ResourceError>.Ok(Unit)
+}
+
+fn child() -> Unit {
+  yield;
+  when (launch()) {
+    Result<Unit, ResourceError>.Ok(value) -> { Unit },
+    Result<Unit, ResourceError>.Err(error) -> { Unit },
+  }
+}
+
+fn start() -> Result<I64, ResourceError> {
+  spawn child()?;
+  Result<I64, ResourceError>.Ok(42)
+}
+
+fn main() -> I64 = when (start()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path =
+        std::env::temp_dir().join(format!("phoebe-poll-child-closure-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
 fn source_spawn_rejects_ownership_and_signature_errors() {
     let missing_question = source().replace("spawn worker(sender)?;", "spawn worker(sender);");
     assert!(
