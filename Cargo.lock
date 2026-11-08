@@ -464,6 +464,7 @@ dependencies = [
  "phoebe-abi",
  "phoebe-core",
  "phoebe-frame",
+ "phoebe-generic-core",
  "phoebe-runtime",
  "phoebe-syntax",
  "sha2",

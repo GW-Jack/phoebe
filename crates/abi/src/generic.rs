@@ -39,6 +39,9 @@ pub struct InstanceCall {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Instance {
     pub key: InstanceKey,
+    /// Representative binder layouts for code generation. They are omitted
+    /// from the sharing key because unused binders cannot affect this IR.
+    pub binders: Vec<Shape>,
     pub calls: Vec<InstanceCall>,
 }
 
@@ -135,6 +138,14 @@ impl<'a> Planner<'a> {
         &self.instances
     }
 
+    pub fn module(&self) -> &generic_core::Module {
+        self.module
+    }
+
+    pub fn target(&self) -> &TargetAbi {
+        &self.target
+    }
+
     fn key(&self, function: usize, type_args: &[ConcreteType]) -> Result<InstanceKey, String> {
         let definition = self
             .module
@@ -170,7 +181,7 @@ impl<'a> Planner<'a> {
     pub fn plan(&mut self, function: usize, type_args: &[ConcreteType]) -> Result<usize, String> {
         enum Work {
             Discover(usize, Vec<ConcreteType>),
-            Finish(InstanceKey, Vec<(usize, usize, InstanceKey)>),
+            Finish(InstanceKey, Vec<Shape>, Vec<(usize, usize, InstanceKey)>),
         }
         let root = self.key(function, type_args)?;
         let mut work = vec![Work::Discover(function, type_args.to_vec())];
@@ -203,12 +214,16 @@ impl<'a> Planner<'a> {
                             }
                         }
                     }
-                    work.push(Work::Finish(key, calls));
+                    let binders = args
+                        .iter()
+                        .map(|ty| self.shapes.shape(*ty))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    work.push(Work::Finish(key, binders, calls));
                     for (callee, concrete_args) in children.into_iter().rev() {
                         work.push(Work::Discover(callee, concrete_args));
                     }
                 }
-                Work::Finish(key, pending_calls) => {
+                Work::Finish(key, binders, pending_calls) => {
                     if self.by_key.contains_key(&key) {
                         continue;
                     }
@@ -229,6 +244,7 @@ impl<'a> Planner<'a> {
                     let index = self.instances.len();
                     self.instances.push(Instance {
                         key: key.clone(),
+                        binders,
                         calls,
                     });
                     self.by_key.insert(key, index);

@@ -28,6 +28,7 @@ mod build_session;
 mod cache;
 mod close;
 mod codegen;
+pub mod generic;
 mod poll;
 mod reachability;
 mod runtime_imports;

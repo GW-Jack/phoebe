@@ -90,8 +90,10 @@ returns once per definition without a concrete ABI shape. Source
 generic-to-generic calls lower through `phoebe generic-ir <file>` to printable
 parametric Core. A transient ABI planner groups concrete substitutions of
 that verified IR by transport and target return convention, including
-transitive generic calls. Concrete source call sites and native emission remain
-open. The scalar
+transitive generic calls. Cranelift JIT emits those planned instances in an
+isolated native API; tests execute scalar calls and verify wide return-buffer
+code generation. Concrete source call sites and standalone generic emission
+remain open. The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures
 remain design sketches. `docs/performance-baseline.md` records a

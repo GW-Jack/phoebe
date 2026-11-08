@@ -59,12 +59,13 @@ native poll ABI work.
 shapes. `docs/generic-core.md` explains the additional proof and ABI work
 needed for generic functions to share native bodies by shape. A transient
 instance planner now groups the verified generic subset by target ABI shape;
-native emission remains open.
+Cranelift JIT emission runs the first identity, branch, and generic-call
+subset. Ordinary source calls and standalone generic emission remain open.
 The isolated `phoebe-generic-core` crate now verifies a first opaque-owner
 IR slice. `phoebe generic-ir <file>` lowers identity, forwarding, and
 generic-to-generic calls into printable parametric Core. The module verifier
 checks call substitutions and owner transfer. Concrete call sites and native
-emission are still unimplemented.
+CLI integration are still unimplemented.
 
 Build and run the compiler with Buck2:
 
