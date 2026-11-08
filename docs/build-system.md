@@ -4,7 +4,8 @@ Phoebe has ten library crates and a root facade/CLI. Dependencies point in
 one direction:
 
 `package` and `syntax` feed `project`. `syntax`, `capability`, and `runtime`
-feed `core`; `core` feeds `abi` and `frame`; `abi`, `core`, `frame`, `runtime`,
+feed `core`; `core` feeds `abi` and `frame`; `generic-core` also feeds `abi`;
+`abi`, `core`, `frame`, `runtime`,
 and `syntax` feed `native`. `capability` and `syntax` feed the isolated
 `generic-core` verifier and source subset lowerer. The root facade and CLI
 sit atop this graph.
@@ -16,7 +17,8 @@ sit atop this graph.
 - `phoebe-runtime`: scheduler, channels, reply rights, and native ABI.
 - `phoebe-core`: checked IR, lowering, verification, and interpreter.
 - `phoebe-generic-core`: experimental parametric IR and opaque-owner verifier.
-- `phoebe-abi`: backend independent flattened transport shapes.
+- `phoebe-abi`: backend independent flattened transport shapes and a transient
+  shape-shared generic instance planner.
 - `phoebe-frame`: suspension liveness and physical frame layout.
 - `phoebe-native`: Cranelift JIT, object emission, direct and retained codegen.
 - Root `phoebe`: compatibility facade and CLI.

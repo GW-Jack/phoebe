@@ -1,9 +1,9 @@
 rust_library(
     name = "phoebe_abi",
     crate_root = "src/lib.rs",
-    srcs = ["src/lib.rs"],
+    srcs = ["src/lib.rs", "src/generic.rs"],
     edition = "2024",
-    deps = ["//crates/core:phoebe_core"],
+    deps = ["//crates/core:phoebe_core", "//crates/generic-core:phoebe_generic_core"],
     visibility = ["PUBLIC"],
     tests = [":unit_tests"],
 )
@@ -11,10 +11,11 @@ rust_library(
 rust_test(
     name = "unit_tests",
     crate_root = "src/lib.rs",
-    srcs = ["src/lib.rs"],
+    srcs = ["src/lib.rs", "src/generic.rs"],
     edition = "2024",
     deps = [
         "//crates/core:phoebe_core",
+        "//crates/generic-core:phoebe_generic_core",
         "//crates/syntax:phoebe_syntax",
     ],
 )

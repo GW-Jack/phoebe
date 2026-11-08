@@ -82,13 +82,16 @@ deeply nested expressions, types, and branches. This is bounded test evidence,
 not a proof for every input.
 `phoebe clif <file>` prints the pre-legalization Cranelift IR.
 `phoebe shapes <file|project>` prints checked transport signatures for
-inspecting prospective generic shape classes; generic definitions and
-dictionaries remain open under `docs/generic-core.md`. An isolated
+inspecting prospective generic shape classes; dictionaries remain open under
+`docs/generic-core.md`. An isolated
 parametric Core verifier checks opaque affine moves, block arguments, and
 returns once per definition without a concrete ABI shape. Source
 `fn identity<T>(value: T) -> T = value`, simple forwarding branches, and
 generic-to-generic calls lower through `phoebe generic-ir <file>` to printable
-parametric Core. Concrete call sites and native emission remain open. The scalar
+parametric Core. A transient ABI planner groups concrete substitutions of
+that verified IR by transport and target return convention, including
+transitive generic calls. Concrete source call sites and native emission remain
+open. The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures
 remain design sketches. `docs/performance-baseline.md` records a
@@ -420,8 +423,9 @@ borrowed places and forwarded references to suspendable callees. The caller
 frame owns the borrowed place until the child returns; tests cover exclusive
 and shared borrows across receive. General reference regions remain open.
 Backend independent transport shapes now live in `crates/abi`; native lowering
-and frame word counts use those same shapes. Equal shapes do not yet imply a
-shared generic body or capability behavior.
+and frame word counts use those same shapes. A parametric body with only
+opaque moves and owned calls can share a planned instance across equal ABI
+shapes. Equal shapes alone do not imply identical capability behavior.
 The bounded Maude retained-borrow model checks one nested call chain with
 park, wake, return, and ordered failure unwind. It does not prove the Rust
 implementation or generated code.

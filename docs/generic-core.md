@@ -105,7 +105,14 @@ call shape, dictionary layout, target, and compiler version.
 - An invalid generic body is diagnosed at its definition. No number of call
   sites makes verification time proportional to the full body size.
 
-The current `phoebe shapes` command exposes concrete transport signatures.
-It is a diagnostic for this work, not yet a generic sharing key: hidden
-context, suspension, body effects, dictionary layout, and target ABI still
-need to be added before native bodies can be shared.
+`phoebe-abi::generic::Planner` now verifies the parametric module once and
+creates a transient instance graph for concrete type substitutions. Its key
+contains the function identity, target triple, parameter/result transport
+shapes, and direct return-buffer decision. It deduplicates equal shapes,
+including a scalar and an opaque communication right when both use one word,
+and resolves generic callees transitively. Borrowed references cannot
+instantiate an owning binder. Recursive generic call graphs are rejected.
+This planner does not emit native code or supply a persistent object-cache
+key. The current IR has no suspension, hidden runtime context, or dictionary
+operations; adding any of them requires extending the sharing key and its
+soundness argument before emission.

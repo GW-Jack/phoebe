@@ -6,6 +6,8 @@
 
 use phoebe_core::{Program, Type};
 
+pub mod generic;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Part {
     Byte,

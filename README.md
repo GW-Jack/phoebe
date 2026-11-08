@@ -57,7 +57,9 @@ describe the current IR and its limits.
 native poll ABI work.
 `phoebe shapes <file|project>` prints checked parameter and result transport
 shapes. `docs/generic-core.md` explains the additional proof and ABI work
-needed before generic functions can share native bodies by shape.
+needed for generic functions to share native bodies by shape. A transient
+instance planner now groups the verified generic subset by target ABI shape;
+native emission remains open.
 The isolated `phoebe-generic-core` crate now verifies a first opaque-owner
 IR slice. `phoebe generic-ir <file>` lowers identity, forwarding, and
 generic-to-generic calls into printable parametric Core. The module verifier

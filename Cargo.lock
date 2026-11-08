@@ -419,6 +419,7 @@ name = "phoebe-abi"
 version = "0.0.1"
 dependencies = [
  "phoebe-core",
+ "phoebe-generic-core",
  "phoebe-syntax",
 ]
 
