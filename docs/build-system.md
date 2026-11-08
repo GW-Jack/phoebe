@@ -1,11 +1,11 @@
 # Build graph
 
-Phoebe has eight library crates and a root facade/CLI. Dependencies point in
+Phoebe has nine library crates and a root facade/CLI. Dependencies point in
 one direction:
 
 `package` and `syntax` feed `project`. `syntax`, `capability`, and `runtime`
-feed `core`; `core` feeds `frame`; `core`, `frame`, `runtime`, and `syntax`
-feed `native`. The root facade and CLI depend on these crates.
+feed `core`; `core` feeds `abi` and `frame`; `abi`, `core`, `frame`, `runtime`,
+and `syntax` feed `native`. The root facade and CLI sit atop this graph.
 
 - `phoebe-syntax`: spans, diagnostics, lexer, parser, and source AST.
 - `phoebe-package`: content-pinned local dependency graph and lockfile.
@@ -13,6 +13,7 @@ feed `native`. The root facade and CLI depend on these crates.
 - `phoebe-capability`: independent capability-flow facts and verifier.
 - `phoebe-runtime`: scheduler, channels, reply rights, and native ABI.
 - `phoebe-core`: checked IR, lowering, verification, and interpreter.
+- `phoebe-abi`: backend independent flattened transport shapes.
 - `phoebe-frame`: suspension liveness and physical frame layout.
 - `phoebe-native`: Cranelift JIT, object emission, direct and retained codegen.
 - Root `phoebe`: compatibility facade and CLI.

@@ -252,7 +252,7 @@ fn compile_poll_module<M: Module>(
     }
     let root_layout = layouts[root.0].clone().expect("validated root frame");
     let pointer = module.target_config().pointer_type();
-    let shapes = AbiShapes::new(program, pointer);
+    let shapes = AbiShapes::new(program, pointer)?;
     let context_functions = program.runtime_context_functions();
     let mut clif = String::new();
     // The direct pass defines direct callees and spawned direct children.
@@ -815,7 +815,8 @@ fn compile_poll_module<M: Module>(
                                     });
                                 }
                             }
-                            while parts.len() < shapes.data[id.0].len() {
+                            let width = shapes.types(Type::Data(*id)).len();
+                            while parts.len() < width {
                                 parts.push(builder.ins().iconst(types::I64, 0));
                             }
                             Some(parts)

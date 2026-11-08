@@ -1,0 +1,12 @@
+[package]
+name = "phoebe-abi"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+
+[dependencies]
+phoebe-core = { path = "../core" }
+
+[dev-dependencies]
+phoebe-syntax = { path = "../syntax" }

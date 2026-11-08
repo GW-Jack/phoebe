@@ -51,53 +51,32 @@ pub(super) fn emit_direct_call(
 }
 
 pub(super) struct AbiShapes {
-    pub(super) data: Vec<Vec<cranelift_codegen::ir::Type>>,
+    shapes: phoebe_abi::Shapes,
     pointer_type: cranelift_codegen::ir::Type,
 }
 
 impl AbiShapes {
-    pub(super) fn new(program: &Program, pointer_type: cranelift_codegen::ir::Type) -> Self {
-        let mut shapes = Self {
-            data: Vec::with_capacity(program.data.len()),
+    pub(super) fn new(
+        program: &Program,
+        pointer_type: cranelift_codegen::ir::Type,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            shapes: phoebe_abi::Shapes::new(program)?,
             pointer_type,
-        };
-        for definition in &program.data {
-            let shape = if !definition.fields.is_empty() {
-                definition
-                    .fields
-                    .iter()
-                    .flat_map(|(_, ty)| shapes.types(*ty))
-                    .collect()
-            } else {
-                let words = definition
-                    .payloads
-                    .iter()
-                    .flatten()
-                    .map(|ty| shapes.types(*ty).len())
-                    .max()
-                    .unwrap_or(0);
-                vec![types::I64; 1 + words]
-            };
-            shapes.data.push(shape);
-        }
-        shapes
+        })
     }
 
     pub(super) fn types(&self, ty: Type) -> Vec<cranelift_codegen::ir::Type> {
-        match ty {
-            Type::I64 => vec![types::I64],
-            Type::Bool => vec![types::I8],
-            Type::Data(id) => self.data[id.0].clone(),
-            Type::RefI64 | Type::RefMutI64 => vec![self.pointer_type],
-            Type::SenderI64
-            | Type::ReceiverI64
-            | Type::ReplyToI64
-            | Type::ReplyReceiverI64
-            | Type::RequestSenderI64
-            | Type::RequestReceiverI64
-            | Type::ResourceError => vec![types::I64],
-            Type::RequestI64 => vec![types::I64, types::I64],
-        }
+        self.shapes
+            .parts(ty)
+            .expect("checked Core type has an ABI shape")
+            .iter()
+            .map(|part| match part {
+                phoebe_abi::Part::Byte => types::I8,
+                phoebe_abi::Part::Word => types::I64,
+                phoebe_abi::Part::Address => self.pointer_type,
+            })
+            .collect()
     }
 }
 
@@ -105,7 +84,7 @@ impl AbiShapes {
 /// flattened shapes used by direct Cranelift calls and block arguments.
 pub fn frame_word_layouts(program: &Program) -> Result<Vec<FrameWords>, String> {
     let frames = frame_layout::analyze(program)?;
-    let shapes = AbiShapes::new(program, types::I64);
+    let shapes = AbiShapes::new(program, types::I64)?;
     frames
         .iter()
         .map(|frame| frame_layout::word_layout(program, frame, |ty| shapes.types(ty).len()))
@@ -147,7 +126,7 @@ pub(super) fn compile_functions<M: Module>(
     }
     let pointer_type = module.target_config().pointer_type();
     let register_results = direct_register_results(module);
-    let shapes = AbiShapes::new(program, pointer_type);
+    let shapes = AbiShapes::new(program, pointer_type)?;
     let runtime_imports = if uses_runtime {
         let mut create_signature = module.make_signature();
         create_signature.params.extend([
@@ -482,7 +461,7 @@ pub(super) fn compile_functions<M: Module>(
                                     });
                                 }
                             }
-                            let words = shapes.data[id.0].len() - 1;
+                            let words = shapes.types(Type::Data(*id)).len() - 1;
                             while components.len() < 1 + words {
                                 components.push(builder.ins().iconst(types::I64, 0));
                             }

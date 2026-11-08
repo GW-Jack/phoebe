@@ -6,6 +6,7 @@ rust-version = "1.95"
 license = "Apache-2.0"
 
 [dependencies]
+phoebe-abi = { path = "../abi" }
 phoebe-core = { path = "../core" }
 phoebe-frame = { path = "../frame" }
 phoebe-runtime = { path = "../runtime" }

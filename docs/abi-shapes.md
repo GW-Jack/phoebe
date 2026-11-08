@@ -2,6 +2,13 @@
 
 Status: implementation note, not a stable external ABI.
 
+`crates/abi` now owns a backend independent `Shape` made of byte, word, and
+address components. Cranelift maps those components to its scalar types;
+the retained frame layout counts them as words. Distinct nominal types can
+have equal transport shapes. This establishes a reusable shape key for
+generic compilation, but shape equality alone grants no right to inspect,
+copy, or close a value. Generic bodies and dictionaries are not yet emitted.
+
 Core IR assigns one nominal type to each value. Cranelift lowering expands a
 value into an ordered sequence of scalar components at function, call, return,
 and block boundaries. The current shapes are:

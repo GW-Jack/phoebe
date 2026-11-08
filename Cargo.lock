@@ -413,6 +413,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phoebe-abi"
+version = "0.0.1"
+dependencies = [
+ "phoebe-core",
+ "phoebe-syntax",
+]
+
+[[package]]
 name = "phoebe-capability"
 version = "0.0.1"
 
@@ -442,6 +450,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "cranelift-object",
+ "phoebe-abi",
  "phoebe-core",
  "phoebe-frame",
  "phoebe-runtime",
