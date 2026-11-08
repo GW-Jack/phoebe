@@ -152,6 +152,8 @@ pub(super) fn decode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use phoebe_runtime::{ReplyTo, TypedReceiveResult, TypedSendResult};
+    use std::task::Poll;
 
     fn data() -> Vec<DataDef> {
         vec![
@@ -227,5 +229,65 @@ mod tests {
         let shapes = Shapes::new(&program).unwrap();
         assert!(decode(&program.data, &shapes, Type::Data(DataId(0)), &[2, 0]).is_err());
         assert!(decode(&program.data, &shapes, Type::Bool, &[2]).is_err());
+    }
+
+    struct AggregateRoundTrip;
+
+    impl Task for AggregateRoundTrip {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            let program = Program {
+                data: data(),
+                functions: vec![],
+            };
+            let catalog = phoebe_message::MessageCatalog::new(&program)?;
+            let ty = Type::Data(DataId(1));
+            let descriptor = catalog.descriptor(ty)?;
+            let (sender, receiver) = context
+                .typed_right_channel(1, descriptor.type_id, descriptor.width, descriptor.rights)
+                .map_err(|error| error.to_string())?;
+            let (right, reply_receiver) =
+                context.reply_typed().map_err(|error| error.to_string())?;
+            let value = Value::Product(
+                DataId(1),
+                vec![
+                    Value::I64(11),
+                    Value::Data(DataId(0), 1, Some(Box::new(Value::ReplyTo(right.token())))),
+                    Value::Bool(true),
+                ],
+            );
+            let words = encode(&program.data, catalog.shapes(), ty, &value)?;
+            assert_eq!(
+                context.send_typed_words(&sender, descriptor.type_id, &words)?,
+                TypedSendResult::Sent
+            );
+            let mut received = vec![0; descriptor.width];
+            assert_eq!(
+                context.receive_typed_words(&receiver, descriptor.type_id, &mut received)?,
+                TypedReceiveResult::Value
+            );
+            let decoded = decode(&program.data, catalog.shapes(), ty, &received)?;
+            assert_eq!(decoded, value);
+            let Value::Product(_, fields) = decoded else {
+                unreachable!()
+            };
+            let Value::Data(_, _, Some(payload)) = &fields[1] else {
+                unreachable!()
+            };
+            let Value::ReplyTo(token) = payload.as_ref() else {
+                unreachable!()
+            };
+            context.close_reply_to(ReplyTo::from_token(*token))?;
+            context.cancel_reply(reply_receiver)?;
+            context.close_sender(sender)?;
+            context.close_receiver(receiver)?;
+            Ok(Poll::Ready(11))
+        }
+    }
+
+    #[test]
+    fn aggregate_codec_and_runtime_queue_transfer_the_active_reply_right() {
+        let mut scheduler = Scheduler::new(AggregateRoundTrip, 1, 1, 1).unwrap();
+        assert_eq!(scheduler.run().unwrap(), 11);
+        scheduler.verify().unwrap();
     }
 }

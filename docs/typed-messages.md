@@ -47,6 +47,10 @@ channel now creates its runtime queue from this catalog and encodes and
 decodes its two words through the same layout table. General checked Core
 channel operations, generated native descriptor calls, and transfer of other
 right kinds remain open.
+An executable aggregate witness now encodes a tagged product with an active
+reply right, transfers it through the runtime queue, decodes it, and closes
+the returned right. This exercises the bridge below source `channel<T>`;
+it does not establish the general source or native path.
 
 ## Ownership equations
 
