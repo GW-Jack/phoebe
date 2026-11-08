@@ -271,17 +271,21 @@ Source `yield;` is an explicit cooperative checkpoint. Core records a typed
 resume edge and a source-spanned `task.yield` cost site. The interpreter and
 native poll backend requeue the task, retaining live places and capabilities;
 the standalone build uses the same runtime ABI. `examples/yield_loop.phoebe`
-has 42 executed explicit yields from one static site. Every source `while`
-now also receives a loop-local countdown and an automatic checkpoint after
-each 1,024 completed backedges. The cost report distinguishes the automatic
-site from an explicit `yield`; the Core IR shows the counter and resume edge.
-A 2,500-iteration loop executes two automatic yields in the native scheduler,
+has 42 executed explicit yields from one static site. A cheap source call
+graph connects direct calls and spawned children. Functions in a component
+containing `spawn` receive a loop-local countdown for each `while` and an
+automatic checkpoint after each 1,024 completed backedges. Loops outside
+those components keep the direct path without checkpoint bookkeeping.
+The cost report distinguishes the automatic site from an explicit `yield`;
+the Core IR shows the counter and resume edge. A 2,500-iteration loop in a
+spawning program executes two automatic yields in the native scheduler,
 and interpreter, JIT, and standalone results agree. A two-child test also
 shows a quick sender overtaking a CPU-bound sibling after its checkpoint.
-This bounds uninterrupted
-iterations of a `while` body, but does not bound the work inside one body or
-prove cancellation latency in wall-clock time. The counter and retained-frame
-cost have not yet been measured against a non-checkpointed build.
+This bounds uninterrupted iterations of a `while` body, but does not bound
+the work inside one body or
+prove cancellation latency in wall-clock time. A shared helper can connect
+otherwise separate entries in this conservative call-graph test.
+`docs/performance-baseline.md` measures the cost on a local standalone loop.
 
 ## Commands
 

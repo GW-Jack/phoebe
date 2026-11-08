@@ -1,6 +1,7 @@
 use super::*;
 
 mod request;
+mod spawn_scan;
 
 struct DraftBlock {
     params: Vec<ValueId>,
@@ -32,6 +33,7 @@ struct Lowerer<'a> {
     current: BlockId,
     implicit_cleanup_returns: Vec<(BlockId, Span)>,
     scoped_cleanup_exits: Vec<(BlockId, ValueId, Span)>,
+    automatic_checkpoints: bool,
 }
 
 impl<'a> Lowerer<'a> {
@@ -41,6 +43,7 @@ impl<'a> Lowerer<'a> {
         data_names: &'a HashMap<String, DataId>,
         params: Vec<(ParamMode, Type)>,
         return_type: Type,
+        automatic_checkpoints: bool,
     ) -> Self {
         let mut lowerer = Self {
             functions,
@@ -58,6 +61,7 @@ impl<'a> Lowerer<'a> {
             current: BlockId(0),
             implicit_cleanup_returns: Vec::new(),
             scoped_cleanup_exits: Vec::new(),
+            automatic_checkpoints,
         };
         for (mode, own_type) in params {
             let ty = match mode {
@@ -568,10 +572,15 @@ impl<'a> Lowerer<'a> {
                     // siblings. Keep the budget local to this loop so nested
                     // loops do not reset each other's progress.
                     const BACKEDGE_BUDGET: i64 = 1024;
-                    let budget = self.place(Type::I64);
-                    let initial =
-                        self.emit(Operation::Const(BACKEDGE_BUDGET), Type::I64, condition.span);
-                    self.emit_effect(Operation::PlaceInit(budget, initial), condition.span);
+                    let budget = if self.automatic_checkpoints {
+                        let budget = self.place(Type::I64);
+                        let initial =
+                            self.emit(Operation::Const(BACKEDGE_BUDGET), Type::I64, condition.span);
+                        self.emit_effect(Operation::PlaceInit(budget, initial), condition.span);
+                        Some(budget)
+                    } else {
+                        None
+                    };
                     let head = self.block();
                     let body_block = self.block();
                     let exit = self.block();
@@ -586,27 +595,33 @@ impl<'a> Lowerer<'a> {
                     });
                     self.current = body_block;
                     self.body(loop_body, &mut locals.clone())?;
-                    let remaining = self.emit(Operation::Load(budget), Type::I64, condition.span);
-                    let one = self.emit(Operation::Const(1), Type::I64, condition.span);
-                    let next = self.emit(Operation::Sub(remaining, one), Type::I64, condition.span);
-                    self.emit_effect(Operation::Store(budget, next), condition.span);
-                    let zero = self.emit(Operation::Const(0), Type::I64, condition.span);
-                    let due = self.emit(Operation::Eq(next, zero), Type::Bool, condition.span);
-                    let checkpoint = self.block();
-                    self.terminate(Terminator::Branch {
-                        condition: due,
-                        then_block: checkpoint,
-                        else_block: head,
-                    });
-                    self.current = checkpoint;
-                    let reset =
-                        self.emit(Operation::Const(BACKEDGE_BUDGET), Type::I64, condition.span);
-                    self.emit_effect(Operation::Store(budget, reset), condition.span);
-                    self.terminate(Terminator::Yield {
-                        resume: head,
-                        span: condition.span,
-                        automatic: true,
-                    });
+                    if let Some(budget) = budget {
+                        let remaining =
+                            self.emit(Operation::Load(budget), Type::I64, condition.span);
+                        let one = self.emit(Operation::Const(1), Type::I64, condition.span);
+                        let next =
+                            self.emit(Operation::Sub(remaining, one), Type::I64, condition.span);
+                        self.emit_effect(Operation::Store(budget, next), condition.span);
+                        let zero = self.emit(Operation::Const(0), Type::I64, condition.span);
+                        let due = self.emit(Operation::Eq(next, zero), Type::Bool, condition.span);
+                        let checkpoint = self.block();
+                        self.terminate(Terminator::Branch {
+                            condition: due,
+                            then_block: checkpoint,
+                            else_block: head,
+                        });
+                        self.current = checkpoint;
+                        let reset =
+                            self.emit(Operation::Const(BACKEDGE_BUDGET), Type::I64, condition.span);
+                        self.emit_effect(Operation::Store(budget, reset), condition.span);
+                        self.terminate(Terminator::Yield {
+                            resume: head,
+                            span: condition.span,
+                            automatic: true,
+                        });
+                    } else {
+                        self.terminate(Terminator::Jump(head, vec![]));
+                    }
                     self.current = exit;
                 }
                 Statement::Expr(expr) => {
@@ -1499,6 +1514,9 @@ fn lower_internal(
     ast: &syntax::Program,
     reuse: Option<(&syntax::Program, &Program, &[bool], &[isize])>,
 ) -> Result<(Program, usize), Diagnostic> {
+    let checkpointed = spawn_scan::checkpoint_functions(ast);
+    let previous_checkpointed =
+        reuse.map(|(previous_ast, _, _, _)| spawn_scan::checkpoint_functions(previous_ast));
     if let Some(import) = ast.imports.first() {
         return Err(Diagnostic::new(
             import.span,
@@ -1767,6 +1785,9 @@ fn lower_internal(
     let mut cleanup_sites = Vec::with_capacity(ast.functions.len());
     for (index, function) in ast.functions.iter().enumerate() {
         if stable_environment
+            && previous_checkpointed
+                .as_ref()
+                .is_some_and(|previous| previous[index] == checkpointed[index])
             && let Some((previous_ast, previous, reusable, deltas)) = reuse
             && reusable[index]
             && phoebe_syntax::same_function_with_shift(
@@ -1796,6 +1817,7 @@ fn lower_internal(
                 .map(|param| Ok((param.mode, resolve(&param.ty, param.span)?)))
                 .collect::<Result<Vec<_>, Diagnostic>>()?,
             resolve(&function.return_type, function.name_span)?,
+            checkpointed[index],
         );
         let mut locals = HashMap::new();
         for (index, param) in function.params.iter().enumerate() {

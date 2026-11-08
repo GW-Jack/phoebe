@@ -514,6 +514,57 @@ fn core_rejects_stale_reuse_hints() {
 }
 
 #[test]
+fn adding_or_removing_spawn_invalidates_loop_lowering_reuse() {
+    let before = r#"
+fn worker() -> I64 = 0
+fn launch() -> Result<I64, ResourceError> = Result<I64, ResourceError>.Ok(0)
+fn count() -> I64 {
+  var n = 0;
+  while (n < 3) { n = n + 1; }
+  n
+}
+fn main() -> I64 { val launched = launch(); count() }
+fn isolated() -> I64 {
+  var n = 0;
+  while (n < 3) { n = n + 1; }
+  n
+}
+"#;
+    let after = before.replace(
+        "fn launch() -> Result<I64, ResourceError> = Result<I64, ResourceError>.Ok(0)",
+        "fn launch() -> Result<I64, ResourceError> { spawn worker()?; Result<I64, ResourceError>.Ok(0) }",
+    );
+    let before_ast = syntax::parse(before).unwrap();
+    let before_core = core::lower(&before_ast).unwrap();
+    assert!(before_core.cost_events().is_empty());
+    let after_ast = syntax::parse(&after).unwrap();
+    let hints = vec![true; before_ast.functions.len()];
+    let offset =
+        after.find("fn count()").unwrap() as isize - before.find("fn count()").unwrap() as isize;
+    let deltas = vec![0, 0, offset, offset, offset];
+    let (after_core, reused) =
+        core::lower_reusing(&after_ast, &before_ast, &before_core, &hints, &deltas).unwrap();
+    assert_eq!(reused, 1);
+    assert!(
+        after_core
+            .cost_events()
+            .iter()
+            .any(|site| site.reason == "loop backedge")
+    );
+    let reverse_deltas = deltas.iter().map(|delta| -*delta).collect::<Vec<_>>();
+    let (restored, reused) = core::lower_reusing(
+        &before_ast,
+        &after_ast,
+        &after_core,
+        &hints,
+        &reverse_deltas,
+    )
+    .unwrap();
+    assert_eq!(reused, 1);
+    assert!(restored.cost_events().is_empty());
+}
+
+#[test]
 fn project_source_map_reports_imported_module_diagnostic() {
     let path = temp_project();
     let mut loaded = project::load(&path).unwrap();

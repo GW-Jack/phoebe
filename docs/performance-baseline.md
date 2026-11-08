@@ -77,3 +77,24 @@ when reachable and 52.0 ms when unreachable. This measures two different
 programs and does not isolate the effect of the code change against an old
 compiler binary. It shows the current standalone path avoids native emission
 and linking work for the dead chain on this fixture.
+
+## Automatic loop checkpoint cost
+
+On 2026-11-07, three debug-built compiler revisions on macOS ARM64 emitted
+standalone executables for the same `while` loop counting to 100 million.
+Twenty timed executions of each binary were interleaved after one warmup;
+each run printed and checked the same result. The numbers include process
+startup and output. The loop contains no `spawn`.
+
+| Compiler revision | Loop policy | Median run time |
+| --- | --- | ---: |
+| `0c3ff2f` | No automatic checkpoint | 36.6 ms |
+| `e23bc8a` | Checkpoint every 1,024 backedges | 81.7 ms |
+| Conditional policy in this revision | Elide checkpoints for a disconnected source component | 36.0 ms |
+
+The all-loop policy more than doubled time on this fixture. The conditional
+policy returned to roughly the prior timing, within local run variation.
+These are local measurements of one executable, not a general throughput
+claim. The source call graph now leaves a loop in a component disconnected
+from `spawn` on the direct path. Components joined by a shared helper still
+receive checkpoints even when some entry paths never create a task.

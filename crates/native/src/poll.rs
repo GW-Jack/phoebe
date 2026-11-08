@@ -234,10 +234,11 @@ fn compile_poll_module<M: Module>(
                     pending_direct.push(child);
                 }
             }
-            if let Terminator::Spawn { child, .. } = block.terminator
-                && suspendable[child.0]
-            {
-                return Err("direct helper spawning a suspendable child is not yet supported in a poll module".into());
+            if let Terminator::Spawn { child, .. } = block.terminator {
+                if suspendable[child.0] {
+                    return Err("direct helper spawning a suspendable child is not yet supported in a poll module".into());
+                }
+                pending_direct.push(child);
             }
         }
     }

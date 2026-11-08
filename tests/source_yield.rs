@@ -8,12 +8,10 @@ fn source_yield_resumes_with_mutable_state_in_all_backends() {
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
     assert!(program.to_string().contains("yield resume"));
     let sites = program.cost_events();
-    assert_eq!(sites.len(), 2);
+    assert_eq!(sites.len(), 1);
     assert_eq!(sites[0].kind, "task.yield");
     assert_eq!(sites[0].reason, "explicit");
     assert_eq!(&source[sites[0].span.start..sites[0].span.end], "yield");
-    assert_eq!(sites[1].kind, "task.yield");
-    assert_eq!(sites[1].reason, "loop backedge");
     assert_eq!(
         frame_layout::suspendable_functions(&program).unwrap(),
         [true, true]
@@ -43,7 +41,15 @@ fn source_yield_resumes_with_mutable_state_in_all_backends() {
 #[test]
 fn cpu_loop_checkpoints_every_1024_backedges_in_all_backends() {
     let source = r#"
+fn child() -> I64 = 0
+
+fn launch() -> Result<I64, ResourceError> {
+  spawn child()?;
+  Result<I64, ResourceError>.Ok(0)
+}
+
 fn main() -> I64 {
+  val launched = launch();
   var count = 0;
   while (count < 2500) {
     count = count + 1;
@@ -81,6 +87,28 @@ fn main() -> I64 {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(output.stdout, b"2500\n");
+}
+
+#[test]
+fn single_task_loop_keeps_direct_native_path() {
+    let source = include_str!("../examples/loop.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert!(program.cost_events().is_empty());
+    assert_eq!(
+        frame_layout::suspendable_functions(&program).unwrap(),
+        [false, false]
+    );
+    assert!(!program.to_string().contains("yield.auto"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 45);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 45);
+
+    let unrelated_spawn = format!(
+        "{source}\nfn worker() -> I64 = 0\nfn unused() -> Result<I64, ResourceError> {{ spawn worker()?; Result<I64, ResourceError>.Ok(0) }}\n"
+    );
+    let program = core::lower(&syntax::parse(&unrelated_spawn).unwrap()).unwrap();
+    assert!(program.cost_events().is_empty());
+    assert!(!program.runtime_context_functions()[program.function("main").unwrap().0.0]);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 45);
 }
 
 #[test]

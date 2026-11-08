@@ -67,12 +67,14 @@ instructions for one event or eliminate instructions when semantics allow it.
    cheap, local range reasoning while region and collection facts are still
    visible; it does not require an SMT solver on the normal compile path.
 6. Ordinary functions use direct native calls. Functions that may block or
-   reach a loop checkpoint need retained task state. Each source `while`
-   currently checks a loop-local budget and yields after 1,024 completed
-   backedges, including in a single-task program. This is a visible runtime
-   cost required by the current fairness rule, and the single-task overhead
-   needs measurement. An empty scope without a loop requires no
-   scheduler operation. A standalone build emits only functions reachable
+   reach a loop checkpoint need retained task state. When the source program
+   has no `spawn`, its loops have no automatic scheduler bookkeeping. Source
+   direct calls and spawned children form a call graph; functions in a
+   component containing `spawn` check a loop-local budget and yield after
+   1,024 completed backedges. An unrelated source component stays direct.
+   Shared helpers can make this test conservative. An empty scope
+   without a loop requires no scheduler operation. A standalone build emits
+   only functions reachable
    from `main`; dead source functions are still checked but do not bring
    runtime objects or a runtime entry wrapper into the binary.
 7. No universal bookkeeping is inserted on every function entry, object

@@ -98,6 +98,7 @@ rust_test(
     crate_root = "tests/source_yield.rs",
     srcs = [
         "tests/source_yield.rs",
+        "examples/loop.phoebe",
         "examples/yield_loop.phoebe",
         "examples/with_wait.phoebe",
     ],
