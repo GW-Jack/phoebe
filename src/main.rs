@@ -5,8 +5,10 @@ use std::process::ExitCode;
 
 use phoebe::{core, frame_layout, native, package, project, syntax};
 
+mod build_session_cli;
+
 fn usage() -> &'static str {
-    "usage: phoebe lock <project> | phoebe deps <project> | phoebe check <file|project> | phoebe ir <file|project> | phoebe frames <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable> [--cache-dir <directory>]"
+    "usage: phoebe lock <project> | phoebe deps <project> | phoebe check <file|project> | phoebe ir <file|project> | phoebe frames <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable> [--cache-dir <directory>] | phoebe build-session <project> -o <executable>"
 }
 
 fn command() -> Result<(), String> {
@@ -14,7 +16,16 @@ fn command() -> Result<(), String> {
     let action = args.next().ok_or_else(|| usage().to_owned())?;
     if !matches!(
         action.as_str(),
-        "lock" | "deps" | "check" | "ir" | "frames" | "clif" | "cost" | "run" | "build"
+        "lock"
+            | "deps"
+            | "check"
+            | "ir"
+            | "frames"
+            | "clif"
+            | "cost"
+            | "run"
+            | "build"
+            | "build-session"
     ) {
         return Err(usage().to_owned());
     }
@@ -32,6 +43,16 @@ fn command() -> Result<(), String> {
             println!("{}\t{}\t{}", entry.locator, entry.name, entry.version);
         }
         return Ok(());
+    }
+    if action == "build-session" {
+        if args.next().as_deref() != Some("-o") {
+            return Err(usage().into());
+        }
+        let output = args.next().ok_or_else(|| usage().to_owned())?;
+        if args.next().is_some() {
+            return Err(usage().into());
+        }
+        return build_session_cli::run(Path::new(&path), Path::new(&output));
     }
     let program = if Path::new(&path).is_dir() || path.ends_with(".toml") {
         let loaded = project::load(Path::new(&path))?;

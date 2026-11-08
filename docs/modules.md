@@ -105,6 +105,12 @@ retained child frame invalidates direct parents that could spawn it. Poll
 objects are still emitted afresh, and these symbols are not a public ABI.
 
 The current CLI starts a fresh parse and Core session for each command.
+`phoebe build-session <project> -o <output>` exposes the in-process compiler
+and native sessions through a line-oriented interface: send `build` after an
+edit, inspect the reuse counts, and send `quit` when finished. A body-only edit
+with a stable public interface can preserve checked Core and direct native
+objects for unrelated functions. The session itself holds these caches in
+memory; restarting it begins with a cold build.
 `phoebe build <project> -o <output> --cache-dir <directory>` can persist
 the complete emitted object set across compiler invocations when its codegen
 inputs are unchanged. The cache key excludes source spans and the bodies of

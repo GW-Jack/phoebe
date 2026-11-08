@@ -115,7 +115,10 @@ gates above. A local `phoebe.toml` manifest and explicit imports now compile
 multiple modules together; `examples/multi_module/` runs in both engines and
 builds a standalone executable. `docs/modules.md` describes that path and
 the in-process parsed-module session with exact source-level interfaces and
-checked-Core function-body reuse. The package resolver locks and verifies
+checked-Core function-body reuse. The `build-session` CLI keeps compiler and
+native sessions alive across explicit rebuild triggers and reports module,
+Core body, and object reuse. It does not persist typed interfaces between
+processes. The package resolver locks and verifies
 transitive local path dependencies by exact source content. Direct dependency
 root modules and their transitive calls compile and run in the interpreter,
 Cranelift JIT, and standalone executable; see `examples/package_graph/app/`.

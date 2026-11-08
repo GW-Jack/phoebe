@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use phoebe::{ProjectCompilerSession, core, native, package, project, syntax};
+use phoebe::{ProjectBuildSession, ProjectCompilerSession, core, native, package, project, syntax};
 
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -29,6 +29,48 @@ fn temp_project() -> PathBuf {
         std::fs::write(path.join(name), source).unwrap();
     }
     path
+}
+
+#[test]
+fn project_build_session_reuses_bodies_and_objects_after_body_edits() {
+    let path = temp_project();
+    let executable = path.join("program");
+    let math = path.join("math.phoebe");
+    let original = std::fs::read_to_string(&math).unwrap();
+    let mut session = ProjectBuildSession::new();
+
+    let first = session.build(&path, &executable).unwrap();
+    assert_eq!(first.compile.load.parsed.len(), 2);
+    assert_eq!(first.compile.reused_core_functions, 0);
+    assert_eq!(first.reused_native_objects, 0);
+    let warm = session.build(&path, &executable).unwrap();
+    assert!(warm.compile.load.parsed.is_empty());
+    assert!(warm.compile.load.changed_interfaces.is_empty());
+    assert!(warm.compile.reused_core_functions > 0);
+    assert!(warm.reused_native_objects > 0);
+
+    std::fs::write(&math, original.replace("a + b", "a + b + 1")).unwrap();
+    let edited = session.build(&path, &executable).unwrap();
+    assert_eq!(edited.compile.load.parsed, ["math"]);
+    assert!(edited.compile.load.changed_interfaces.is_empty());
+    assert!(edited.compile.reused_core_functions > 0);
+    assert!(edited.reused_native_objects > 0);
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"43\n");
+
+    std::fs::write(&math, original.replace("a + b", "a + ")).unwrap();
+    assert!(session.build(&path, &executable).is_err());
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"43\n");
+    std::fs::write(&math, original).unwrap();
+    let repaired = session.build(&path, &executable).unwrap();
+    assert_eq!(repaired.compile.load.parsed, ["math"]);
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+    std::fs::remove_dir_all(path).unwrap();
 }
 
 fn temp_package_graph() -> PathBuf {

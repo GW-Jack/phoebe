@@ -13,3 +13,5 @@ pub use phoebe_syntax::{Diagnostic, Span};
 
 mod project_session;
 pub use project_session::{CompileReport, ProjectCompilerSession};
+mod build_session;
+pub use build_session::{BuildReport, ProjectBuildSession};

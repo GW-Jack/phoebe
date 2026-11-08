@@ -1,5 +1,21 @@
 def integration_tests(rust_test):
     rust_test(
+        name = "build_session_cli_tests",
+        crate_root = "tests/build_session_cli.rs",
+        srcs = [
+            "tests/build_session_cli.rs",
+            "examples/multi_module/phoebe.toml",
+            "examples/multi_module/app.phoebe",
+            "examples/multi_module/math.phoebe",
+        ],
+        edition = "2024",
+        env = {
+            "PHOEBE_TEST_COMPILER": "$(location :phoebe)",
+            "PHOEBE_RUNTIME_LIB": "$(location //crates/runtime:runtime_archive)",
+        },
+    )
+
+    rust_test(
         name = "source_scopes_tests",
         crate_root = "tests/source_scopes.rs",
         srcs = ["tests/source_scopes.rs", "examples/scoped_spawn.phoebe"],

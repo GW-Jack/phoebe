@@ -46,6 +46,7 @@ buck2 run //:phoebe -- run examples/hello.phoebe
 buck2 build //crates/runtime:runtime_archive
 buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 buck2 run //:phoebe -- build examples/multi_module -o /tmp/phoebe-app --cache-dir /tmp/phoebe-objects
+buck2 run //:phoebe -- build-session examples/multi_module -o /tmp/phoebe-app
 buck2 run //:phoebe -- build examples/package_graph/app -o /tmp/phoebe-app
 buck2 build //crates/core:phoebe_core
 buck2 test //crates/core:unit_tests //crates/runtime:unit_tests //crates/native:unit_tests
@@ -59,6 +60,7 @@ buck2 test //:source_with_tests
 buck2 test //:source_yield_tests
 buck2 test //:source_fork_tests
 buck2 test //:project_tests
+buck2 test //:build_session_cli_tests
 buck2 test //:cost_acceptance_tests
 buck2 test //...
 ```
@@ -80,6 +82,18 @@ Buck2 2026-09-15 and Maude 3.5.1 from fixed release assets and verifies their
 SHA-256 digests. It runs workspace Cargo checks, all Buck2 tests, and the
 bounded formal suite. These pins constrain CI tools, but the system C linker
 and Buck2 demo toolchains are not yet hermetic across hosts.
+
+`build-session` keeps parsed modules, checked Core functions, and direct native
+objects in one compiler process. It prints `ready`, then accepts one `build`
+line for each requested rebuild and `quit` to exit. Every build response
+reports parsed modules, changed interfaces, reused Core functions, reused
+native objects, and elapsed build time. Source edits between `build` lines
+are read from disk. A
+failed source edit prints an error and leaves the last linked executable in
+place. This is a trigger-driven local session; it does not watch files or
+persist typed interfaces across compiler processes. Retained poll objects are
+still emitted on each build. The separate `--cache-dir` mode of one-shot
+`build` persists exact-program native objects across processes.
 
 `third-party/rust/Cargo.toml` and its lockfile pin third-party Rust versions.
 Reindeer generates `third-party/rust/BUCK` and sha256-checked archive rules.

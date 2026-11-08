@@ -4,7 +4,7 @@ rust_library(
     name = "phoebe_lib",
     crate = "phoebe",
     crate_root = "src/lib.rs",
-    srcs = ["src/lib.rs", "src/project_session.rs"],
+    srcs = ["src/lib.rs", "src/project_session.rs", "src/build_session.rs"],
     edition = "2024",
     deps = [
         "//crates/capability:phoebe_capability",
@@ -22,7 +22,7 @@ rust_library(
 rust_binary(
     name = "phoebe",
     crate_root = "src/main.rs",
-    srcs = ["src/main.rs"],
+    srcs = ["src/main.rs", "src/build_session_cli.rs"],
     edition = "2024",
     deps = [":phoebe_lib"],
     resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
