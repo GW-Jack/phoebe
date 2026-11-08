@@ -1,0 +1,76 @@
+--- One optional affine right. The variant tag determines whether a right
+--- exists, so a merged ownership state must retain the tag.
+mod PHOEBE-SUM-CAPABILITIES is
+  protecting BOOL .
+
+  sorts Phase Tag Owner State .
+  ops choose ready boxed matched finished failed canceled : -> Phase [ctor] .
+  ops unknown none some : -> Tag [ctor] .
+  ops unborn task sum closed : -> Owner [ctor] .
+  op st : Phase Tag Owner -> State [ctor] .
+  op initial : -> State .
+  eq initial = st(choose, unknown, unborn) .
+
+  --- Creation chooses a variant. Only Some creates a right.
+  rl [choose-none] : st(choose, unknown, unborn)
+    => st(ready, none, unborn) .
+  rl [choose-some] : st(choose, unknown, unborn)
+    => st(ready, some, task) .
+
+  --- Construction transfers the right into Some. None stays empty.
+  rl [pack-none] : st(ready, none, unborn)
+    => st(boxed, none, unborn) .
+  rl [pack-some] : st(ready, some, task)
+    => st(boxed, some, sum) .
+
+  --- Both tagged alternatives reach the same control-flow point. Matching
+  --- exposes an owned payload only on the Some edge.
+  rl [match-none] : st(boxed, none, unborn)
+    => st(matched, none, unborn) .
+  rl [match-some] : st(boxed, some, sum)
+    => st(matched, some, task) .
+
+  rl [finish-none] : st(matched, none, unborn)
+    => st(finished, none, unborn) .
+  rl [close-some] : st(matched, some, task)
+    => st(finished, some, closed) .
+
+  --- Early failure and cancellation dispose of the active payload only.
+  rl [fail-none] : st(boxed, none, unborn)
+    => st(failed, none, unborn) .
+  rl [fail-some] : st(boxed, some, sum)
+    => st(failed, some, closed) .
+  rl [cancel-ready-none] : st(ready, none, unborn)
+    => st(canceled, none, unborn) .
+  rl [cancel-ready-some] : st(ready, some, task)
+    => st(canceled, some, closed) .
+  rl [cancel-boxed-none] : st(boxed, none, unborn)
+    => st(canceled, none, unborn) .
+  rl [cancel-boxed-some] : st(boxed, some, sum)
+    => st(canceled, some, closed) .
+  rl [cancel-matched-none] : st(matched, none, unborn)
+    => st(canceled, none, unborn) .
+  rl [cancel-matched-some] : st(matched, some, task)
+    => st(canceled, some, closed) .
+
+  vars P : Phase .
+  vars T : Tag .
+  vars O : Owner .
+  op valid : Phase Tag Owner -> Bool .
+  eq valid(choose, unknown, unborn) = true .
+  eq valid(ready, none, unborn) = true .
+  eq valid(ready, some, task) = true .
+  eq valid(boxed, none, unborn) = true .
+  eq valid(boxed, some, sum) = true .
+  eq valid(matched, none, unborn) = true .
+  eq valid(matched, some, task) = true .
+  eq valid(finished, none, unborn) = true .
+  eq valid(finished, some, closed) = true .
+  eq valid(failed, none, unborn) = true .
+  eq valid(failed, some, closed) = true .
+  eq valid(canceled, none, unborn) = true .
+  eq valid(canceled, some, closed) = true .
+  eq valid(P, T, O) = false [owise] .
+  op bad : State -> Bool .
+  eq bad(st(P, T, O)) = not valid(P, T, O) .
+endm

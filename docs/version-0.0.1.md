@@ -322,6 +322,11 @@ rights on normal and `?` exits. `examples/with_product.phoebe` covers
 structural product cleanup; source tests also cover nested aliases and spawn
 transfer. Capability-bearing sums, mutable product places, and general
 failure cleanup remain open.
+The bounded `formal/sum_capabilities.maude` model checks that an optional
+right exists only in its `Some` variant and is transferred or closed on the
+selected branch. It is specification backpressure, not tagged ownership in
+Core; source and hand-built Core still reject sums with capability-bearing
+payloads.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
 retry across both operations. Generated send and receive leaves use retained

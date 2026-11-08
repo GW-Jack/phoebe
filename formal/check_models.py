@@ -7,18 +7,19 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 CASES = (
-    ("check.maude", 1, 4),
-    ("check_two_task.maude", 2, 9),
-    ("check_reply_capability.maude", 1, 10),
-    ("check_request_backpressure.maude", 1, 7),
-    ("check_retained_borrow.maude", 1, 4),
-    ("check_lexical_scopes.maude", 2, 7),
-    ("check_product_capabilities.maude", 2, 12),
+    ("check.maude", 1, 4, 1),
+    ("check_two_task.maude", 2, 9, 1),
+    ("check_reply_capability.maude", 1, 10, 1),
+    ("check_request_backpressure.maude", 1, 7, 1),
+    ("check_retained_borrow.maude", 1, 4, 1),
+    ("check_lexical_scopes.maude", 2, 7, 1),
+    ("check_product_capabilities.maude", 2, 12, 1),
+    ("check_sum_capabilities.maude", 2, 12, 2),
 )
 
 
 def main() -> int:
-    for filename, no_solutions, witnesses in CASES:
+    for filename, no_solutions, witnesses, bad_state_sanity_checks in CASES:
         try:
             result = subprocess.run(
                 ["maude", "-no-banner", str(ROOT / "formal" / filename)],
@@ -37,8 +38,8 @@ def main() -> int:
             errors.append(f"Maude exited {result.returncode}")
         if "Warning:" in output or "Error:" in output:
             errors.append("Maude reported a warning or error")
-        if "result Bool: true" not in output:
-            errors.append("bad-state sanity check did not return true")
+        if output.count("result Bool: true") != bad_state_sanity_checks:
+            errors.append("unexpected number of true bad-state sanity checks")
         if output.count("No solution.") != no_solutions:
             errors.append("unexpected number of unreachable searches")
         if output.count("Solution 1") != witnesses:

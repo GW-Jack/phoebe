@@ -91,6 +91,15 @@ owning place operations are specified. For a sum,
 the active variant determines which paths exist, so the verifier must either
 split on its tag or carry a tagged slot state. A blind union of variant slots
 would report nonexistent rights; a blind intersection would lose live ones.
+The chosen state is a tagged sum of ownership maps: each variant has its own
+leaf layout, and a merge retains the tagged alternatives until `match` selects
+one. Construction transfers only the selected payload's leaves into the sum;
+the matching edge transfers those leaves into its payload parameter. Cleanup
+dispatches on the tag and closes only that variant's live leaves. This keeps
+an absent `Option` right absent and prevents a `Result` error arm from
+silently dropping a right in its success arm. The bounded one-right model in
+`formal/sum_capabilities.maude` exercises this rule but does not yet connect
+it to the Core verifier or generated code.
 Projection moves the selected leaf paths from the aggregate owner to the
 result and must account for all unselected live paths through an explicit
 residual owner, close, or transfer. These rules are prerequisites for a

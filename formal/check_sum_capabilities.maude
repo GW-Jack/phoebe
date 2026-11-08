@@ -1,0 +1,39 @@
+load sum_capabilities.maude
+
+--- A None variant cannot own a right; a Some variant must carry one until
+--- it is matched or structurally closed.
+reduce in PHOEBE-SUM-CAPABILITIES : bad(st(boxed, none, sum)) .
+reduce in PHOEBE-SUM-CAPABILITIES : bad(st(boxed, some, unborn)) .
+
+search [1] in PHOEBE-SUM-CAPABILITIES : initial =>* X:State
+  such that bad(X:State) == true .
+search [1] in PHOEBE-SUM-CAPABILITIES : initial =>*
+  st(matched, none, task) .
+
+search [1] in PHOEBE-SUM-CAPABILITIES : initial =>*
+  st(ready, none, unborn) .
+search [1] in PHOEBE-SUM-CAPABILITIES : initial =>*
+  st(ready, some, task) .
+search [1] in PHOEBE-SUM-CAPABILITIES : initial =>*
+  st(boxed, none, unborn) .
+search [1] in PHOEBE-SUM-CAPABILITIES : initial =>*
+  st(boxed, some, sum) .
+search [1] in PHOEBE-SUM-CAPABILITIES : initial =>*
+  st(matched, none, unborn) .
+search [1] in PHOEBE-SUM-CAPABILITIES : initial =>*
+  st(matched, some, task) .
+search [1] in PHOEBE-SUM-CAPABILITIES : initial =>*
+  st(finished, none, unborn) .
+search [1] in PHOEBE-SUM-CAPABILITIES : initial =>*
+  st(finished, some, closed) .
+search [1] in PHOEBE-SUM-CAPABILITIES : initial =>*
+  st(canceled, none, unborn) .
+search [1] in PHOEBE-SUM-CAPABILITIES : initial =>*
+  st(canceled, some, closed) .
+
+--- Witness cleanup from each variant at the merged point, not just from
+--- another path that happens to reach the same terminal state.
+search [1] in PHOEBE-SUM-CAPABILITIES : st(boxed, none, unborn) =>*
+  st(failed, none, unborn) .
+search [1] in PHOEBE-SUM-CAPABILITIES : st(boxed, some, sum) =>*
+  st(failed, some, closed) .

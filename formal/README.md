@@ -114,12 +114,30 @@ The model represents each right by a single owner component, so duplication
 is excluded by its representation. It fixes the product at two fields and
 does not represent nested products, variant tags, partial projection,
 concurrent mutation, resource allocation, or concrete runtime operations.
-It is specification backpressure for future Core work; source nominal
-products cannot yet carry capabilities.
+It is specification backpressure; executable source products now carry
+capabilities, but no refinement proof connects their implementation to this
+model.
+
+## Tagged capability sum
+
+`sum_capabilities.maude` models an optional affine right. `Some` creates and
+owns one right; `None` has no right. Construction moves the right into a
+tagged sum, and matching moves it to the `Some` arm only. Early failure and
+cancellation close the right only when the active tag is `Some`. The exhaustive
+search explores 13 states with no encoded ownership mismatch. Twelve
+witnesses include both variant paths through construction and matching, and
+branch-specific early-failure cleanup. Deliberately mismatched `None` and
+`Some` states are classified bad.
+
+The model fixes one optional right and omits nested sums, multiple rights,
+queue transfer, allocation failure, and compiler/runtime state. It establishes
+a design obligation for Core: a sum's capability state must retain its active
+tag through joins and cleanup. The current Core verifier deliberately rejects
+capability-bearing sum payloads.
 
 ## Evidence boundary
 
-These are finite explorations of seven handwritten abstract machines. The
+These are finite explorations of eight handwritten abstract machines. The
 two-task model does not include regions or references; the one-task model
 does not include handle fork. Neither models multiple queued messages or
 blocking/parking. The reply model does not cover multiple reply rights,
@@ -129,6 +147,7 @@ does not model executable frame spills or every cancellation interleaving.
 The retained borrow model includes parking but only one same-task call chain,
 one scalar place, and an abstract ordered unwind. It does not encode the
 generated frame offsets, Rust pointer operations, or allocator behavior.
+The tagged-sum model fixes one optional right and omits concurrent transfer.
 None models scheduling fairness, foreign calls, or executable compiler IR.
 No proof yet connects any model to the compiler, runtime, or generated machine
 code. A `No solution.` result means only that its stated bad predicate is
