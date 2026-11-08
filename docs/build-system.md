@@ -18,7 +18,11 @@ and `syntax` feed `native`. The root facade and CLI sit atop this graph.
 - `phoebe-native`: Cranelift JIT, object emission, direct and retained codegen.
 - Root `phoebe`: compatibility facade and CLI.
 
-Within Core, IR definitions stay in `lib.rs`; statement lowering lives in
+Within Syntax, `syntax/ast.rs` defines the public tree and `syntax/lexer.rs`
+owns tokens. The parser keeps its shared cursor in `syntax/parser.rs`, with
+type, declaration, statement, and expression parsing in sibling modules under
+`syntax/parser/`. The `syntax.rs` facade preserves the public tree and `parse`
+API. Within Core, IR definitions stay in `lib.rs`; statement lowering lives in
 `lowering/body.rs`, expression lowering in `lowering/expr.rs`, nominal
 registration in `lowering/data.rs`, incremental compatibility in
 `lowering/reuse.rs`, and function assembly in `lowering.rs`. Core verification
