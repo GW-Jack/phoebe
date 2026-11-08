@@ -1,4 +1,75 @@
 use super::*;
+use phoebe_generic_core as generic_core;
+
+fn eval_generic(
+    module: &CheckedModule,
+    callee: usize,
+    args: Vec<Value>,
+    depth: usize,
+) -> Result<Value, String> {
+    if depth >= 1024 {
+        return Err("generic call depth exceeded".into());
+    }
+    let function = &module.as_module().functions[callee];
+    let mut values = vec![None; function.value_types.len()];
+    let mut block = 0;
+    let mut incoming = args;
+    loop {
+        let current = &function.blocks[block];
+        for (param, value) in current.params.iter().zip(incoming.drain(..)) {
+            values[param.0] = Some(value);
+        }
+        for instruction in &current.instructions {
+            let result = {
+                let get = |id: generic_core::ValueId| {
+                    values[id.0]
+                        .as_ref()
+                        .expect("verified generic value")
+                        .clone()
+                };
+                match &instruction.operation {
+                    generic_core::Operation::Move(value)
+                    | generic_core::Operation::CopyScalar(value) => get(*value),
+                    generic_core::Operation::Call { callee, args, .. } => eval_generic(
+                        module,
+                        *callee,
+                        args.iter().map(|value| get(*value)).collect(),
+                        depth + 1,
+                    )?,
+                }
+            };
+            values[instruction.result.0] = Some(result);
+        }
+        let get = |id: generic_core::ValueId| {
+            values[id.0]
+                .as_ref()
+                .expect("verified generic value")
+                .clone()
+        };
+        match &current.terminator {
+            generic_core::Terminator::Return(value) => return Ok(get(*value)),
+            generic_core::Terminator::Jump { target, args } => {
+                incoming = args.iter().map(|value| get(*value)).collect();
+                block = target.0;
+            }
+            generic_core::Terminator::Branch {
+                condition,
+                when_true,
+                true_args,
+                when_false,
+                false_args,
+            } => {
+                let (target, args) = if as_bool(get(*condition)) {
+                    (when_true, true_args)
+                } else {
+                    (when_false, false_args)
+                };
+                incoming = args.iter().map(|value| get(*value)).collect();
+                block = target.0;
+            }
+        }
+    }
+}
 
 fn close_caps(value: Value, context: &mut Option<&mut Context<'_>>) -> Result<(), String> {
     match value {
@@ -214,7 +285,7 @@ impl Program {
         limits: ScopeLimits,
     ) -> Result<i64, String> {
         verify(self)?;
-        self.interpret_verified(name, args, limits)
+        self.interpret_verified(name, args, limits, None)
     }
 
     fn interpret_verified(
@@ -222,6 +293,7 @@ impl Program {
         name: &str,
         args: &[i64],
         limits: ScopeLimits,
+        generics: Option<Arc<CheckedModule>>,
     ) -> Result<i64, String> {
         let (id, function) = self
             .function(name)
@@ -245,7 +317,7 @@ impl Program {
             .iter()
             .map(|value| Value::I64(*value))
             .collect::<Vec<_>>();
-        let root = CoreTask::new(Arc::new(self.clone()), id, args);
+        let root = CoreTask::new(Arc::new(self.clone()), generics, id, args);
         if self.runtime_context_functions()[id.0] {
             let mut scheduler = Scheduler::with_limits(root, limits)?;
             scheduler.run()
@@ -270,12 +342,29 @@ impl CheckedProgram {
         args: &[i64],
         limits: ScopeLimits,
     ) -> Result<i64, String> {
-        self.0.interpret_verified(name, args, limits)
+        self.0.interpret_verified(name, args, limits, None)
+    }
+}
+
+impl CheckedLinkedProgram {
+    pub fn interpret(&self, name: &str, args: &[i64]) -> Result<i64, String> {
+        self.interpret_with_limits(name, args, ScopeLimits::default())
+    }
+
+    pub fn interpret_with_limits(
+        &self,
+        name: &str,
+        args: &[i64],
+        limits: ScopeLimits,
+    ) -> Result<i64, String> {
+        self.program
+            .interpret_verified(name, args, limits, Some(Arc::new(self.generics.clone())))
     }
 }
 
 struct CoreTask {
     program: Arc<Program>,
+    generics: Option<Arc<CheckedModule>>,
     frames: Vec<InterpreterFrame>,
     stores: Vec<Option<Value>>,
 }
@@ -290,9 +379,15 @@ struct InterpreterFrame {
 }
 
 impl CoreTask {
-    fn new(program: Arc<Program>, entry: FunctionId, args: Vec<Value>) -> Self {
+    fn new(
+        program: Arc<Program>,
+        generics: Option<Arc<CheckedModule>>,
+        entry: FunctionId,
+        args: Vec<Value>,
+    ) -> Self {
         let mut task = Self {
             program,
+            generics,
             frames: Vec::new(),
             stores: Vec::new(),
         };
@@ -383,9 +478,12 @@ impl CoreTask {
             Operation::Gt(a, b) => Some(Value::Bool(as_i64(get(*a)) > as_i64(get(*b)))),
             Operation::Ge(a, b) => Some(Value::Bool(as_i64(get(*a)) >= as_i64(get(*b)))),
             Operation::Call(_, _) => unreachable!("calls push a retained frame"),
-            Operation::GenericCall { .. } => {
-                return Err("linked generic call requires generic interpreter dispatch".into());
-            }
+            Operation::GenericCall { callee, args, .. } => Some(eval_generic(
+                self.generics.as_deref().ok_or("unlinked generic call")?,
+                *callee,
+                args.iter().map(|value| get(*value)).collect(),
+                0,
+            )?),
             Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                 let value = get(*value);
                 self.stores[base + place.0] = Some(value);
@@ -810,7 +908,12 @@ impl CoreTask {
                     for value in &child_values {
                         collect_capability_transfers(value, &mut transfers);
                     }
-                    let child_task = CoreTask::new(Arc::clone(&self.program), child, child_values);
+                    let child_task = CoreTask::new(
+                        Arc::clone(&self.program),
+                        self.generics.clone(),
+                        child,
+                        child_values,
+                    );
                     match context
                         .as_deref_mut()
                         .expect("runtime context")
@@ -1247,6 +1350,7 @@ mod interpreter_frame_tests {
                 let token = receiver.token();
                 let child = CoreTask::new(
                     Arc::clone(&self.program),
+                    None,
                     FunctionId(0),
                     vec![Value::Receiver(token)],
                 );

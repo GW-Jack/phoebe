@@ -65,55 +65,6 @@ fn concrete(ty: GenericType, args: &[ConcreteType]) -> Result<ConcreteType, Stri
     }
 }
 
-fn check_acyclic(module: &generic_core::Module) -> Result<(), String> {
-    let edges = module
-        .functions
-        .iter()
-        .map(|function| {
-            function
-                .blocks
-                .iter()
-                .flat_map(|block| &block.instructions)
-                .filter_map(|instruction| match &instruction.operation {
-                    Operation::Call { callee, .. } => Some(*callee),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    let mut state = vec![0; module.functions.len()];
-    for index in 0..module.functions.len() {
-        if state[index] != 0 {
-            continue;
-        }
-        state[index] = 1;
-        let mut stack = vec![(index, 0)];
-        while let Some((current, offset)) = stack.last_mut() {
-            if *offset == edges[*current].len() {
-                state[*current] = 2;
-                stack.pop();
-                continue;
-            }
-            let callee = edges[*current][*offset];
-            *offset += 1;
-            match state[callee] {
-                1 => {
-                    return Err(format!(
-                        "recursive generic call cycle includes {}",
-                        module.functions[callee].name
-                    ));
-                }
-                0 => {
-                    state[callee] = 1;
-                    stack.push((callee, 0));
-                }
-                _ => {}
-            }
-        }
-    }
-    Ok(())
-}
-
 impl<'a> Planner<'a> {
     /// Check all generic bodies once, then plan concrete uses by ABI shape.
     /// The current IR has owned parameters, no dictionaries, and no
@@ -141,7 +92,7 @@ impl<'a> Planner<'a> {
         shapes: &'a Shapes,
         target: TargetAbi,
     ) -> Result<Self, String> {
-        check_acyclic(module)?;
+        generic_core::check_acyclic(module)?;
         Ok(Self {
             module,
             shapes,

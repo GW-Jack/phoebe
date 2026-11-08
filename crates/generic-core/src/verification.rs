@@ -143,6 +143,58 @@ pub fn verify_module(module: &Module) -> Result<(), String> {
     verify_module_at(module).map_err(|(_, message)| message)
 }
 
+/// Execution and shape planning currently require a finite generic call DAG.
+/// Keep this check separate from body verification so the latter remains a
+/// once-per-definition local proof.
+pub fn check_acyclic(module: &Module) -> Result<(), String> {
+    let edges = module
+        .functions
+        .iter()
+        .map(|function| {
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .filter_map(|instruction| match &instruction.operation {
+                    Operation::Call { callee, .. } => Some(*callee),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut state = vec![0; module.functions.len()];
+    for index in 0..module.functions.len() {
+        if state[index] != 0 {
+            continue;
+        }
+        state[index] = 1;
+        let mut stack = vec![(index, 0)];
+        while let Some((current, offset)) = stack.last_mut() {
+            if *offset == edges[*current].len() {
+                state[*current] = 2;
+                stack.pop();
+                continue;
+            }
+            let callee = edges[*current][*offset];
+            *offset += 1;
+            match state[callee] {
+                1 => {
+                    return Err(format!(
+                        "recursive generic call cycle includes {}",
+                        module.functions[callee].name
+                    ));
+                }
+                0 => {
+                    state[callee] = 1;
+                    stack.push((callee, 0));
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_module_at(module: &Module) -> Result<(), (usize, String)> {
     let mut names = HashMap::new();
     for (index, function) in module.functions.iter().enumerate() {

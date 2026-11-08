@@ -346,6 +346,7 @@ pub struct CheckedLinkedProgram {
 
 impl CheckedLinkedProgram {
     pub fn check(program: Program, generics: CheckedModule) -> Result<Self, String> {
+        phoebe_generic_core::check_acyclic(generics.as_module())?;
         verification::verify_linked(&program, &generics)?;
         Ok(Self { program, generics })
     }
@@ -419,6 +420,6 @@ mod lowering;
 mod scope_verification;
 mod verification;
 
-pub use lowering::{lower, lower_checked, lower_reusing};
+pub use lowering::{lower, lower_checked, lower_linked_checked, lower_reusing};
 use verification::{capability_graph, recursive_call_span, verify_ownership, verify_structure};
 pub use verification::{operands, verify};

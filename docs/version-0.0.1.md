@@ -93,14 +93,12 @@ that verified IR by transport and target return convention, including
 transitive generic calls. A shared Cranelift emitter produces JIT code and
 linkable objects through an isolated native API. Tests execute scalar calls,
 verify wide return-buffer code generation, and link a standalone generic
-object. Concrete source call sites and compiler build integration remain open.
-Concrete signature resolution against an already checked generic module now
-infers owning type arguments for scalar, nominal, and communication-right
-values without checking the generic body again; it has not yet been wired into
-the source expression lowerer or runtime dispatch.
-Checked linked Core validates concrete generic call substitutions and
-capability transfer. Ordinary Core rejects calls without a checked generic
-module; both execution backends still require dispatch integration.
+object. Concrete source calls now infer owning type arguments and lower into
+linked Core against an already checked generic module. Linked verification
+checks substitution and capability transfer; ordinary Core rejects unlinked
+calls. The interpreter executes this subset, including transitive calls and
+branches, through single-file `phoebe run <file> --interp`. Native dispatch,
+project builds, and standalone executable integration remain open.
 The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures

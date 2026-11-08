@@ -11,6 +11,25 @@ fn usage() -> &'static str {
     "usage: phoebe lock <project> | phoebe deps <project> | phoebe check <file|project> | phoebe ir <file|project> | phoebe generic-ir <file> | phoebe shapes <file|project> | phoebe frames <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable> [--cache-dir <directory>] | phoebe build-session <project> -o <executable>"
 }
 
+fn run_arguments(rest: &[String]) -> Result<(String, Vec<i64>), String> {
+    let operands = rest
+        .iter()
+        .filter(|arg| arg.as_str() != "--interp")
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let (name, values) = operands
+        .split_first()
+        .map_or(("main", &[][..]), |(name, rest)| (*name, rest));
+    let values = values
+        .iter()
+        .map(|arg| {
+            arg.parse::<i64>()
+                .map_err(|_| format!("invalid I64 argument `{arg}`"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((name.to_owned(), values))
+}
+
 fn command() -> Result<(), String> {
     let mut args = env::args().skip(1);
     let action = args.next().ok_or_else(|| usage().to_owned())?;
@@ -69,6 +88,20 @@ fn command() -> Result<(), String> {
             return Err(format!("{path}: no generic definitions"));
         }
         print!("{lowered}");
+        return Ok(());
+    }
+    let mut args = args.collect::<Vec<_>>().into_iter();
+    if action == "run"
+        && !Path::new(&path).is_dir()
+        && !path.ends_with(".toml")
+        && args.clone().any(|arg| arg == "--interp")
+    {
+        let source = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+        let ast = syntax::parse(&source).map_err(|e| format!("{path}:{}", e.render(&source)))?;
+        let linked = core::lower_linked_checked(&ast)
+            .map_err(|e| format!("{path}:{}", e.render(&source)))?;
+        let (name, values) = run_arguments(&args.collect::<Vec<_>>())?;
+        println!("{}", linked.interpret(&name, &values)?);
         return Ok(());
     }
     let program = if Path::new(&path).is_dir() || path.ends_with(".toml") {
@@ -155,25 +188,11 @@ fn command() -> Result<(), String> {
         "run" => {
             let rest = args.collect::<Vec<_>>();
             let interpreted = rest.iter().any(|arg| arg == "--interp");
-            let operands = rest
-                .iter()
-                .filter(|arg| arg.as_str() != "--interp")
-                .map(String::as_str)
-                .collect::<Vec<_>>();
-            let (name, values) = operands
-                .split_first()
-                .map_or(("main", &[][..]), |(name, rest)| (*name, rest));
-            let values = values
-                .iter()
-                .map(|arg| {
-                    arg.parse::<i64>()
-                        .map_err(|_| format!("invalid I64 argument `{arg}`"))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let (name, values) = run_arguments(&rest)?;
             let result = if interpreted {
-                program.interpret(name, &values)?
+                program.interpret(&name, &values)?
             } else {
-                native::run_checked(&program, name, &values)?
+                native::run_checked(&program, &name, &values)?
             };
             println!("{result}");
         }

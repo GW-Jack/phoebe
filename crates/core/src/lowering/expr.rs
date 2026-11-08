@@ -603,6 +603,41 @@ impl Lowerer<'_> {
                         self.emit(Operation::Product(id, values), Type::Data(id), expr.span);
                     return Ok((result, Type::Data(id)));
                 }
+                if let Some(generics) = self.generics
+                    && generics
+                        .as_module()
+                        .functions
+                        .iter()
+                        .any(|function| function.name == *name)
+                {
+                    let mut values = Vec::with_capacity(args.len());
+                    let mut types = Vec::with_capacity(args.len());
+                    for arg in args {
+                        let CallArgument::Value(arg) = arg else {
+                            return Err(Diagnostic::new(
+                                expr.span,
+                                "generic call requires owned arguments",
+                            ));
+                        };
+                        let (value, ty) = self.expr(arg, locals)?;
+                        values.push(value);
+                        types.push(ty);
+                    }
+                    let resolved = crate::generic_calls::infer(generics, name, &types)
+                        .map_err(|message| Diagnostic::new(expr.span, message))?;
+                    return Ok((
+                        self.emit(
+                            Operation::GenericCall {
+                                callee: resolved.callee,
+                                type_args: resolved.type_args,
+                                args: values,
+                            },
+                            resolved.result,
+                            expr.span,
+                        ),
+                        resolved.result,
+                    ));
+                }
                 let signature = self.functions.get(name).cloned().ok_or_else(|| {
                     Diagnostic::new(expr.span, format!("unknown function {name}"))
                 })?;

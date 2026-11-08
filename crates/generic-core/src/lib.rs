@@ -11,7 +11,7 @@ mod source;
 mod verification;
 
 pub use source::{lower, lower_program, lower_program_checked};
-pub use verification::{verify, verify_module};
+pub use verification::{check_acyclic, verify, verify_module};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ValueId(pub usize);

@@ -32,8 +32,17 @@ struct CleanupSites {
     task_returns: Vec<(BlockId, Vec<(TaskScopeId, Span)>)>,
 }
 
+struct LoweringEnvironment<'a> {
+    functions: &'a HashMap<String, FunctionSignature>,
+    generics: Option<&'a CheckedModule>,
+    data: &'a [DataDef],
+    data_names: &'a HashMap<String, DataId>,
+    spawn_effects: &'a HashMap<String, bool>,
+}
+
 struct Lowerer<'a> {
     functions: &'a HashMap<String, FunctionSignature>,
+    generics: Option<&'a CheckedModule>,
     data: &'a [DataDef],
     capability_layout: verification::capability_layout::Layout,
     data_names: &'a HashMap<String, DataId>,
@@ -54,20 +63,18 @@ struct Lowerer<'a> {
 
 impl<'a> Lowerer<'a> {
     fn new(
-        functions: &'a HashMap<String, FunctionSignature>,
-        data: &'a [DataDef],
-        data_names: &'a HashMap<String, DataId>,
-        spawn_effects: &'a HashMap<String, bool>,
+        environment: LoweringEnvironment<'a>,
         params: Vec<(ParamMode, Type)>,
         return_type: Type,
         automatic_checkpoints: bool,
     ) -> Self {
         let mut lowerer = Self {
-            functions,
-            data,
-            capability_layout: verification::capability_layout::Layout::new(data),
-            data_names,
-            spawn_effects,
+            functions: environment.functions,
+            generics: environment.generics,
+            data: environment.data,
+            capability_layout: verification::capability_layout::Layout::new(environment.data),
+            data_names: environment.data_names,
+            spawn_effects: environment.spawn_effects,
             blocks: vec![DraftBlock {
                 params: Vec::new(),
                 instructions: Vec::new(),
@@ -251,13 +258,57 @@ impl<'a> Lowerer<'a> {
 }
 
 pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
-    lower_internal(ast, None).map(|(program, _)| program)
+    lower_internal(ast, None, None).map(|(program, _)| program)
 }
 
 /// Lower and verify once, then retain the verifier guarantee for downstream
 /// compiler phases. The ordinary `lower` API remains useful for IR tooling.
 pub fn lower_checked(ast: &syntax::Program) -> Result<CheckedProgram, Diagnostic> {
     lower(ast).map(CheckedProgram)
+}
+
+/// Lower concrete definitions alongside a separately checked generic module.
+/// The returned boundary retains both proofs for later dispatch planning.
+pub fn lower_linked_checked(ast: &syntax::Program) -> Result<CheckedLinkedProgram, Diagnostic> {
+    let generics = phoebe_generic_core::lower_program_checked(ast)?;
+    phoebe_generic_core::check_acyclic(generics.as_module())
+        .map_err(|message| Diagnostic::new(Span { start: 0, end: 0 }, message))?;
+    let mut concrete = ast.clone();
+    concrete
+        .functions
+        .retain(|function| function.type_params.is_empty());
+    for function in ast
+        .functions
+        .iter()
+        .filter(|function| !function.type_params.is_empty())
+    {
+        if matches!(function.name.as_str(), "request" | "request_channel") {
+            return Err(Diagnostic::new(
+                function.name_span,
+                "function name is reserved for request operations",
+            ));
+        }
+        if ast.data.iter().any(|data| data.name == function.name) {
+            return Err(Diagnostic::new(
+                function.name_span,
+                "function name conflicts with data type",
+            ));
+        }
+    }
+    for generic in &generics.as_module().functions {
+        if let Some(function) = concrete
+            .functions
+            .iter()
+            .find(|function| function.name == generic.name)
+        {
+            return Err(Diagnostic::new(
+                function.name_span,
+                format!("duplicate function {}", generic.name),
+            ));
+        }
+    }
+    let (program, _) = lower_internal(&concrete, None, Some(&generics))?;
+    Ok(CheckedLinkedProgram { program, generics })
 }
 
 /// Reuse verified function bodies when their ASTs match under a source offset.
@@ -278,12 +329,17 @@ pub fn lower_reusing(
             "incremental function map length mismatch",
         ));
     }
-    lower_internal(ast, Some((previous_ast, previous, reusable, span_deltas)))
+    lower_internal(
+        ast,
+        Some((previous_ast, previous, reusable, span_deltas)),
+        None,
+    )
 }
 
 fn lower_internal(
     ast: &syntax::Program,
     reuse: Option<(&syntax::Program, &Program, &[bool], &[isize])>,
+    generics: Option<&CheckedModule>,
 ) -> Result<(Program, usize), Diagnostic> {
     if let Some(import) = ast.imports.first() {
         return Err(Diagnostic::new(
@@ -442,10 +498,13 @@ fn lower_internal(
             }
         }
         let mut lowerer = Lowerer::new(
-            &functions,
-            &data,
-            &data_names,
-            &spawn_analysis.effects,
+            LoweringEnvironment {
+                functions: &functions,
+                generics,
+                data: &data,
+                data_names: &data_names,
+                spawn_effects: &spawn_analysis.effects,
+            },
             function
                 .params
                 .iter()
@@ -498,7 +557,7 @@ fn lower_internal(
         data,
         functions: lowered,
     };
-    verify_structure(&program, None).map_err(|message| {
+    verify_structure(&program, generics).map_err(|message| {
         let span = if message == "recursive call cycle is not yet supported" {
             recursive_call_span(&program).unwrap_or(Span { start: 0, end: 0 })
         } else {
@@ -656,7 +715,12 @@ fn lower_internal(
     }
     // Cleanup insertion changes the final CFG. A CheckedProgram must attest
     // to the complete graph, not only to the earlier pre-cleanup checks.
-    verify(&program).map_err(|message| {
+    (if let Some(generics) = generics {
+        verification::verify_linked(&program, generics)
+    } else {
+        verify(&program)
+    })
+    .map_err(|message| {
         let span = ast
             .functions
             .iter()

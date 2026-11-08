@@ -61,18 +61,15 @@ needed for generic functions to share native bodies by shape. A transient
 instance planner now groups the verified generic subset by target ABI shape;
 Cranelift JIT emission runs the first identity, branch, and generic-call
 subset. The same emitter can produce a linkable object; a standalone smoke
-test executes a transitive generic call. Ordinary source calls and compiler
-build integration remain open.
-Concrete call-signature resolution against a verified generic module is
-available as a compiler API; source expression lowering does not use it yet.
-Linked Core generic calls now verify against that module, including concrete
-argument/result types and ownership transfer. The interpreter and native
-backend do not dispatch linked calls yet.
+test executes a transitive generic call. Concrete source calls to the checked
+generic subset now lower into linked Core, which verifies substitution and
+ownership transfer. Single-file `phoebe run <file> --interp` executes them;
+native dispatch, project builds, and standalone executables remain open.
 The isolated `phoebe-generic-core` crate now verifies a first opaque-owner
 IR slice. `phoebe generic-ir <file>` lowers identity, forwarding, and
 generic-to-generic calls into printable parametric Core. The module verifier
-checks call substitutions and owner transfer. Concrete call sites and native
-CLI integration are still unimplemented.
+checks call substitutions and owner transfer. Native CLI integration remains
+open.
 
 Build and run the compiler with Buck2:
 
@@ -92,6 +89,7 @@ buck2 run //:phoebe -- run examples/with_product.phoebe
 buck2 run //:phoebe -- run examples/multi_module
 buck2 run //:phoebe -- shapes examples/product.phoebe
 buck2 run //:phoebe -- generic-ir examples/generic_identity.phoebe
+buck2 run //:phoebe -- run examples/generic_call.phoebe --interp
 buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 /tmp/phoebe-exchange
 buck2 test //...

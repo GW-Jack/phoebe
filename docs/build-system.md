@@ -16,7 +16,7 @@ sit atop this graph.
 - `phoebe-capability`: independent capability-flow facts and verifier.
 - `phoebe-runtime`: scheduler, channels, reply rights, and native ABI.
 - `phoebe-core`: checked IR, lowering, verification, interpreter, and
-  linked call verification against checked generic modules.
+  linked call verification and interpreted dispatch against checked generic modules.
 - `phoebe-generic-core`: experimental parametric IR and opaque-owner verifier.
 - `phoebe-abi`: backend independent flattened transport shapes and a transient
   shape-shared generic instance planner.

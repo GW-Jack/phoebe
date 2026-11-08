@@ -266,4 +266,64 @@ mod tests {
                 .contains("use after move")
         );
     }
+
+    #[test]
+    fn mixed_source_lowers_concrete_call_into_checked_linked_core() {
+        let source =
+            phoebe_syntax::parse("fn identity<T>(x: T) -> T = x\nfn main() -> I64 = identity(42)")
+                .unwrap();
+        let linked = crate::lower_linked_checked(&source).unwrap();
+        assert_eq!(linked.program().functions.len(), 1);
+        assert_eq!(linked.generics().as_module().functions.len(), 1);
+        assert!(
+            linked.program().functions[0].blocks[0]
+                .instructions
+                .iter()
+                .any(|instruction| matches!(
+                    &instruction.operation,
+                    Operation::GenericCall {
+                        callee: 0,
+                        type_args,
+                        ..
+                    } if type_args == &[Type::I64]
+                ))
+        );
+        assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
+        assert!(crate::lower(&source).is_err());
+    }
+
+    #[test]
+    fn mixed_source_interprets_transitive_generic_branch() {
+        let source = phoebe_syntax::parse(
+            "fn choose<T>(flag: Bool, x: T) -> T = if (flag) { x } else { x }\nfn through<U>(flag: Bool, x: U) -> U = choose(flag, x)\nfn main() -> I64 = through(true, 41)",
+        )
+        .unwrap();
+        let linked = crate::lower_linked_checked(&source).unwrap();
+        assert_eq!(linked.interpret("main", &[]).unwrap(), 41);
+    }
+
+    #[test]
+    fn mixed_source_rejects_recursive_generic_call_before_execution() {
+        let source = phoebe_syntax::parse(
+            "fn recurse<T>(x: T) -> T = recurse(x)\nfn main() -> I64 = recurse(1)",
+        )
+        .unwrap();
+        assert!(
+            crate::lower_linked_checked(&source)
+                .err()
+                .unwrap()
+                .message
+                .contains("recursive generic call cycle")
+        );
+    }
+
+    #[test]
+    fn mixed_source_reports_concrete_generic_signature_error_at_call() {
+        let source =
+            phoebe_syntax::parse("fn identity<T>(x: T) -> T = x\nfn main() -> I64 = identity()")
+                .unwrap();
+        let error = crate::lower_linked_checked(&source).err().unwrap();
+        assert!(error.message.contains("count mismatch"));
+        assert!(error.span.start > source.functions[1].name_span.start);
+    }
 }
