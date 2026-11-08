@@ -89,7 +89,10 @@ mod tests {
         let shapes = Shapes::new(&program).unwrap();
         assert_eq!(shapes.parts(Type::Data(DataId(1))).unwrap().len(), 5);
         assert_eq!(
-            shapes.capability_parts(Type::Data(DataId(1))).unwrap().as_ref(),
+            shapes
+                .capability_parts(Type::Data(DataId(1)))
+                .unwrap()
+                .as_ref(),
             &[
                 CapabilityPart {
                     part: 1,
