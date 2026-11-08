@@ -1,0 +1,20 @@
+data Endpoints { sender: Sender<I64>, receiver: Receiver<I64> }
+data Envelope { id: I64, endpoints: Endpoints, request: Request<I64> }
+
+fn use_envelope(envelope: Envelope) -> I64 {
+  envelope.close_caps();
+  42
+}
+
+fn acquire() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  val (right, answer) = reply<I64>()?;
+  val envelope = Envelope(7, Endpoints(sender, receiver), request(5, right));
+  answer.close();
+  Result<I64, ResourceError>.Ok(use_envelope(envelope))
+}
+
+fn main() -> I64 = when (acquire()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}

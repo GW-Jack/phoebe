@@ -36,20 +36,11 @@ impl Lowerer<'_> {
         }
         let result = self.body(body, &mut scoped_locals)?;
         if let Some((_, ty)) = result
-            && matches!(
-                ty,
-                Type::SenderI64
-                    | Type::ReceiverI64
-                    | Type::ReplyToI64
-                    | Type::ReplyReceiverI64
-                    | Type::RequestI64
-                    | Type::RequestSenderI64
-                    | Type::RequestReceiverI64
-            )
+            && self.capability_layout.leaves(ty) > 0
         {
             return Err(Diagnostic::new(
                 body.tail.as_ref().map_or(span, |tail| tail.span),
-                "with cannot return its endpoint; move it to another owner inside the block",
+                "with cannot return its endpoint or a product that owns rights; move them to another owner inside the block",
             ));
         }
         let exit = self.current;
@@ -428,6 +419,12 @@ impl Lowerer<'_> {
                     }
                     let (value, ty) = self.expr(expr, locals)?;
                     if matches!(statement, Statement::Var(..)) {
+                        if self.capability_layout.leaves(ty) > 0 {
+                            return Err(Diagnostic::new(
+                                *span,
+                                "capability products cannot be stored in var yet",
+                            ));
+                        }
                         let place = self.place(ty);
                         self.emit_effect(Operation::PlaceInit(place, value), *span);
                         locals.insert(name.clone(), Binding::Var(place));

@@ -231,21 +231,27 @@ executable. Source now has `request_channel<I64>(capacity)?`,
 JIT, and standalone execution for delivery, closed-send recovery, cleanup,
 resource limits, and a full request queue. The two-request, one-slot example
 retains the second request's nested reply right across a pending send and
-resumes after the first dequeue. General capability-bearing aggregates remain
-open. Core now computes static capability leaf paths for acyclic nominal
+resumes after the first dequeue. Capability-bearing sums remain open. Core now
+computes static capability leaf paths for acyclic nominal
 products and reserves one ownership slot per leaf in each SSA value. Core
 flow moves all leaves through construction, nominal move, block arguments,
 owned calls, spawn transfer, and whole-product unpack. The interpreter,
 direct Cranelift path, retained task path, and standalone output agree on
-nested closed-product unpack. Product declarations containing capabilities
-remain rejected. Source `product.close_caps();` now consumes a nominal
+nested closed-product unpack. Product declarations may contain channel,
+reply, and concrete request rights. Source `product.close_caps();` consumes a nominal
 product; closed products generate no native close calls or runtime context.
 Core and ABI code enumerate nested capability leaves in reverse field order.
 The abstract ownership graph now transfers all leaves on return and creates
 all leaves in an owned call result; synthetic tests check that a caller must
 dispose of the result. The Core verifier rejects copying, partial field
-projection, and mutable place storage of a product with rights. Implicit
-cleanup and capability-product execution still need end-to-end validation.
+projection, and mutable place storage of a product with rights. Implicit `?`
+cleanup emits one structural close per live product, and interpreter, JIT,
+and standalone source tests cover nested close, owned call/return, whole
+unpack, spawn transfer, and resource failure cleanup. Interpreter and JIT
+tests also cover task-limit rejection before product transfer.
+Capability-bearing sums, mutable product places, and lexical `with` ownership
+of a product remain unsupported. The finite models and tests do not prove
+correctness of the compiler or generated machine code.
 The bounded two-request Maude model explores both successful retry and
 receiver closure during a pending send. It checks encoded queue/right
 ownership and terminal cleanup over 25 states; it is not a proof about the

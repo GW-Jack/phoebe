@@ -32,6 +32,27 @@ fn close_caps(value: Value, context: &mut Option<&mut Context<'_>>) -> Result<()
     Ok(())
 }
 
+fn collect_capability_transfers(value: &Value, out: &mut Vec<runtime::CapabilityTransfer>) {
+    match value {
+        Value::Product(_, fields) => {
+            for field in fields {
+                collect_capability_transfers(field, out);
+            }
+        }
+        Value::Data(_, _, Some(payload)) => collect_capability_transfers(payload, out),
+        Value::Sender(token) | Value::Receiver(token) => {
+            out.push(runtime::CapabilityTransfer::Channel(*token));
+        }
+        Value::ReplyTo(token) | Value::Request(_, token) => {
+            out.push(runtime::CapabilityTransfer::ReplyRight(*token));
+        }
+        Value::ReplyReceiver(token) => {
+            out.push(runtime::CapabilityTransfer::ReplyReceiver(*token));
+        }
+        _ => {}
+    }
+}
+
 impl Program {
     pub fn cost_events(&self) -> Vec<CostEvent> {
         let mut events = Vec::new();
@@ -781,24 +802,10 @@ impl CoreTask {
                         .into_iter()
                         .map(|arg| self.value(arg))
                         .collect::<Vec<_>>();
-                    let transfers = child_values
-                        .iter()
-                        .filter_map(|value| match value {
-                            Value::Sender(token) | Value::Receiver(token) => {
-                                Some(runtime::CapabilityTransfer::Channel(*token))
-                            }
-                            Value::ReplyTo(token) => {
-                                Some(runtime::CapabilityTransfer::ReplyRight(*token))
-                            }
-                            Value::ReplyReceiver(token) => {
-                                Some(runtime::CapabilityTransfer::ReplyReceiver(*token))
-                            }
-                            Value::Request(_, token) => {
-                                Some(runtime::CapabilityTransfer::ReplyRight(*token))
-                            }
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>();
+                    let mut transfers = Vec::new();
+                    for value in &child_values {
+                        collect_capability_transfers(value, &mut transfers);
+                    }
                     let child_task = CoreTask::new(Arc::clone(&self.program), child, child_values);
                     match context
                         .as_deref_mut()

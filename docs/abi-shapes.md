@@ -61,8 +61,8 @@ part of the native runtime.
 The shape table also records the part offset and kind of each capability leaf
 in a product. A `Request<I64>` contributes its reply right at its second
 part. Reverse traversal of this table gives structural close order without
-a runtime scan. Capability-bearing product declarations remain gated while
-the compiler and runtime ownership paths are completed.
+a runtime scan. Spawn descriptors use the same leaf offsets to transfer all
+nested rights to the child; source tests cover direct and retained parents.
 
 A sum with a payload reserves the maximum number of flattened payload words
 among its variants. Every payload component is represented as an I64 word;
@@ -79,8 +79,9 @@ indefinitely.
 User-declared sums and products may contain earlier nominal types and finite
 concrete `Result` and `Option` applications. Their shapes remain finite because
 the verifier rejects a reference to the current or a later data declaration. A
-nominal product field projection consumes its
-owner; a primitive field read leaves the owner live. A nested nominal value
+nominal product field projection consumes its owner; a primitive field read
+leaves the owner live. Products with rights require whole-product `unpack()`;
+partial field projection and `copy(x)` are rejected. Closed nominal values
 can be duplicated only with explicit `copy(x)`, which appears in the cost
 ledger. Sum payloads are accessed through `when` bindings.
 

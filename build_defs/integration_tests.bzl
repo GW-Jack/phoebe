@@ -299,6 +299,24 @@ def integration_tests(rust_test):
     )
 
     rust_test(
+        name = "source_capability_products_tests",
+        crate_root = "tests/source_capability_products.rs",
+        srcs = ["tests/source_capability_products.rs"],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
+        name = "source_capability_spawn_tests",
+        crate_root = "tests/source_capability_spawn.rs",
+        srcs = ["tests/source_capability_spawn.rs"],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
         name = "source_replies_tests",
         crate_root = "tests/source_replies.rs",
         srcs = ["tests/source_replies.rs", "examples/reply_exchange.phoebe"],

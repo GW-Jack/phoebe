@@ -92,6 +92,7 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
     if program.functions.is_empty() {
         return Err("empty Core IR program".into());
     }
+    let capability_layout = capability_layout::Layout::new(&program.data);
     let mut data_names = std::collections::HashSet::new();
     for (index, definition) in program.data.iter().enumerate() {
         if !data_names.insert(&definition.name)
@@ -110,7 +111,7 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
         }
         if definition.payloads.iter().flatten().any(|ty| match ty {
             Type::I64 | Type::Bool | Type::Unit => false,
-            Type::Data(id) => id.0 >= index,
+            Type::Data(id) => id.0 >= index || capability_layout.leaves(*ty) > 0,
             Type::ResourceError => false,
             Type::RefI64
             | Type::RefMutI64
@@ -129,22 +130,20 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
                     Type::I64 | Type::Bool | Type::Unit => false,
                     Type::Data(id) => id.0 >= index,
                     Type::ResourceError => false,
-                    Type::RefI64
-                    | Type::RefMutI64
-                    | Type::SenderI64
+                    Type::RefI64 | Type::RefMutI64 => true,
+                    Type::SenderI64
                     | Type::ReceiverI64
                     | Type::ReplyToI64
                     | Type::ReplyReceiverI64
                     | Type::RequestI64
                     | Type::RequestSenderI64
-                    | Type::RequestReceiverI64 => true,
+                    | Type::RequestReceiverI64 => false,
                 }
             {
                 return Err("invalid product field".into());
             }
         }
     }
-    let capability_layout = capability_layout::Layout::new(&program.data);
     for function in &program.functions {
         for ty in function
             .value_types

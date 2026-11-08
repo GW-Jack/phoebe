@@ -35,7 +35,9 @@ call and task across all three execution paths.
 
 `docs/version-0.0.1.md` states the release gates and the exact subset that
 currently runs. The Rust workspace parses functions over I64, Bool, Unit, nominal sums
-and products with primitive or earlier nominal fields.
+and products with primitive, earlier nominal, or communication capability fields.
+`examples/capability_product.phoebe` closes a nested product with channel and
+request rights after an owned call.
 It supports arithmetic, conditions, exhaustive `when`, mutable locals, loops,
 concrete `Option<T>` values, call-site scalar borrows, and `?` on concrete
 `Result<T, E>` applications with finite payloads. Nominal values have affine move
@@ -67,6 +69,7 @@ buck2 run //:phoebe -- run examples/channel_exchange.phoebe
 buck2 run //:phoebe -- run examples/reply_exchange.phoebe
 buck2 run //:phoebe -- run examples/request_exchange.phoebe
 buck2 run //:phoebe -- run examples/request_backpressure.phoebe
+buck2 run //:phoebe -- run examples/capability_product.phoebe
 buck2 run //:phoebe -- run examples/multi_module
 buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 /tmp/phoebe-exchange

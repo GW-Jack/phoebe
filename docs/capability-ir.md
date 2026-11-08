@@ -73,11 +73,17 @@ returned product that the caller fails to dispose of.
 Whole-product `product.unpack` now moves each leaf to its corresponding field
 block parameter. `close.caps` closes all of an owned product's leaves in
 reverse field order. The ABI computes each leaf's flattened component offset,
-including the nested reply right in `Request<I64>`. The product field
-restriction remains in force until implicit cleanup and end-to-end
-capability-product execution are verified together. Core rejects copying or
-partially projecting a product with rights, and rejects storing one in a
-mutable place until owning place operations are specified. For a sum,
+including the nested reply right in `Request<I64>`. Source products can own
+channel, reply, and concrete request rights, including through nested fields.
+Source `?` cleanup groups every live leaf of one product into one structural
+close; a partially live product is rejected. The interpreter and both native
+spawn paths enumerate nested rights when transferring an owned product to a
+child. Source tests compare direct and retained calls, returns, unpack, spawn,
+nested close, and early resource failure in the interpreter, JIT, and
+standalone executable. Task-limit rejection is checked in the interpreter and
+JIT. Core rejects copying or partially projecting
+a product with rights, and rejects storing one in a mutable place until
+owning place operations are specified. For a sum,
 the active variant determines which paths exist, so the verifier must either
 split on its tag or carry a tagged slot state. A blind union of variant slots
 would report nonexistent rights; a blind intersection would lose live ones.
@@ -179,8 +185,9 @@ argument representation. The task-limit failure edge runs source `?` cleanup.
 
 Source `?` exits now use the same exact flow graph as the verifier. The
 lowerer marks an implicit error return as a cleanup exit, reads its live
-capability slots, and emits one `close.handle` per live bare endpoint before
-returning. A first channel-creation failure therefore has no cleanup calls;
+capability slots, and emits one close per live bare right or one `close.caps`
+per live product owner before returning. A first channel-creation failure
+therefore has no cleanup calls;
 a later failure closes only the earlier, still-owned endpoints. Ordinary
 returns continue to reject leaks, and hand-built Core must spell out every
 disposition. This is the first cleanup rule, not a general lexical or
@@ -222,12 +229,13 @@ slots but does not re-enter the block or replay its instructions. Source
 lowering invokes the exact checker so `phoebe check` rejects a forgotten
 right. A `with` block closes one bare endpoint on lexical fall-through
 when its slot is still live after the body. Inner scopes are resolved first.
-On `?`, the existing error-edge cleanup closes all live bare endpoints.
+On `?`, the error-edge cleanup closes all live bare endpoints and product owners.
 Neither path emits a close after explicit close or successful transfer.
 An expression-valued `with` passes its capability-free result through a
 block parameter after the close. Returning the scoped endpoint is rejected.
-Capability-bearing aggregates, place replacement, match discard, and
-structural `close_caps()` remain open.
+Capability-bearing sums, place replacement, match discard, and lexical
+`with` ownership of a product remain open. Explicit structural `close_caps()`
+is supported for products.
 
 An internal Core function may own a bare endpoint parameter. A synchronous
 call transfers the caller's slot to the callee's entry slot; the callee must

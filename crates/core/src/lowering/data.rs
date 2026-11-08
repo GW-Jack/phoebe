@@ -28,11 +28,19 @@ fn register_application(
                 "generic data cannot carry communication capabilities yet",
             )),
             TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
-            TypeName::Named(name) => data_names
-                .get(name)
-                .copied()
-                .map(Type::Data)
-                .ok_or_else(|| Diagnostic::new(span, format!("unknown data type {name}"))),
+            TypeName::Named(name) => {
+                let id = data_names
+                    .get(name)
+                    .copied()
+                    .ok_or_else(|| Diagnostic::new(span, format!("unknown data type {name}")))?;
+                if verification::capability_layout::Layout::new(data).leaves(Type::Data(id)) > 0 {
+                    return Err(Diagnostic::new(
+                        span,
+                        "generic data cannot carry communication capabilities yet",
+                    ));
+                }
+                Ok(Type::Data(id))
+            }
             TypeName::Option(_) | TypeName::Result(_, _) => {
                 register_application(ty, span, data, data_names).map(Type::Data)
             }
@@ -119,18 +127,23 @@ pub(super) fn lower_data(
                     ));
                 }
                 Some(TypeName::Named(name)) if name == "ResourceError" => Some(Type::ResourceError),
-                Some(TypeName::Named(name)) => Some(
-                    data_names
-                        .get(name)
-                        .copied()
-                        .map(Type::Data)
-                        .ok_or_else(|| {
-                            Diagnostic::new(
-                                variant.span,
-                                format!("variant payload type `{name}` must be declared earlier"),
-                            )
-                        })?,
-                ),
+                Some(TypeName::Named(name)) => {
+                    let id = data_names.get(name).copied().ok_or_else(|| {
+                        Diagnostic::new(
+                            variant.span,
+                            format!("variant payload type `{name}` must be declared earlier"),
+                        )
+                    })?;
+                    if verification::capability_layout::Layout::new(&data).leaves(Type::Data(id))
+                        > 0
+                    {
+                        return Err(Diagnostic::new(
+                            variant.span,
+                            "sum variants cannot carry communication capabilities yet",
+                        ));
+                    }
+                    Some(Type::Data(id))
+                }
                 Some(ty @ (TypeName::Option(_) | TypeName::Result(_, _))) => Some(Type::Data(
                     register_application(ty, variant.span, &mut data, &mut data_names)?,
                 )),
@@ -148,18 +161,13 @@ pub(super) fn lower_data(
                     TypeName::I64 => Type::I64,
                     TypeName::Bool => Type::Bool,
                     TypeName::Unit => Type::Unit,
-                    TypeName::SenderI64
-                    | TypeName::ReceiverI64
-                    | TypeName::ReplyToI64
-                    | TypeName::ReplyReceiverI64
-                    | TypeName::RequestI64
-                    | TypeName::RequestSenderI64
-                    | TypeName::RequestReceiverI64 => {
-                        return Err(Diagnostic::new(
-                            field.span,
-                            "channel endpoints cannot be stored in data yet",
-                        ));
-                    }
+                    TypeName::SenderI64 => Type::SenderI64,
+                    TypeName::ReceiverI64 => Type::ReceiverI64,
+                    TypeName::ReplyToI64 => Type::ReplyToI64,
+                    TypeName::ReplyReceiverI64 => Type::ReplyReceiverI64,
+                    TypeName::RequestI64 => Type::RequestI64,
+                    TypeName::RequestSenderI64 => Type::RequestSenderI64,
+                    TypeName::RequestReceiverI64 => Type::RequestReceiverI64,
                     TypeName::Named(name) if name == "ResourceError" => Type::ResourceError,
                     TypeName::Named(name) => data_names
                         .get(name)

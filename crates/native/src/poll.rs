@@ -1277,24 +1277,22 @@ fn compile_poll_module<M: Module>(
                             &places,
                             pointer,
                         )?;
-                        let transfers = args
-                            .iter()
-                            .filter_map(|arg| {
-                                let kind = match function.value_types[arg.0] {
+                        let mut transfers = Vec::new();
+                        for arg in args {
+                            for leaf in shapes.capability_parts(function.value_types[arg.0]) {
+                                let kind = match leaf.kind {
                                     Type::SenderI64
                                     | Type::ReceiverI64
                                     | Type::RequestSenderI64
                                     | Type::RequestReceiverI64 => 0,
                                     Type::ReplyToI64 => 1,
                                     Type::ReplyReceiverI64 => 2,
-                                    Type::RequestI64 => 1,
-                                    _ => return None,
+                                    _ => unreachable!("capability ABI leaf"),
                                 };
-                                let part =
-                                    usize::from(function.value_types[arg.0] == Type::RequestI64);
-                                Some((kind, builder.use_var(variables[arg.0][part])))
-                            })
-                            .collect::<Vec<_>>();
+                                transfers
+                                    .push((kind, builder.use_var(variables[arg.0][leaf.part])));
+                            }
+                        }
                         let transfer_count = i64::try_from(transfers.len())
                             .map_err(|_| "spawn transfer count overflow")?;
                         let transfer_ptr = if transfers.is_empty() {

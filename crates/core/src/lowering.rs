@@ -1,6 +1,7 @@
 use super::*;
 
 mod body;
+mod cleanup;
 mod data;
 mod expr;
 mod request;
@@ -34,6 +35,7 @@ struct CleanupSites {
 struct Lowerer<'a> {
     functions: &'a HashMap<String, FunctionSignature>,
     data: &'a [DataDef],
+    capability_layout: verification::capability_layout::Layout,
     data_names: &'a HashMap<String, DataId>,
     spawn_effects: &'a HashMap<String, bool>,
     blocks: Vec<DraftBlock>,
@@ -63,6 +65,7 @@ impl<'a> Lowerer<'a> {
         let mut lowerer = Self {
             functions,
             data,
+            capability_layout: verification::capability_layout::Layout::new(data),
             data_names,
             spawn_effects,
             blocks: vec![DraftBlock {
@@ -529,11 +532,7 @@ fn lower_internal(
         for (block, slot) in facts.lexical_closes {
             let span = spans[block].expect("lexical close belongs to a with exit");
             let value = values[slot.0];
-            let operation = match function.value_types[value.0] {
-                Type::ReplyToI64 | Type::ReplyReceiverI64 => Operation::CloseReply(value),
-                Type::RequestI64 => Operation::CloseRequest(value),
-                _ => Operation::CloseHandle(value),
-            };
+            let operation = cleanup::close_operation(value, function.value_types[value.0]);
             function.blocks[block].instructions.push(Instruction {
                 result: None,
                 operation,
@@ -567,13 +566,14 @@ fn lower_internal(
                     .find(|(block, _)| block.0 == exit.block)
                     .map(|(_, span)| *span)
                     .expect("failure fact belongs to an implicit return");
-                for slot in exit.live {
-                    let value = values[slot.0];
-                    let operation = match function.value_types[value.0] {
-                        Type::ReplyToI64 | Type::ReplyReceiverI64 => Operation::CloseReply(value),
-                        Type::RequestI64 => Operation::CloseRequest(value),
-                        _ => Operation::CloseHandle(value),
-                    };
+                let operations = cleanup::close_live_owners(
+                    &function.value_types,
+                    &capability_layout,
+                    &values,
+                    &exit.live,
+                )
+                .map_err(|message| Diagnostic::new(span, message))?;
+                for operation in operations {
                     function.blocks[exit.block].instructions.push(Instruction {
                         result: None,
                         operation,

@@ -996,19 +996,22 @@ pub(super) fn compile_functions<M: Module>(
                             }
                             builder.ins().stack_addr(pointer_type, slot, 0)
                         };
-                        let transfers = args
-                            .iter()
-                            .filter_map(|arg| match function.value_types[arg.0] {
-                                Type::SenderI64
-                                | Type::ReceiverI64
-                                | Type::RequestSenderI64
-                                | Type::RequestReceiverI64 => Some((0, get(*arg)[0])),
-                                Type::ReplyToI64 => Some((1, get(*arg)[0])),
-                                Type::ReplyReceiverI64 => Some((2, get(*arg)[0])),
-                                Type::RequestI64 => Some((1, get(*arg)[1])),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>();
+                        let mut transfers = Vec::new();
+                        for arg in args {
+                            let parts = get(*arg);
+                            for leaf in shapes.capability_parts(function.value_types[arg.0]) {
+                                let kind = match leaf.kind {
+                                    Type::SenderI64
+                                    | Type::ReceiverI64
+                                    | Type::RequestSenderI64
+                                    | Type::RequestReceiverI64 => 0,
+                                    Type::ReplyToI64 => 1,
+                                    Type::ReplyReceiverI64 => 2,
+                                    _ => unreachable!("capability ABI leaf"),
+                                };
+                                transfers.push((kind, parts[leaf.part]));
+                            }
+                        }
                         let transfers_ptr = if transfers.is_empty() {
                             builder.ins().iconst(pointer_type, 0)
                         } else {

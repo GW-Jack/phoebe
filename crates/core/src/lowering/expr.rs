@@ -35,6 +35,12 @@ impl Lowerer<'_> {
                             "field access requires a product",
                         ));
                     };
+                    if self.capability_layout.leaves(ty) > 0 {
+                        return Err(Diagnostic::new(
+                            expr.span,
+                            "capability product requires whole-product unpack",
+                        ));
+                    }
                     let index = self.data[id.0]
                         .fields
                         .iter()
@@ -413,12 +419,24 @@ impl Lowerer<'_> {
                             if matches!(self.value_types[value.0], Type::Data(_)) =>
                         {
                             let ty = self.value_types[value.0];
+                            if self.capability_layout.leaves(ty) > 0 {
+                                return Err(Diagnostic::new(
+                                    expr.span,
+                                    "copy cannot duplicate communication capabilities",
+                                ));
+                            }
                             return Ok((self.emit(Operation::Copy(value), ty, expr.span), ty));
                         }
                         Binding::Var(place)
                             if matches!(self.place_types[place.0], Type::Data(_)) =>
                         {
                             let ty = self.place_types[place.0];
+                            if self.capability_layout.leaves(ty) > 0 {
+                                return Err(Diagnostic::new(
+                                    expr.span,
+                                    "copy cannot duplicate communication capabilities",
+                                ));
+                            }
                             return Ok((self.emit(Operation::CopyPlace(place), ty, expr.span), ty));
                         }
                         _ => {}
@@ -426,6 +444,12 @@ impl Lowerer<'_> {
                 }
                 let (value, ty) = self.expr(inner, locals)?;
                 if matches!(ty, Type::Data(_)) {
+                    if self.capability_layout.leaves(ty) > 0 {
+                        return Err(Diagnostic::new(
+                            expr.span,
+                            "copy cannot duplicate communication capabilities",
+                        ));
+                    }
                     return Ok((self.emit(Operation::Copy(value), ty, expr.span), ty));
                 }
                 return Ok((value, ty));

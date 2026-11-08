@@ -40,13 +40,16 @@ interpreter, direct Cranelift path, retained task path, and standalone path
 agree on a nested closed-product example. Source `val (a, b, ...) =
 product.unpack();` lowers to this terminator and requires one name per field.
 The existing two-name request unpack uses the same binding syntax.
-Capability-bearing product declarations remain rejected.
+Capability-bearing product declarations are accepted. The verifier requires
+whole-product unpack for field ownership, rejects copying or mutable place
+storage of such a product, and rejects capability-bearing sum payloads.
 `close.caps` consumes a nominal product. It closes capability leaves in
 reverse field order; for a closed product it has no runtime effect. Source
 `product.close_caps();` emits this operation. The verifier rejects reuse of
 the consumed owner, and the native backend emits no close call when the
-product has no rights. End-to-end capability-bearing product execution is
-still gated.
+product has no rights. The interpreter, JIT, and standalone paths run nested
+capability products through close, owned calls, returns, and spawn transfer;
+`examples/capability_product.phoebe` demonstrates the source form.
 
 The first `?` lowering uses this same `match` terminator. Its `Err` target
 receives and returns the original sum value through a block parameter; its
