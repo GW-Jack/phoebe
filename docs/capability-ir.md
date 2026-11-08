@@ -64,7 +64,11 @@ Core assigns a dense flow slot to each bare right. A static nominal product
 layout now enumerates capability leaves by declaration-order field path and
 reserves a contiguous slot range for each SSA value of that type. The slot
 number is separate from `ValueId`: adding scalar calculations cannot grow
-the ownership state. Core flow now moves all leaves together for nominal
+the ownership state. Source declaration registration computes one right bit
+per earlier data ID, so source diagnostics do not rebuild the whole layout
+for each nested field or generic application. Core verification computes its
+own layout and checks the accepted IR independently. Core flow now moves all
+leaves together for nominal
 `move`, product construction, owned calls, spawn transfer, and block arguments.
 An owned call transfers every argument leaf to the callee and creates every
 leaf in its returned value; a return transfers its result leaves out of the

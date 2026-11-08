@@ -2,11 +2,26 @@
 
 use super::*;
 
+fn has_right(ty: Type, data_rights: &[bool]) -> bool {
+    match ty {
+        Type::Data(id) => data_rights[id.0],
+        Type::SenderI64
+        | Type::ReceiverI64
+        | Type::ReplyToI64
+        | Type::ReplyReceiverI64
+        | Type::RequestI64
+        | Type::RequestSenderI64
+        | Type::RequestReceiverI64 => true,
+        _ => false,
+    }
+}
+
 fn register_application(
     application: &TypeName,
     span: Span,
     data: &mut Vec<DataDef>,
     data_names: &mut HashMap<String, DataId>,
+    data_rights: &mut Vec<bool>,
 ) -> Result<DataId, Diagnostic> {
     let name = application.key();
     if let Some(id) = data_names.get(&name) {
@@ -33,7 +48,7 @@ fn register_application(
                     .get(name)
                     .copied()
                     .ok_or_else(|| Diagnostic::new(span, format!("unknown data type {name}")))?;
-                if verification::capability_layout::Layout::new(data).leaves(Type::Data(id)) > 0 {
+                if data_rights[id.0] {
                     return Err(Diagnostic::new(
                         span,
                         "generic data cannot carry communication capabilities yet",
@@ -42,7 +57,7 @@ fn register_application(
                 Ok(Type::Data(id))
             }
             TypeName::Option(_) | TypeName::Result(_, _) => {
-                register_application(ty, span, data, data_names).map(Type::Data)
+                register_application(ty, span, data, data_names, data_rights).map(Type::Data)
             }
         }
     };
@@ -65,6 +80,7 @@ fn register_application(
         payloads,
         fields: vec![],
     });
+    data_rights.push(false);
     Ok(id)
 }
 
@@ -72,7 +88,10 @@ pub(super) fn lower_data(
     ast: &syntax::Program,
 ) -> Result<(Vec<DataDef>, HashMap<String, DataId>), Diagnostic> {
     let mut data = Vec::with_capacity(ast.data.len());
-    let mut data_names = HashMap::new();
+    let mut data_names: HashMap<String, DataId> = HashMap::new();
+    // Data IDs and this vector advance together. Declarations only refer to
+    // earlier IDs, so each field can read an already computed right bit.
+    let mut data_rights = Vec::with_capacity(ast.data.len());
     for declaration in &ast.data {
         if matches!(
             declaration.name.as_str(),
@@ -134,9 +153,7 @@ pub(super) fn lower_data(
                             format!("variant payload type `{name}` must be declared earlier"),
                         )
                     })?;
-                    if verification::capability_layout::Layout::new(&data).leaves(Type::Data(id))
-                        > 0
-                    {
+                    if data_rights[id.0] {
                         return Err(Diagnostic::new(
                             variant.span,
                             "sum variants cannot carry communication capabilities yet",
@@ -144,14 +161,21 @@ pub(super) fn lower_data(
                     }
                     Some(Type::Data(id))
                 }
-                Some(ty @ (TypeName::Option(_) | TypeName::Result(_, _))) => Some(Type::Data(
-                    register_application(ty, variant.span, &mut data, &mut data_names)?,
-                )),
+                Some(ty @ (TypeName::Option(_) | TypeName::Result(_, _))) => {
+                    Some(Type::Data(register_application(
+                        ty,
+                        variant.span,
+                        &mut data,
+                        &mut data_names,
+                        &mut data_rights,
+                    )?))
+                }
             };
             variants.push(variant.name.clone());
             payloads.push(payload);
         }
         let mut fields = Vec::with_capacity(declaration.fields.len());
+        let mut owns_rights = false;
         for field in &declaration.fields {
             if fields.iter().any(|(name, _)| name == &field.name) {
                 return Err(Diagnostic::new(field.span, "duplicate field"));
@@ -179,10 +203,17 @@ pub(super) fn lower_data(
                                 format!("product field type `{name}` must be declared earlier"),
                             )
                         })?,
-                    ty @ (TypeName::Option(_) | TypeName::Result(_, _)) => Type::Data(
-                        register_application(ty, field.span, &mut data, &mut data_names)?,
-                    ),
+                    ty @ (TypeName::Option(_) | TypeName::Result(_, _)) => {
+                        Type::Data(register_application(
+                            ty,
+                            field.span,
+                            &mut data,
+                            &mut data_names,
+                            &mut data_rights,
+                        )?)
+                    }
                 };
+            owns_rights |= has_right(ty, &data_rights);
             fields.push((field.name.clone(), ty));
         }
         data_names.insert(declaration.name.clone(), DataId(data.len()));
@@ -192,6 +223,7 @@ pub(super) fn lower_data(
             payloads,
             fields,
         });
+        data_rights.push(owns_rights);
     }
     for (used, name, variants, payloads) in [
         (
@@ -229,9 +261,17 @@ pub(super) fn lower_data(
             payloads,
             fields: vec![],
         });
+        data_rights.push(false);
     }
     for (application, span) in &ast.applied_types {
-        register_application(application, *span, &mut data, &mut data_names)?;
+        register_application(
+            application,
+            *span,
+            &mut data,
+            &mut data_names,
+            &mut data_rights,
+        )?;
     }
+    debug_assert_eq!(data.len(), data_rights.len());
     Ok((data, data_names))
 }

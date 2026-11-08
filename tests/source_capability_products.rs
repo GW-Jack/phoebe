@@ -132,6 +132,20 @@ fn main() -> I64 = 0
             ),
             "sum variants cannot carry",
         ),
+        (
+            base.replace(
+                "fn use_pair",
+                "data Envelope { pair: Pair }\ndata MaybeEnvelope { None, Some(value: Envelope) }\nfn use_pair",
+            ),
+            "sum variants cannot carry",
+        ),
+        (
+            base.replace(
+                "fn use_pair",
+                "data Envelope { pair: Pair }\nfn bad(value: Option<Envelope>) -> I64 = 0\nfn use_pair",
+            ),
+            "generic data cannot carry",
+        ),
     ] {
         let error = core::lower(&syntax::parse(&changed).unwrap()).unwrap_err();
         assert!(error.message.contains(message), "{error:?}");

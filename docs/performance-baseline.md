@@ -66,6 +66,15 @@ and cache bookkeeping. They exclude native code generation and linking.
 The difference is too small to establish a useful speedup on this fixture;
 larger projects and edited-module rebuilds need measurement.
 
+## Declaration registration
+
+Source data registration now records whether each completed declaration owns
+any communication right. Earlier declarations have a constant-time lookup
+when validating a nested product or a generic application. This removes a
+full capability-layout rebuild from those source checks. The Core verifier
+still derives the complete leaf layout independently before accepting the IR.
+No compile-time speedup has been measured for this change.
+
 ## Native object cache experiment
 
 On 2026-11-07, a macOS ARM64 debug build with Rust 1.95.0 tested a proposed
