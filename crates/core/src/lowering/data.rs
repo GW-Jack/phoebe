@@ -1,0 +1,224 @@
+//! Nominal declaration and concrete Result application registration.
+
+use super::*;
+
+fn register_result_application(
+    application: &TypeName,
+    span: Span,
+    data: &mut Vec<DataDef>,
+    data_names: &mut HashMap<String, DataId>,
+) -> Result<DataId, Diagnostic> {
+    let TypeName::Result(ok, err) = application else {
+        unreachable!("only Result applications are registered here")
+    };
+    let name = application.key();
+    if let Some(id) = data_names.get(&name) {
+        return Ok(*id);
+    }
+    let mut payload = |ty: &TypeName| -> Result<Type, Diagnostic> {
+        match ty {
+            TypeName::I64 => Ok(Type::I64),
+            TypeName::Bool => Ok(Type::Bool),
+            TypeName::SenderI64
+            | TypeName::ReceiverI64
+            | TypeName::ReplyToI64
+            | TypeName::ReplyReceiverI64
+            | TypeName::RequestI64
+            | TypeName::RequestSenderI64
+            | TypeName::RequestReceiverI64 => Err(Diagnostic::new(
+                span,
+                "Result cannot carry communication capabilities yet",
+            )),
+            TypeName::Named(name) if name == "ResourceError" => Ok(Type::ResourceError),
+            TypeName::Named(name) => data_names
+                .get(name)
+                .copied()
+                .map(Type::Data)
+                .ok_or_else(|| Diagnostic::new(span, format!("unknown data type {name}"))),
+            TypeName::Result(_, _) => {
+                register_result_application(ty, span, data, data_names).map(Type::Data)
+            }
+        }
+    };
+    let ok = payload(ok)?;
+    let err = payload(err)?;
+    let id = DataId(data.len());
+    data_names.insert(name.clone(), id);
+    data.push(DataDef {
+        name,
+        variants: vec!["Ok".into(), "Err".into()],
+        payloads: vec![Some(ok), Some(err)],
+        fields: vec![],
+    });
+    Ok(id)
+}
+
+pub(super) fn lower_data(
+    ast: &syntax::Program,
+) -> Result<(Vec<DataDef>, HashMap<String, DataId>), Diagnostic> {
+    let mut data = Vec::with_capacity(ast.data.len());
+    let mut data_names = HashMap::new();
+    for declaration in &ast.data {
+        if matches!(
+            declaration.name.as_str(),
+            "I64"
+                | "Bool"
+                | "Result"
+                | "ResourceError"
+                | "Sender"
+                | "Receiver"
+                | "Send"
+                | "Receive"
+                | "ReplyTo"
+                | "ReplyReceiver"
+                | "Request"
+                | "RequestSender"
+                | "RequestReceiver"
+                | "SendRequest"
+                | "ReceiveRequest"
+                | "request"
+                | "request_channel"
+                | "Complete"
+                | "Reply"
+        ) || data_names.contains_key(&declaration.name)
+        {
+            return Err(Diagnostic::new(declaration.span, "duplicate data type"));
+        }
+        let mut variants = Vec::with_capacity(declaration.variants.len());
+        let mut payloads = Vec::with_capacity(declaration.variants.len());
+        for variant in &declaration.variants {
+            if variants.contains(&variant.name) {
+                return Err(Diagnostic::new(variant.span, "duplicate variant"));
+            }
+            let payload = match variant.payload.as_ref().map(|field| &field.ty) {
+                None => None,
+                Some(TypeName::I64) => Some(Type::I64),
+                Some(TypeName::Bool) => Some(Type::Bool),
+                Some(
+                    TypeName::SenderI64
+                    | TypeName::ReceiverI64
+                    | TypeName::ReplyToI64
+                    | TypeName::ReplyReceiverI64
+                    | TypeName::RequestI64
+                    | TypeName::RequestSenderI64
+                    | TypeName::RequestReceiverI64,
+                ) => {
+                    return Err(Diagnostic::new(
+                        variant.span,
+                        "channel endpoints cannot be stored in data yet",
+                    ));
+                }
+                Some(TypeName::Named(name)) if name == "ResourceError" => Some(Type::ResourceError),
+                Some(TypeName::Named(name)) => Some(
+                    data_names
+                        .get(name)
+                        .copied()
+                        .map(Type::Data)
+                        .ok_or_else(|| {
+                            Diagnostic::new(
+                                variant.span,
+                                format!("variant payload type `{name}` must be declared earlier"),
+                            )
+                        })?,
+                ),
+                Some(ty @ TypeName::Result(_, _)) => Some(Type::Data(register_result_application(
+                    ty,
+                    variant.span,
+                    &mut data,
+                    &mut data_names,
+                )?)),
+            };
+            variants.push(variant.name.clone());
+            payloads.push(payload);
+        }
+        let mut fields = Vec::with_capacity(declaration.fields.len());
+        for field in &declaration.fields {
+            if fields.iter().any(|(name, _)| name == &field.name) {
+                return Err(Diagnostic::new(field.span, "duplicate field"));
+            }
+            let ty =
+                match &field.ty {
+                    TypeName::I64 => Type::I64,
+                    TypeName::Bool => Type::Bool,
+                    TypeName::SenderI64
+                    | TypeName::ReceiverI64
+                    | TypeName::ReplyToI64
+                    | TypeName::ReplyReceiverI64
+                    | TypeName::RequestI64
+                    | TypeName::RequestSenderI64
+                    | TypeName::RequestReceiverI64 => {
+                        return Err(Diagnostic::new(
+                            field.span,
+                            "channel endpoints cannot be stored in data yet",
+                        ));
+                    }
+                    TypeName::Named(name) if name == "ResourceError" => Type::ResourceError,
+                    TypeName::Named(name) => data_names
+                        .get(name)
+                        .copied()
+                        .map(Type::Data)
+                        .ok_or_else(|| {
+                            Diagnostic::new(
+                                field.span,
+                                format!("product field type `{name}` must be declared earlier"),
+                            )
+                        })?,
+                    ty @ TypeName::Result(_, _) => Type::Data(register_result_application(
+                        ty,
+                        field.span,
+                        &mut data,
+                        &mut data_names,
+                    )?),
+                };
+            fields.push((field.name.clone(), ty));
+        }
+        data_names.insert(declaration.name.clone(), DataId(data.len()));
+        data.push(DataDef {
+            name: declaration.name.clone(),
+            variants,
+            payloads,
+            fields,
+        });
+    }
+    for (used, name, variants, payloads) in [
+        (
+            ast.uses_send_outcome,
+            "Send<I64>",
+            vec!["Sent", "Closed"],
+            vec![None, Some(Type::I64)],
+        ),
+        (
+            ast.uses_receive_outcome,
+            "Receive<I64>",
+            vec!["Value", "End"],
+            vec![Some(Type::I64), None],
+        ),
+        (
+            ast.uses_complete_outcome,
+            "Complete<I64>",
+            vec!["Delivered", "Closed"],
+            vec![None, Some(Type::I64)],
+        ),
+        (
+            ast.uses_reply_outcome,
+            "Reply<I64>",
+            vec!["Value", "End"],
+            vec![Some(Type::I64), None],
+        ),
+    ] {
+        if !used {
+            continue;
+        }
+        data_names.insert(name.to_owned(), DataId(data.len()));
+        data.push(DataDef {
+            name: name.to_owned(),
+            variants: variants.into_iter().map(str::to_owned).collect(),
+            payloads,
+            fields: vec![],
+        });
+    }
+    for (application, span) in &ast.applied_results {
+        register_result_application(application, *span, &mut data, &mut data_names)?;
+    }
+    Ok((data, data_names))
+}

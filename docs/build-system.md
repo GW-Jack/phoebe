@@ -19,11 +19,14 @@ and `syntax` feed `native`. The root facade and CLI sit atop this graph.
 - Root `phoebe`: compatibility facade and CLI.
 
 Within Core, IR definitions stay in `lib.rs`; statement lowering lives in
-`lowering/body.rs`, expression lowering in `lowering/expr.rs`, and function
-assembly in `lowering.rs`. Verification and the interpreter are separate
-modules. Within Runtime, the native ABI is separate
-from the scheduler. Within Native, direct codegen and retained polling are
-separate from the JIT/object entry points. Native reachability selection lives
+`lowering/body.rs`, expression lowering in `lowering/expr.rs`, nominal
+registration in `lowering/data.rs`, incremental compatibility in
+`lowering/reuse.rs`, and function assembly in `lowering.rs`. Core verification
+keeps the ownership pass in `verification.rs`, with separate operation typing,
+structural, and capability-flow modules; the interpreter is separate. Within
+Runtime, the native ABI is separate from the scheduler. Within Native, direct
+codegen, retained polling, and
+in-process object reuse live in separate modules. Native reachability selection lives
 in `reachability.rs`. These are source boundaries; the
 crate boundaries determine independent build and cache units.
 

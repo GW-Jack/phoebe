@@ -3,6 +3,7 @@
 
 use super::*;
 use cranelift_frontend::Variable;
+use cranelift_object::{ObjectBuilder, ObjectModule};
 
 pub struct PollExecutable {
     module: JITModule,
