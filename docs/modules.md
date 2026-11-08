@@ -104,8 +104,8 @@ context needs, suspension flags, and frame facts before reuse. A changed
 retained child frame invalidates direct parents that could spawn it. A poll
 object can now be reused when its reachable call and spawn closure and their
 transitively referenced nominal layouts are unchanged; the exact key excludes
-source spans and normalizes call targets to qualified names. Poll-local symbols also derive
-from those names, so unrelated function or nominal data insertions can
+source spans and normalizes call targets to qualified names. Poll-local
+symbols also derive from those names, so unrelated function or nominal data insertions can
 preserve the object. A layout change to a referenced type invalidates it.
 These symbols are not a public ABI.
 
@@ -114,8 +114,15 @@ The current CLI starts a fresh parse and Core session for each command.
 and native sessions through a line-oriented interface: send `build` after an
 edit, inspect the reuse counts, and send `quit` when finished. A body-only edit
 with a stable public interface can preserve checked Core and direct native
-objects for unrelated functions. The session itself holds these caches in
-memory; restarting it begins with a cold build.
+objects for unrelated functions. When the full emitted object set and runtime
+archive file stamp match its last successful link, and the output at the same
+path is unchanged, the session also skips the linker. The archive stamp uses
+path, size, file identity, modification time, and change time. The output
+digest is cached while its stamp and mode stay unchanged; a changed output is
+rehashed before reuse. The CLI reports
+`linked=false` for that case. It still parses, checks, and verifies the program.
+The session itself holds these caches in memory; restarting it begins with a
+cold build.
 `phoebe build <project> -o <output> --cache-dir <directory>` can persist
 the complete emitted object set across compiler invocations when its codegen
 inputs are unchanged. The cache key excludes source spans and the bodies of
@@ -123,8 +130,8 @@ unreachable pure leaf functions; it retains their signatures and all other
 checked Core. Every hit still verifies the full Core program. The cache is
 versioned and bound to the local compiler
 executable's path, size, modification time, and file identity. It checks an
-exact codegen key and discards truncated or corrupt entries. The linker runs on
-every build. The cache is optional and does not persist typed interfaces or
+exact codegen key and discards truncated or corrupt entries. The one-shot
+`build --cache-dir` command links on every invocation. The cache is optional and does not persist typed interfaces or
 incremental type checking. A changed Core program recompiles its object set;
 in-process `NativeBuildSession` still reuses direct function objects after
 individual body edits or harmless function-index shifts.

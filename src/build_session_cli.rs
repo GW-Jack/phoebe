@@ -21,12 +21,13 @@ pub(crate) fn run(project: &Path, output: &Path) -> Result<(), String> {
                     Ok(report) => {
                         writeln!(
                         stdout,
-                        "built\t{}\tparsed={}\tchanged_interfaces={}\treused_core={}\treused_objects={}\telapsed_ms={:.3}",
+                            "built\t{}\tparsed={}\tchanged_interfaces={}\treused_core={}\treused_objects={}\tlinked={}\telapsed_ms={:.3}",
                         output.display(),
                         report.compile.load.parsed.len(),
                         report.compile.load.changed_interfaces.len(),
                         report.compile.reused_core_functions,
                         report.reused_native_objects,
+                        report.linked,
                         started.elapsed().as_secs_f64() * 1000.0,
                     )
                     .map_err(|error| error.to_string())?;

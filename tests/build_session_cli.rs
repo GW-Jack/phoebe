@@ -53,7 +53,9 @@ fn cli_session_reuses_a_warm_project_without_restarting() {
     assert_eq!(lines.len(), 4, "{stdout}");
     assert_eq!(lines[0], "ready");
     assert!(lines[1].contains("parsed=2\tchanged_interfaces=2\treused_core=0"));
+    assert!(lines[1].contains("linked=true"));
     assert!(lines[2].contains("parsed=0\tchanged_interfaces=0\treused_core=6"));
+    assert!(lines[2].contains("linked=false"));
     let reused_objects = lines[2]
         .split('\t')
         .find_map(|field| field.strip_prefix("reused_objects="))

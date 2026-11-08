@@ -43,11 +43,13 @@ fn project_build_session_reuses_bodies_and_objects_after_body_edits() {
     assert_eq!(first.compile.load.parsed.len(), 2);
     assert_eq!(first.compile.reused_core_functions, 0);
     assert_eq!(first.reused_native_objects, 0);
+    assert!(first.linked);
     let warm = session.build(&path, &executable).unwrap();
     assert!(warm.compile.load.parsed.is_empty());
     assert!(warm.compile.load.changed_interfaces.is_empty());
     assert!(warm.compile.reused_core_functions > 0);
     assert!(warm.reused_native_objects > 0);
+    assert!(!warm.linked);
 
     std::fs::write(&math, original.replace("a + b", "a + b + 1")).unwrap();
     let edited = session.build(&path, &executable).unwrap();
@@ -55,6 +57,7 @@ fn project_build_session_reuses_bodies_and_objects_after_body_edits() {
     assert!(edited.compile.load.changed_interfaces.is_empty());
     assert!(edited.compile.reused_core_functions > 0);
     assert!(edited.reused_native_objects > 0);
+    assert!(edited.linked);
     let output = std::process::Command::new(&executable).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"43\n");
@@ -67,9 +70,92 @@ fn project_build_session_reuses_bodies_and_objects_after_body_edits() {
     std::fs::write(&math, original).unwrap();
     let repaired = session.build(&path, &executable).unwrap();
     assert_eq!(repaired.compile.load.parsed, ["math"]);
+    assert!(repaired.linked);
     let output = std::process::Command::new(&executable).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn native_build_session_skips_only_intact_matching_link_outputs() {
+    let source = "fn main() -> I64 = 42";
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let path = temp_project();
+    let output = path.join("first");
+    let other = path.join("second");
+    let mut session = native::NativeBuildSession::new();
+
+    let first = session.build_executable_report(&program, &output).unwrap();
+    assert_eq!(first.reused_objects, 0);
+    assert!(first.linked);
+    let warm = session.build_executable_report(&program, &output).unwrap();
+    assert_eq!(warm.reused_objects, 1);
+    assert!(!warm.linked);
+
+    let mut bytes = std::fs::read(&output).unwrap();
+    bytes[0] ^= 1;
+    std::fs::write(&output, bytes).unwrap();
+    assert!(
+        session
+            .build_executable_report(&program, &output)
+            .unwrap()
+            .linked
+    );
+    assert_eq!(
+        std::process::Command::new(&output).output().unwrap().stdout,
+        b"42\n"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&output).unwrap().permissions();
+        permissions.set_mode(permissions.mode() & !0o111);
+        std::fs::set_permissions(&output, permissions).unwrap();
+        assert!(
+            session
+                .build_executable_report(&program, &output)
+                .unwrap()
+                .linked
+        );
+        assert_eq!(
+            std::process::Command::new(&output).output().unwrap().stdout,
+            b"42\n"
+        );
+    }
+
+    std::fs::remove_file(&output).unwrap();
+    assert!(
+        session
+            .build_executable_report(&program, &output)
+            .unwrap()
+            .linked
+    );
+    assert!(
+        session
+            .build_executable_report(&program, &other)
+            .unwrap()
+            .linked
+    );
+    assert!(
+        !session
+            .build_executable_report(&program, &other)
+            .unwrap()
+            .linked
+    );
+
+    let changed = core::lower(&syntax::parse("fn main() -> I64 = 43").unwrap()).unwrap();
+    assert!(
+        session
+            .build_executable_report(&changed, &other)
+            .unwrap()
+            .linked
+    );
+    assert_eq!(
+        std::process::Command::new(&other).output().unwrap().stdout,
+        b"43\n"
+    );
     std::fs::remove_dir_all(path).unwrap();
 }
 
@@ -80,8 +166,16 @@ fn retained_poll_object_reuses_unrelated_edits_and_rebuilds_reachable_code() {
         std::env::temp_dir().join(format!("phoebe-poll-object-cache-{}", std::process::id()));
     let mut session = native::NativeBuildSession::new();
     let initial = core::lower(&syntax::parse(source).unwrap()).unwrap();
-    assert_eq!(session.build_executable(&initial, &executable).unwrap(), 0);
-    assert_eq!(session.build_executable(&initial, &executable).unwrap(), 1);
+    let first = session
+        .build_executable_report(&initial, &executable)
+        .unwrap();
+    assert_eq!(first.reused_objects, 0);
+    assert!(first.linked);
+    let warm = session
+        .build_executable_report(&initial, &executable)
+        .unwrap();
+    assert_eq!(warm.reused_objects, 1);
+    assert!(!warm.linked);
 
     let unrelated = format!("{source}\nfn unused() -> I64 = 9\n");
     let unrelated = core::lower(&syntax::parse(&unrelated).unwrap()).unwrap();

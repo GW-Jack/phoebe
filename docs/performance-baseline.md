@@ -86,6 +86,26 @@ an edited-program rebuild. The six-function difference is small; neither
 result establishes a cross-platform speedup or a persistent typed-interface
 cache.
 
+## In-process link reuse
+
+On 2026-11-08, the macOS ARM64 debug compiler ran one cold and 20 unchanged
+`build` triggers through each `phoebe build-session` process. The module
+fixture was `examples/multi_module/`; the channel fixture used
+`examples/channel_exchange.phoebe` as the root module of a temporary project.
+Both produced executable output. Each warm trigger still loaded the project,
+verified Core, and checked native object keys, but reused the linked file.
+
+| Project | First build | Median warm trigger | Warm range |
+| --- | ---: | ---: | ---: |
+| Six-function modules | 57.5 ms | 0.54 ms | 0.51–0.80 ms |
+| Bounded channel exchange | 111.1 ms | 1.09 ms | 1.06–1.35 ms |
+
+The cold channel result includes a C link and checks the runtime archive's
+file stamp. Warm triggers use cached output digests when file identity and
+change metadata are unchanged. These are no-op rebuild measurements in one
+long-lived process; they do not measure edited code, fresh process startup, release builds, or
+cross-machine performance.
+
 A separate generated 1,000-function direct chain on the same host had a
 169.6 ms one-shot median and a 47.5 ms warm-cache median over three runs per
 path. After removing an unnecessary durability sync, three builds into fresh

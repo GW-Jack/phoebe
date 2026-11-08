@@ -8,6 +8,7 @@ use crate::{ProjectCompilerSession, native, project_session::CompileReport};
 pub struct BuildReport {
     pub compile: CompileReport,
     pub reused_native_objects: usize,
+    pub linked: bool,
 }
 
 #[derive(Default)]
@@ -23,10 +24,11 @@ impl ProjectBuildSession {
 
     pub fn build(&mut self, project: &Path, output: &Path) -> Result<BuildReport, String> {
         let (program, compile) = self.compiler.compile(project)?;
-        let reused_native_objects = self.native.build_executable(&program, output)?;
+        let native = self.native.build_executable_report(&program, output)?;
         Ok(BuildReport {
             compile,
-            reused_native_objects,
+            reused_native_objects: native.reused_objects,
+            linked: native.linked,
         })
     }
 }

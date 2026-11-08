@@ -138,7 +138,9 @@ reachable call and spawn
 closures after unrelated body edits or function insertions. Their keys ignore
 spans and normalize call targets to names; poll-local symbols use those names.
 A reachable helper, task, or nominal layout change rebuilds the object.
-Unrelated nominal data changes can preserve it. The optional CLI `--cache-dir`
+Unrelated nominal data changes can preserve it. An in-process session skips
+the linker when its emitted objects and runtime archive file stamp match the last
+successful link and the output file is intact. The optional CLI `--cache-dir`
 persists a complete
 emitted object set for unchanged codegen inputs, ignoring source spans and
 unreachable pure leaf bodies, but still parses, verifies Core,

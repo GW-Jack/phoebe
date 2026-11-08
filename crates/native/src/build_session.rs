@@ -1,7 +1,10 @@
 //! In-process native object reuse and standalone object emission.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
+use std::time::SystemTime;
 
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_module::default_libcall_names;
@@ -9,8 +12,12 @@ use cranelift_native::builder as native_builder;
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use phoebe_core::{self as core, Operation, Program, Terminator, Type};
 use phoebe_frame as frame_layout;
+use sha2::{Digest, Sha256};
 
-use super::{ObjectEmission, compile_functions, link_executable, poll, spawn_poll_symbol};
+use super::{
+    ObjectEmission, compile_functions, find_runtime_archive, link_executable, poll,
+    spawn_poll_symbol,
+};
 use crate::reachability::{spawned_poll_children_in, standalone_direct_functions};
 
 #[derive(Clone, Default)]
@@ -20,6 +27,111 @@ pub struct NativeBuildSession {
     facts: BTreeMap<String, String>,
     objects: BTreeMap<String, (String, Vec<u8>)>,
     poll_objects: BTreeMap<String, (String, Vec<u8>, usize)>,
+    linked_output: Option<LinkedOutput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileStamp {
+    path: PathBuf,
+    len: u64,
+    modified: SystemTime,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    changed_seconds: i64,
+    #[cfg(unix)]
+    changed_nanoseconds: i64,
+}
+
+impl FileStamp {
+    fn read(path: &Path) -> Option<Self> {
+        let metadata = fs::metadata(path).ok()?;
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Some(Self {
+            path: path.to_owned(),
+            len: metadata.len(),
+            modified: metadata.modified().ok()?,
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+            #[cfg(unix)]
+            changed_seconds: metadata.ctime(),
+            #[cfg(unix)]
+            changed_nanoseconds: metadata.ctime_nsec(),
+        })
+    }
+}
+
+#[derive(Clone)]
+struct LinkedOutput {
+    path: PathBuf,
+    input_digest: [u8; 32],
+    output_digest: [u8; 32],
+    output_stamp: FileStamp,
+    output_mode: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeBuildReport {
+    pub reused_objects: usize,
+    pub linked: bool,
+}
+
+fn output_fingerprint(
+    path: &Path,
+    previous: Option<&LinkedOutput>,
+) -> Option<([u8; 32], FileStamp, u32)> {
+    let stamp = FileStamp::read(path)?;
+    let mode = output_mode(path)?;
+    if let Some(previous) = previous
+        && previous.output_stamp == stamp
+        && previous.output_mode == mode
+    {
+        return Some((previous.output_digest, stamp, mode));
+    }
+    let bytes = fs::read(path).ok()?;
+    if FileStamp::read(path)? != stamp || output_mode(path)? != mode {
+        return None;
+    }
+    Some((Sha256::digest(bytes).into(), stamp, mode))
+}
+
+#[cfg(unix)]
+fn output_mode(path: &Path) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    Some(fs::metadata(path).ok()?.permissions().mode())
+}
+
+#[cfg(not(unix))]
+fn output_mode(path: &Path) -> Option<u32> {
+    Some(u32::from(fs::metadata(path).ok()?.permissions().readonly()))
+}
+
+fn link_input_digest(program: &Program, emitted: &ObjectEmission) -> Option<[u8; 32]> {
+    let mut hash = Sha256::new();
+    hash.update(b"PHOEBE-SESSION-LINK\0\x01");
+    hash.update((emitted.root.len() as u64).to_le_bytes());
+    hash.update(&emitted.root);
+    hash.update((emitted.children.len() as u64).to_le_bytes());
+    for child in &emitted.children {
+        hash.update((child.len() as u64).to_le_bytes());
+        hash.update(child);
+    }
+    hash.update((emitted.poll_words.unwrap_or(0) as u64).to_le_bytes());
+    let uses_runtime = emitted.poll_words.is_some()
+        || program
+            .function("main")
+            .is_some_and(|(main, _)| program.runtime_context_functions()[main.0]);
+    hash.update([u8::from(uses_runtime)]);
+    if uses_runtime {
+        let archive = find_runtime_archive().ok()?;
+        hash.update(format!("{:?}", FileStamp::read(&archive)?));
+    }
+    Some(hash.finalize().into())
 }
 
 fn canonical_type(ty: &mut Type, data_ids: &[core::DataId]) {
@@ -202,11 +314,53 @@ impl NativeBuildSession {
     /// Build with one object per direct function and retained poll entry.
     /// Returns the number of objects reused from this session's last build.
     pub fn build_executable(&mut self, program: &Program, output: &Path) -> Result<usize, String> {
+        Ok(self
+            .build_executable_report(program, output)?
+            .reused_objects)
+    }
+
+    /// An identical link input and intact output can reuse the executable.
+    /// Core verification and object-key checks still run on every build.
+    pub fn build_executable_report(
+        &mut self,
+        program: &Program,
+        output: &Path,
+    ) -> Result<NativeBuildReport, String> {
         let mut next = self.clone();
         let (emitted, reused) = emit_object_with_poll_layout(program, true, Some(&mut next))?;
+        let input_digest = link_input_digest(program, &emitted);
+        if let (Some(input_digest), Some(previous)) = (input_digest, &self.linked_output)
+            && previous.path == output
+            && previous.input_digest == input_digest
+            && output_fingerprint(output, Some(previous)).is_some_and(|(digest, _, mode)| {
+                digest == previous.output_digest && mode == previous.output_mode
+            })
+        {
+            *self = next;
+            return Ok(NativeBuildReport {
+                reused_objects: reused,
+                linked: false,
+            });
+        }
         link_executable(program, &emitted, output)?;
+        let after_link = link_input_digest(program, &emitted);
+        next.linked_output = input_digest
+            .filter(|before| Some(*before) == after_link)
+            .zip(output_fingerprint(output, None))
+            .map(
+                |(input_digest, (output_digest, output_stamp, output_mode))| LinkedOutput {
+                    path: output.to_owned(),
+                    input_digest,
+                    output_digest,
+                    output_stamp,
+                    output_mode,
+                },
+            );
         *self = next;
-        Ok(reused)
+        Ok(NativeBuildReport {
+            reused_objects: reused,
+            linked: true,
+        })
     }
 }
 
@@ -460,4 +614,22 @@ pub(super) fn emit_object_with_poll_layout(
         },
         reused,
     ))
+}
+
+#[cfg(test)]
+mod link_cache_tests {
+    use super::*;
+
+    #[test]
+    fn same_size_archive_replacement_changes_file_stamp() {
+        let path =
+            std::env::temp_dir().join(format!("phoebe-archive-stamp-{}", std::process::id()));
+        let replacement = path.with_extension("replacement");
+        fs::write(&path, b"first").unwrap();
+        let before = FileStamp::read(&path).unwrap();
+        fs::write(&replacement, b"other").unwrap();
+        fs::rename(&replacement, &path).unwrap();
+        assert_ne!(FileStamp::read(&path), Some(before));
+        fs::remove_file(path).unwrap();
+    }
 }

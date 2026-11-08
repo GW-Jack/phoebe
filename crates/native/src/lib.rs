@@ -31,7 +31,7 @@ mod poll;
 mod reachability;
 mod runtime_imports;
 
-pub use build_session::NativeBuildSession;
+pub use build_session::{NativeBuildReport, NativeBuildSession};
 pub use cache::{CachedBuildReport, build_executable_cached};
 pub use codegen::frame_word_layouts;
 pub use poll::{PollExecutable, PollLeafExecutable, compile_poll_jit, compile_poll_leaf_jit};
