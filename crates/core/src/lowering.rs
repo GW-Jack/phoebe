@@ -497,6 +497,7 @@ fn lower_internal(
     // A single abstract flow pass decides lexical closes in control-flow
     // order. Provisional closes alter the abstract state, so nested aliases
     // close once. The final Core contains only the closes actually needed.
+    let capability_layout = verification::capability_layout::Layout::new(&program.data);
     for ((function, exits), source_function) in program
         .functions
         .iter_mut()
@@ -514,7 +515,9 @@ fn lower_internal(
                 matches!(block.terminator, Terminator::Return(_)).then_some(BlockId(index))
             })
             .collect::<Vec<_>>();
-        let Some((graph, values)) = capability_graph(function, &returns, &exits.scopes) else {
+        let Some((graph, values)) =
+            capability_graph(function, &capability_layout, &returns, &exits.scopes)
+        else {
             continue;
         };
         let facts = capability_flow::verify(&graph)
@@ -552,7 +555,9 @@ fn lower_internal(
             .iter()
             .map(|(block, _)| *block)
             .collect::<Vec<_>>();
-        if let Some((graph, values)) = capability_graph(function, &cleanup_blocks, &[]) {
+        if let Some((graph, values)) =
+            capability_graph(function, &capability_layout, &cleanup_blocks, &[])
+        {
             let facts = capability_flow::verify(&graph)
                 .map_err(|message| Diagnostic::new(source_function.name_span, message))?;
             for exit in facts.failures {

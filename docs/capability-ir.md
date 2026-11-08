@@ -60,11 +60,12 @@ compact bitsets of capability slots; ordinary generated code executes only
 the explicit transitions. Maude explores bounded abstract machines during
 development and CI; it is not invoked for each compilation.
 
-Core assigns a dense flow slot only to each capability-bearing SSA value.
-The slot number is separate from `ValueId`: adding scalar calculations cannot
-grow the ownership state. A future aggregate value needs one slot per leaf
-capability path, not one slot for its entire product or sum. For a product,
-the paths are field names followed recursively by child paths. For a sum,
+Core assigns a dense flow slot to each bare right. A static nominal product
+layout now enumerates capability leaves by declaration-order field path and
+reserves a contiguous slot range for each SSA value of that type. The slot
+number is separate from `ValueId`: adding scalar calculations cannot grow
+the ownership state. The product field restriction remains in force because
+pack, split, projection, and cleanup do not yet update those ranges. For a sum,
 the active variant determines which paths exist, so the verifier must either
 split on its tag or carry a tagged slot state. A blind union of variant slots
 would report nonexistent rights; a blind intersection would lose live ones.

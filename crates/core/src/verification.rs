@@ -1,6 +1,7 @@
 use super::*;
 
 mod capability;
+pub(crate) mod capability_layout;
 mod operations;
 mod structure;
 

@@ -1,23 +1,12 @@
 //! Exact capability-flow graph derived from checked Core.
 
+use super::capability_layout::Layout;
 use super::*;
 
-fn is_capability(ty: Type) -> bool {
-    matches!(
-        ty,
-        Type::SenderI64
-            | Type::ReceiverI64
-            | Type::ReplyToI64
-            | Type::ReplyReceiverI64
-            | Type::RequestI64
-            | Type::RequestSenderI64
-            | Type::RequestReceiverI64
-    )
-}
-
 pub(crate) fn verify_capability_edges(program: &Program) -> Result<(), String> {
+    let layout = Layout::new(&program.data);
     for function in &program.functions {
-        let Some((graph, _)) = capability_graph(function, &[], &[]) else {
+        let Some((graph, _)) = capability_graph(function, &layout, &[], &[]) else {
             continue;
         };
         capability_flow::verify(&graph).map_err(|error| format!("{}: {error}", function.name))?;
@@ -27,26 +16,33 @@ pub(crate) fn verify_capability_edges(program: &Program) -> Result<(), String> {
 
 pub(crate) fn capability_graph(
     function: &Function,
+    layout: &Layout,
     implicit_cleanup_returns: &[BlockId],
     scoped_cleanup_exits: &[(BlockId, ValueId, Span)],
 ) -> Option<(capability_flow::Graph, Vec<ValueId>)> {
-    if !function.value_types.iter().copied().any(is_capability) {
-        return None;
-    }
     // Capability flow only needs ownership state for rights, not for every
     // scalar SSA value in the function. Keep this numbering separate from
     // ValueId so adding ordinary computations does not enlarge each state.
-    let mut slots = vec![None; function.value_types.len()];
+    let mut slots = Vec::with_capacity(function.value_types.len());
     let mut values = Vec::new();
     let mut slot_count = 0;
     for (value, ty) in function.value_types.iter().enumerate() {
-        if is_capability(*ty) {
-            slots[value] = Some(capability_flow::Slot(slot_count));
-            values.push(ValueId(value));
-            slot_count += 1;
-        }
+        let end = slot_count + layout.leaves(*ty);
+        slots.push(slot_count..end);
+        values.extend(std::iter::repeat_n(ValueId(value), end - slot_count));
+        slot_count = end;
     }
-    let slot = |value: ValueId| slots[value.0].expect("communication right has a capability slot");
+    if slot_count == 0 {
+        return None;
+    }
+    let slot = |value: ValueId| {
+        let range = &slots[value.0];
+        assert!(
+            range.end - range.start == 1 && Layout::bare_right(function.value_types[value.0]),
+            "operation requires a bare communication right"
+        );
+        capability_flow::Slot(range.start)
+    };
     let mut lexical = vec![None; function.blocks.len()];
     for (block, value, _) in scoped_cleanup_exits {
         lexical[block.0] = Some(slot(*value));
@@ -58,8 +54,7 @@ pub(crate) fn capability_graph(
     let entry_live = function.blocks[0]
         .params
         .iter()
-        .filter(|value| is_capability(function.value_types[value.0]))
-        .map(|value| slot(*value))
+        .flat_map(|value| slots[value.0].clone().map(capability_flow::Slot))
         .collect();
     let blocks = function
         .blocks
@@ -86,7 +81,7 @@ pub(crate) fn capability_graph(
                     Operation::Call(_, args) => {
                         for arg in args {
                             if let CallArg::Value(value) = arg
-                                && is_capability(function.value_types[value.0])
+                                && Layout::bare_right(function.value_types[value.0])
                             {
                                 actions.push(CapAction::Transfer(slot(*value)));
                             }
@@ -115,7 +110,7 @@ pub(crate) fn capability_graph(
                     let moves = args
                         .iter()
                         .zip(&function.blocks[target.0].params)
-                        .filter(|(arg, _)| is_capability(function.value_types[arg.0]))
+                        .filter(|(arg, _)| Layout::bare_right(function.value_types[arg.0]))
                         .map(|(arg, param)| (slot(*arg), slot(*param)))
                         .collect::<Vec<_>>();
                     vec![edge(
@@ -320,7 +315,7 @@ pub(crate) fn capability_graph(
                 } => {
                     let transfers = args
                         .iter()
-                        .filter(|value| is_capability(function.value_types[value.0]))
+                        .filter(|value| Layout::bare_right(function.value_types[value.0]))
                         .map(|value| CapAction::Transfer(slot(*value)))
                         .collect();
                     vec![
@@ -340,4 +335,51 @@ pub(crate) fn capability_graph(
         },
         values,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn product_parameter_allocates_one_flow_slot_per_right() {
+        let data = vec![DataDef {
+            name: "Pair".into(),
+            variants: vec![],
+            payloads: vec![],
+            fields: vec![
+                ("left".into(), Type::SenderI64),
+                ("right".into(), Type::ReplyToI64),
+            ],
+        }];
+        let function = Function {
+            name: "consume".into(),
+            param_modes: vec![syntax::ParamMode::Own],
+            return_type: Type::I64,
+            value_types: vec![Type::Data(DataId(0)), Type::I64],
+            place_types: vec![],
+            loan_regions: vec![],
+            blocks: vec![Block {
+                params: vec![ValueId(0)],
+                instructions: vec![Instruction {
+                    result: Some(ValueId(1)),
+                    operation: Operation::Const(0),
+                    span: Span { start: 0, end: 0 },
+                }],
+                terminator: Terminator::Return(ValueId(1)),
+            }],
+        };
+        let (graph, owners) = capability_graph(&function, &Layout::new(&data), &[], &[]).unwrap();
+        assert_eq!(graph.slots, 2);
+        assert_eq!(
+            graph.entry_live,
+            vec![capability_flow::Slot(0), capability_flow::Slot(1)]
+        );
+        assert_eq!(owners, vec![ValueId(0), ValueId(0)]);
+        assert!(
+            capability_flow::verify(&graph)
+                .unwrap_err()
+                .contains("normal return leaks")
+        );
+    }
 }
