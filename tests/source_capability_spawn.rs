@@ -180,3 +180,75 @@ fn main() -> I64 = when (acquire()) {
         assert_eq!(output.stdout, b"42\n");
     }
 }
+
+#[test]
+fn temporary_spawn_argument_survives_later_try_and_spawn_failure() {
+    let source = r#"
+data Pair { sender: Sender<I64>, receiver: Receiver<I64> }
+
+fn worker(pair: Pair, number: I64) -> Unit {
+  pair.close_caps();
+}
+
+fn probe(capacity: I64) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = capacity)?;
+  sender.close();
+  receiver.close();
+  Result<I64, ResourceError>.Ok(7)
+}
+
+fn work(capacity: I64) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  yield;
+  spawn worker(Pair(sender, receiver), probe(capacity)?)?;
+  Result<I64, ResourceError>.Ok(42)
+}
+
+fn value(result: Result<I64, ResourceError>) -> I64 = when (result) {
+  Result<I64, ResourceError>.Ok(number) -> { number },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+fn main() -> I64 = value(work(1))
+fn fail() -> I64 = value(work(0))
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    core::verify(&program).unwrap();
+    for (entry, expected) in [("main", 42), ("fail", 0)] {
+        assert_eq!(program.interpret(entry, &[]).unwrap(), expected);
+        assert_eq!(native::run(&program, entry, &[]).unwrap(), expected);
+    }
+    let no_child = ScopeLimits {
+        tasks: 1,
+        ..ScopeLimits::default()
+    };
+    assert_eq!(
+        program
+            .interpret_with_limits("main", &[], no_child)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        native::run_with_limits(&program, "main", &[], no_child).unwrap(),
+        0
+    );
+    for (capacity, expected) in [(1, b"42\n".as_slice()), (0, b"0\n".as_slice())] {
+        let source = source.replace(
+            "main() -> I64 = value(work(1))",
+            &format!("main() -> I64 = value(work({capacity}))"),
+        );
+        let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "phoebe-temp-spawn-{}-{capacity}",
+            std::process::id()
+        ));
+        native::build_executable(&program, &path).unwrap();
+        let output = Command::new(&path).output().unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected);
+    }
+}

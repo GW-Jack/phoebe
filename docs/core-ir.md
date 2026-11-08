@@ -152,8 +152,9 @@ interpreter runs a parent and child exchanging an `I64` over a bounded channel.
 Source `spawn worker(sender)?;` now lowers to this terminator and uses the
 exact failure-edge live-slot map for parent cleanup. It accepts only owned
 arguments and an `I64`- or `Unit`-returning child. Nominal arguments may be
-named `val`s or moved from a named `var`; failure retains the taken value for
-parent cleanup. Native spawn and structural cleanup run in the interpreter,
+named `val`s, moved from a named `var`, or built as temporary expressions.
+Failure retains each argument value for parent cleanup. Native spawn and
+structural cleanup run in the interpreter,
 JIT, and standalone path. Source `sender.send(value)` returns
 `Send<I64>.Sent` or `Send<I64>.Closed(value)`, while
 `receiver.receive()` returns `Receive<I64>.Value(value)` or

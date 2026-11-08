@@ -255,23 +255,6 @@ impl Lowerer<'_> {
                             self.expr(expr, locals)?
                         };
                         self.require(ty, *expected, expr.span)?;
-                        if matches!(
-                            ty,
-                            Type::Data(_)
-                                | Type::SenderI64
-                                | Type::ReceiverI64
-                                | Type::ReplyToI64
-                                | Type::ReplyReceiverI64
-                                | Type::RequestI64
-                                | Type::RequestSenderI64
-                                | Type::RequestReceiverI64
-                        ) && !matches!(expr.kind, ExprKind::Name(_))
-                        {
-                            return Err(Diagnostic::new(
-                                expr.span,
-                                "owned spawn arguments must be named vals until retained cleanup supports temporaries",
-                            ));
-                        }
                         values.push(value);
                     }
                     let success = self.block();

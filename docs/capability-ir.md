@@ -198,12 +198,12 @@ typed resource causes; an invalid transfer is an internal runtime fault.
 The verifier transfers endpoint slots only on the success edge. Its affine
 check similarly moves closed nominal arguments only on success.
 Source `spawn worker(sender)?;` uses these same edges. The child parameter
-is an owned `Sender<I64>` or another supported owned type. Source lowering
-requires a named binding for non-scalar arguments. A nominal aggregate may
-be taken from `var`; the empty place may then be reassigned. On pre-commit
-failure, the taken owner remains live in the parent and source `?` cleanup
-closes it. Arbitrary owned temporaries need a later retained argument
-representation.
+is an owned `Sender<I64>` or another supported owned type. A nominal
+aggregate may be taken from `var`; the empty place may then be reassigned.
+Owned argument expressions may also construct temporary aggregates. If a
+later argument fails with `?`, the temporary remains live on that error edge
+and is closed. On pre-commit spawn failure, all argument owners remain live
+in the parent and source `?` cleanup closes them.
 
 Source `?` exits now use the same exact flow graph as the verifier. The
 lowerer marks an implicit error return as a cleanup exit, reads its live

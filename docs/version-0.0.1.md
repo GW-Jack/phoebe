@@ -297,6 +297,10 @@ Named nominal `var` arguments are taken before spawn. The success edge
 transfers their rights; the failure edge closes the retained values. A source
 test covers direct and suspended parents, task-limit rejection, and
 reassignment of the emptied place after successful spawn.
+Temporary owned spawn arguments are also supported. A later argument's `?`
+failure closes an earlier temporary; a rejected spawn retains and closes
+its arguments. Interpreter, JIT, and standalone source tests cover these
+paths.
 Source `val another = sender.fork()?` and the receiver equivalent now create
 one independently owned handle on success. The original remains live on both
 edges, and a resource failure creates no new handle. Core checks the fresh
