@@ -70,8 +70,12 @@ interpreter closes the same recursive value structure; direct and retained
 Cranelift functions emit the plan. `Option<Sender<I64>>`,
 `Result<Sender<I64>, ResourceError>`, and products containing those sums are
 executable across interpreter, JIT, and standalone builds. Spawn transfer
-still uses a flat descriptor list, so the verifier rejects a spawn argument
-containing a capability-bearing sum until transfer becomes tag-aware.
+uses the same structural plan to select the active payload's rights. Direct
+and retained native parents build a descriptor array sized for the largest
+possible variant, then pass the actual descriptor count to the runtime.
+Arguments without tags keep constant descriptor offsets and counts. The
+runtime validates every right before committing the child and supports
+transfer lists up to the child frame's word count.
 
 A sum with a payload reserves the maximum number of flattened payload words
 among its variants. Every payload component is represented as an I64 word;

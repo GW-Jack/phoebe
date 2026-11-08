@@ -30,7 +30,8 @@ pub unsafe extern "C" fn phoebe_spawn_poll_caps(
 ) -> i64 {
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         let count = usize::try_from(transfer_count).map_err(|_| ())?;
-        if count > 4 || (count != 0 && transfers.is_null()) {
+        let words = usize::try_from(frame_words).map_err(|_| ())?;
+        if count > words || (count != 0 && transfers.is_null()) {
             return Err(());
         }
         let descriptors = if count == 0 {
@@ -38,15 +39,18 @@ pub unsafe extern "C" fn phoebe_spawn_poll_caps(
         } else {
             unsafe { std::slice::from_raw_parts(transfers, count) }
         };
-        let mut decoded = [CapabilityTransfer::Channel(Token(0)); 4];
-        for (index, descriptor) in descriptors.iter().enumerate() {
+        let mut decoded = Vec::new();
+        if decoded.try_reserve_exact(count).is_err() {
+            return Ok(native::resource_code(ResourceError::Allocation));
+        }
+        for descriptor in descriptors {
             let token = usize::try_from(descriptor.token).map_err(|_| ())?;
-            decoded[index] = match descriptor.kind {
+            decoded.push(match descriptor.kind {
                 0 => CapabilityTransfer::Channel(Token(token)),
                 1 => CapabilityTransfer::ReplyRight(ReplyToken(token)),
                 2 => CapabilityTransfer::ReplyReceiver(ReplyReceiverToken(token)),
                 _ => return Err(()),
-            };
+            });
         }
         unsafe {
             native::spawn_poll_with_transfers(
@@ -55,7 +59,7 @@ pub unsafe extern "C" fn phoebe_spawn_poll_caps(
                 frame_words,
                 initial,
                 initial_count,
-                &decoded[..count],
+                &decoded,
             )
         }
     }));

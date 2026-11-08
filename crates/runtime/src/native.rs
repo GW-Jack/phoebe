@@ -564,7 +564,7 @@ pub(super) unsafe fn spawn_poll_with_transfers(
             .checked_mul(std::mem::size_of::<i64>())
             .is_none_or(|bytes| bytes > i32::MAX as usize)
         || initial_count > words
-        || transfers.len() > 4
+        || transfers.len() > words
         || (initial_count != 0 && initial.is_null())
     {
         return Err(());

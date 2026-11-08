@@ -1,3 +1,4 @@
+use phoebe::runtime::ScopeLimits;
 use phoebe::{core, native, syntax};
 use std::process::Command;
 
@@ -65,51 +66,86 @@ fn early_error_closes_the_owned_sum_envelope() {
 }
 
 #[test]
-fn sum_rights_cannot_be_copied_or_spawned_without_transfer_support() {
+fn sum_rights_cannot_be_copied() {
     let copy = "fn bad(maybe: Option<Sender<I64>>) -> I64 { val other = copy(maybe); maybe.close_caps(); other.close_caps(); 0 } fn main() -> I64 = 0";
     let error = core::lower(&syntax::parse(copy).unwrap()).unwrap_err();
     assert!(error.message.contains("copy cannot duplicate"), "{error:?}");
     assert!(error.span.start > 0);
-
-    let spawn = r#"
-fn child(maybe: Option<Sender<I64>>) -> Unit {
-  maybe.close_caps();
 }
 
-fn start() -> Result<I64, ResourceError> {
-  val (sender, receiver) = channel<I64>(capacity = 1)?;
-  receiver.close();
-  val maybe = Option<Sender<I64>>.Some(sender);
-  spawn child(maybe)?;
-  Result<I64, ResourceError>.Ok(1)
+#[test]
+fn tagged_spawn_transfers_only_active_rights_across_all_engines() {
+    let source = r#"
+data Pair { sender: Sender<I64>, receiver: Receiver<I64> }
+data Envelope { maybe: Option<Pair>, extra: Sender<I64> }
+data Five { a: Sender<I64>, b: Sender<I64>, c: Sender<I64>, d: Sender<I64>, e: Sender<I64> }
+
+fn close_envelope(value: Envelope) -> Unit { value.close_caps(); }
+fn close_five(value: Option<Five>) -> Unit { yield; value.close_caps(); }
+
+fn direct() -> Result<I64, ResourceError> {
+  val (a, b) = channel<I64>(capacity = 1)?;
+  val (extra, extra_receiver) = channel<I64>(capacity = 1)?;
+  extra_receiver.close();
+  val full = Envelope(Option<Pair>.Some(Pair(a, b)), extra);
+  spawn close_envelope(full)?;
+  val (bare, bare_receiver) = channel<I64>(capacity = 1)?;
+  bare_receiver.close();
+  val empty = Envelope(Option<Pair>.None, bare);
+  spawn close_envelope(empty)?;
+  Result<I64, ResourceError>.Ok(20)
 }
-fn main() -> I64 = 0
+
+fn retained() -> Result<I64, ResourceError> {
+  yield;
+  val (a, ar) = channel<I64>(capacity = 1)?;
+  val (b, br) = channel<I64>(capacity = 1)?;
+  val (c, cr) = channel<I64>(capacity = 1)?;
+  val (d, dr) = channel<I64>(capacity = 1)?;
+  val (e, er) = channel<I64>(capacity = 1)?;
+  ar.close(); br.close(); cr.close(); dr.close(); er.close();
+  val five = Option<Five>.Some(Five(a, b, c, d, e));
+  spawn close_five(five)?;
+  val none = Option<Five>.None;
+  spawn close_five(none)?;
+  Result<I64, ResourceError>.Ok(22)
+}
+
+fn value(result: Result<I64, ResourceError>) -> I64 = when (result) {
+  Result<I64, ResourceError>.Ok(number) -> { number },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+fn main() -> I64 = value(direct()) + value(retained())
 "#;
-    let error = core::lower(&syntax::parse(spawn).unwrap()).unwrap_err();
-    assert!(
-        error.message.contains("spawn of capability-bearing sum"),
-        "{error:?}"
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    core::verify(&program).unwrap();
+    let suspendable = phoebe::frame_layout::suspendable_functions(&program).unwrap();
+    assert!(!suspendable[2], "direct parent should use direct codegen");
+    assert!(suspendable[3], "retained parent should use poll codegen");
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let limited = ScopeLimits {
+        tasks: 1,
+        ..ScopeLimits::default()
+    };
+    assert_eq!(
+        program.interpret_with_limits("main", &[], limited).unwrap(),
+        0
     );
-    assert_eq!(&spawn[error.span.start..error.span.end], "maybe");
-
-    let nested_spawn = r#"
-data Wrap { payload: Option<Sender<I64>> }
-fn child(value: Wrap) -> Unit { value.close_caps(); }
-fn start() -> Result<I64, ResourceError> {
-  val (sender, receiver) = channel<I64>(capacity = 1)?;
-  receiver.close();
-  val wrapped = Wrap(Option<Sender<I64>>.Some(sender));
-  spawn child(wrapped)?;
-  Result<I64, ResourceError>.Ok(1)
-}
-fn main() -> I64 = 0
-"#;
-    let error = core::lower(&syntax::parse(nested_spawn).unwrap()).unwrap_err();
-    assert!(
-        error.message.contains("spawn of capability-bearing sum"),
-        "{error:?}"
+    assert_eq!(
+        native::run_with_limits(&program, "main", &[], limited).unwrap(),
+        0
     );
-    assert_eq!(&nested_spawn[error.span.start..error.span.end], "wrapped");
+    let path = std::env::temp_dir().join(format!("phoebe-tagged-spawn-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\n");
 }
 
 #[test]

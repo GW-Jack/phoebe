@@ -331,8 +331,11 @@ that disposition. Examples cover `Some`/`None` joins, a two-right payload,
 owned calls and returns, lexical close after `yield`, and `?` cleanup of a
 nested sum on resource failure. The standalone path agrees on those cases.
 Copying or storing these owners in a mutable place is rejected. Spawn of a
-capability-bearing sum, including one nested in a product, remains rejected
-until native transfer descriptors can select the active variant. The bounded
+capability-bearing sum now selects the active variant's physical rights for
+the child, including sums nested in products. Direct and retained native
+parents use a shared transfer emitter, and the runtime accepts more than four
+descriptors. Source tests cover `Some`, `None`, five-right payloads, and failed
+spawn cleanup in the interpreter and native paths. The bounded
 `formal/sum_capabilities.maude` model checks a one-right abstraction; it is
 not a proof of the compiler or runtime.
 The versioned runtime ABI now has send and receive calls with explicit

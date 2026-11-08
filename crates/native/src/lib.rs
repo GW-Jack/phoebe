@@ -31,6 +31,7 @@ mod codegen;
 mod poll;
 mod reachability;
 mod runtime_imports;
+mod transfer;
 
 pub use build_session::{NativeBuildReport, NativeBuildSession};
 pub use cache::{CachedBuildReport, build_executable_cached, build_executable_cached_checked};

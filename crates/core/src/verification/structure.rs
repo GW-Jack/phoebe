@@ -850,12 +850,6 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
                         if function.value_types[arg.0] != callee.value_types[param.0] {
                             return Err(format!("{}: spawn argument type mismatch", function.name));
                         }
-                        if capability_layout.has_tagged(function.value_types[arg.0]) {
-                            return Err(format!(
-                                "{}: spawn of capability-bearing sum is not yet supported",
-                                function.name
-                            ));
-                        }
                     }
                 }
             }

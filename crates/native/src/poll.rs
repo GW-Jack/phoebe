@@ -1274,57 +1274,24 @@ fn compile_poll_module<M: Module>(
                             &places,
                             pointer,
                         )?;
-                        let mut transfers = Vec::new();
-                        for arg in args {
-                            shapes.append_transfer_descriptors(
-                                function.value_types[arg.0],
-                                &mut transfers,
-                                |part| builder.use_var(variables[arg.0][part]),
-                            );
-                        }
-                        let transfer_count = i64::try_from(transfers.len())
-                            .map_err(|_| "spawn transfer count overflow")?;
-                        let transfer_ptr = if transfers.is_empty() {
-                            builder.ins().iconst(pointer, 0)
-                        } else {
-                            let bytes = u32::try_from(
-                                transfers
-                                    .len()
-                                    .checked_mul(16)
-                                    .ok_or("spawn transfer overflow")?,
-                            )
-                            .map_err(|_| "spawn transfer list exceeds stack slot")?;
-                            let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                                StackSlotKind::ExplicitSlot,
-                                bytes,
-                                3,
-                            ));
-                            for (index, (kind, token)) in transfers.iter().enumerate() {
-                                let kind = builder.ins().iconst(types::I64, *kind);
-                                builder.ins().stack_store(
-                                    pointer,
-                                    kind,
-                                    slot,
-                                    i32::try_from(index * 16)
-                                        .map_err(|_| "spawn transfer offset overflow")?,
-                                );
-                                builder.ins().stack_store(
-                                    pointer,
-                                    *token,
-                                    slot,
-                                    i32::try_from(index * 16 + 8)
-                                        .map_err(|_| "spawn transfer offset overflow")?,
-                                );
-                            }
-                            builder.ins().stack_addr(pointer, slot, 0)
-                        };
+                        let transfer_args = args
+                            .iter()
+                            .map(|arg| {
+                                let parts = variables[arg.0]
+                                    .iter()
+                                    .map(|variable| builder.use_var(*variable))
+                                    .collect();
+                                (function.value_types[arg.0], parts)
+                            })
+                            .collect::<Vec<_>>();
+                        let (transfer_ptr, transfer_count) =
+                            super::transfer::emit(&mut builder, &shapes, &transfer_args, pointer)?;
                         let frame_words = builder.ins().iconst(
                             types::I64,
                             i64::try_from(child_layout.total_words)
                                 .map_err(|_| "spawn frame size overflow")?,
                         );
                         let initial_count = builder.ins().iconst(types::I64, initial_count);
-                        let transfer_count = builder.ins().iconst(types::I64, transfer_count);
                         let spawned = builder.ins().call(
                             spawn_ref,
                             &[

@@ -1018,49 +1018,16 @@ pub(super) fn compile_functions<M: Module>(
                             }
                             builder.ins().stack_addr(pointer_type, slot, 0)
                         };
-                        let mut transfers = Vec::new();
-                        for arg in args {
-                            let parts = get(*arg);
-                            shapes.append_transfer_descriptors(
-                                function.value_types[arg.0],
-                                &mut transfers,
-                                |part| parts[part],
-                            );
-                        }
-                        let transfers_ptr = if transfers.is_empty() {
-                            builder.ins().iconst(pointer_type, 0)
-                        } else {
-                            let bytes = u32::try_from(
-                                transfers
-                                    .len()
-                                    .checked_mul(16)
-                                    .ok_or("spawn transfer list overflow")?,
-                            )
-                            .map_err(|_| "spawn transfer list exceeds stack slot")?;
-                            let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                                StackSlotKind::ExplicitSlot,
-                                bytes,
-                                3,
-                            ));
-                            for (index, (kind, value)) in transfers.iter().enumerate() {
-                                let kind = builder.ins().iconst(types::I64, *kind);
-                                builder.ins().stack_store(
-                                    pointer_type,
-                                    kind,
-                                    slot,
-                                    i32::try_from(index * 16)
-                                        .map_err(|_| "spawn transfer offset overflow")?,
-                                );
-                                builder.ins().stack_store(
-                                    pointer_type,
-                                    *value,
-                                    slot,
-                                    i32::try_from(index * 16 + 8)
-                                        .map_err(|_| "spawn transfer offset overflow")?,
-                                );
-                            }
-                            builder.ins().stack_addr(pointer_type, slot, 0)
-                        };
+                        let transfer_args = args
+                            .iter()
+                            .map(|arg| (function.value_types[arg.0], get(*arg)))
+                            .collect::<Vec<_>>();
+                        let (transfers_ptr, transfer_count) = super::transfer::emit(
+                            &mut builder,
+                            &shapes,
+                            &transfer_args,
+                            pointer_type,
+                        )?;
                         let words = builder.ins().iconst(
                             types::I64,
                             i64::try_from(layout.total_words)
@@ -1070,11 +1037,6 @@ pub(super) fn compile_functions<M: Module>(
                             types::I64,
                             i64::try_from(initial.len())
                                 .map_err(|_| "spawn argument count overflow")?,
-                        );
-                        let transfer_count = builder.ins().iconst(
-                            types::I64,
-                            i64::try_from(transfers.len())
-                                .map_err(|_| "spawn transfer count overflow")?,
                         );
                         let callee = module.declare_func_in_func(spawn, builder.func);
                         let call = builder.ins().call(
