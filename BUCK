@@ -54,6 +54,7 @@ rust_test(
     crate_root = "tests/compiler.rs",
     srcs = [
         "tests/compiler.rs",
+        "examples/borrow.phoebe",
         "examples/copy.phoebe",
         "examples/nested_result.phoebe",
         "examples/payload.phoebe",

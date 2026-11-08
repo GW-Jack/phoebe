@@ -109,7 +109,11 @@ fn retained_mutable_place_survives_receive_without_retaining_dead_place() {
 fn borrowed_caller_place_survives_suspended_callee_and_forwarding() {
     let source = include_str!("../examples/borrow_across_wait.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
-    let (id, _) = program.function("exchange").unwrap();
+    let (id, exchange) = program.function("exchange").unwrap();
+    assert_eq!(
+        exchange.loan_regions[0].roots,
+        vec![core::LoanRoot::Place(core::PlaceId(0), true)]
+    );
     let layout = native::frame_word_layouts(&program)
         .unwrap()
         .into_iter()

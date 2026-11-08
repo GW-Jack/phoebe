@@ -745,6 +745,25 @@ impl fmt::Display for Program {
                 write!(f, "v{}: {:?}", param.0, function.value_types[param.0])?;
             }
             writeln!(f, ") -> {:?} {{", function.return_type)?;
+            for region in &function.loan_regions {
+                write!(
+                    f,
+                    "  region r{}: begin block{}.i{} roots(",
+                    region.id.0, region.call_block.0, region.call_instruction
+                )?;
+                for (index, root) in region.roots.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    match root {
+                        LoanRoot::Place(place, false) => write!(f, "&p{}", place.0)?,
+                        LoanRoot::Place(place, true) => write!(f, "&mut p{}", place.0)?,
+                        LoanRoot::Forwarded(value, false) => write!(f, "&v{}", value.0)?,
+                        LoanRoot::Forwarded(value, true) => write!(f, "&mut v{}", value.0)?,
+                    }
+                }
+                writeln!(f, ") end call return/unwind")?;
+            }
             for (block_id, block) in function.blocks.iter().enumerate() {
                 write!(f, "  block{block_id}(")?;
                 for (index, param) in block.params.iter().enumerate() {
@@ -1011,6 +1030,7 @@ mod interpreter_frame_tests {
                 return_type: Type::I64,
                 value_types: vec![Type::ReceiverI64, Type::I64, Type::I64],
                 place_types: vec![],
+                loan_regions: vec![],
                 blocks: vec![
                     Block {
                         params: vec![ValueId(0)],

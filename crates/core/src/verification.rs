@@ -496,6 +496,46 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
     Ok(())
 }
 
+fn verify_loan_regions(function: &Function) -> Result<(), String> {
+    let mut expected = Vec::new();
+    for (block_id, block) in function.blocks.iter().enumerate() {
+        for (instruction_id, instruction) in block.instructions.iter().enumerate() {
+            let Operation::Call(_, args) = &instruction.operation else {
+                continue;
+            };
+            let roots = args
+                .iter()
+                .filter_map(|arg| match arg {
+                    CallArg::Borrow(place, exclusive) => Some(LoanRoot::Place(*place, *exclusive)),
+                    CallArg::Ref(value, exclusive) => Some(LoanRoot::Forwarded(*value, *exclusive)),
+                    CallArg::Value(_) => None,
+                })
+                .collect::<Vec<_>>();
+            if !roots.is_empty() {
+                expected.push((BlockId(block_id), instruction_id, roots));
+            }
+        }
+    }
+    if function.loan_regions.len() != expected.len() {
+        return Err(format!(
+            "{}: call loan region count mismatch",
+            function.name
+        ));
+    }
+    for (index, (region, (block, instruction, roots))) in
+        function.loan_regions.iter().zip(expected).enumerate()
+    {
+        if region.id != RegionId(index)
+            || region.call_block != block
+            || region.call_instruction != instruction
+            || region.roots != roots
+        {
+            return Err(format!("{}: call loan region mismatch", function.name));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
     if program.functions.is_empty() {
         return Err("empty Core IR program".into());
@@ -580,6 +620,7 @@ pub(super) fn verify_structure(program: &Program) -> Result<(), String> {
         if function.param_modes.len() != function.blocks[0].params.len() {
             return Err(format!("{}: parameter mode count mismatch", function.name));
         }
+        verify_loan_regions(function)?;
         if function
             .place_types
             .iter()

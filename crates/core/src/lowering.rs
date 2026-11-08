@@ -1395,12 +1395,41 @@ impl<'a> Lowerer<'a> {
                 terminator,
             });
         }
+        let mut loan_regions = Vec::new();
+        for (block_id, block) in blocks.iter().enumerate() {
+            for (instruction_id, instruction) in block.instructions.iter().enumerate() {
+                let Operation::Call(_, args) = &instruction.operation else {
+                    continue;
+                };
+                let roots = args
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        CallArg::Borrow(place, exclusive) => {
+                            Some(LoanRoot::Place(*place, *exclusive))
+                        }
+                        CallArg::Ref(value, exclusive) => {
+                            Some(LoanRoot::Forwarded(*value, *exclusive))
+                        }
+                        CallArg::Value(_) => None,
+                    })
+                    .collect::<Vec<_>>();
+                if !roots.is_empty() {
+                    loan_regions.push(LoanRegion {
+                        id: RegionId(loan_regions.len()),
+                        call_block: BlockId(block_id),
+                        call_instruction: instruction_id,
+                        roots,
+                    });
+                }
+            }
+        }
         Ok((
             Function {
                 name,
                 blocks,
                 value_types: self.value_types,
                 place_types: self.place_types,
+                loan_regions,
                 param_modes: self.param_modes,
                 return_type: self.return_type,
             },

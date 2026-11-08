@@ -68,6 +68,7 @@ fn request_round_trip() -> Program {
                 Type::I64,                // 19 reply end result
             ],
             place_types: vec![],
+            loan_regions: vec![],
             blocks: vec![
                 block(
                     &[],
@@ -218,6 +219,7 @@ fn direct_request_construction_and_unpack_agree_across_backends() {
                 Type::I64,
             ],
             place_types: vec![],
+            loan_regions: vec![],
             blocks: vec![
                 block(
                     &[],
@@ -392,6 +394,7 @@ fn closed_request_send_returns_the_intact_owned_request() {
                 Type::I64,
             ],
             place_types: vec![],
+            loan_regions: vec![],
             blocks: vec![
                 block(
                     &[],
@@ -498,6 +501,7 @@ fn request_service_parks_then_completes_parent_reply() {
             Type::I64,
         ],
         place_types: vec![],
+        loan_regions: vec![],
         blocks: vec![
             block(
                 &[],
@@ -620,6 +624,7 @@ fn request_service_parks_then_completes_parent_reply() {
             Type::I64,
         ],
         place_types: vec![],
+        loan_regions: vec![],
         blocks: vec![
             block(
                 &[0],

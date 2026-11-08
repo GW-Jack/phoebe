@@ -59,6 +59,7 @@ fn completed_reply() -> Program {
                 Type::I64,
             ],
             place_types: vec![],
+            loan_regions: vec![],
             blocks: vec![
                 Block {
                     params: vec![],
@@ -173,6 +174,7 @@ fn canceled_reply_takes_closed_edge_in_direct_native_code() {
                 Type::I64,
             ],
             place_types: vec![],
+            loan_regions: vec![],
             blocks: vec![
                 Block {
                     params: vec![],
@@ -236,6 +238,7 @@ fn closed_right_makes_reply_receiver_observe_end() {
                 Type::I64,
             ],
             place_types: vec![],
+            loan_regions: vec![],
             blocks: vec![
                 Block {
                     params: vec![],
@@ -297,6 +300,7 @@ fn spawned_reply() -> Program {
                     Type::I64,
                 ],
                 place_types: vec![],
+                loan_regions: vec![],
                 blocks: vec![
                     Block {
                         params: vec![],
@@ -357,6 +361,7 @@ fn spawned_reply() -> Program {
                 return_type: Type::I64,
                 value_types: vec![Type::ReplyToI64, Type::I64, Type::I64, Type::I64],
                 place_types: vec![],
+                loan_regions: vec![],
                 blocks: vec![
                     Block {
                         params: vec![ValueId(0)],

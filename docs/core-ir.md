@@ -62,7 +62,11 @@ transition rules and their evidence boundary.
 The structural verifier checks unique SSA definitions, operand dominance,
 block reachability, parameter, call, and return types, branch targets, call modes,
 one dominating initializer per place, and the restricted borrow rules in
-`call-borrows.md`. Native lowering runs it before
+`call-borrows.md`. A borrowed call also has a `LoanRegion` record naming its
+call instruction, place or forwarded-reference roots, and the call
+return/unwind end. The verifier requires exactly one matching record for each
+borrowed call. Frame analysis checks that a place root remains in the parent
+frame when the callee can suspend. Native lowering runs the verifier before
 code generation. This is an engineering check, not a proof that lowering is
 correct. Differential tests compare interpreter and JIT results on supported
 programs. The Maude models cover different bounded abstract machines; they
@@ -73,8 +77,8 @@ Replacing an owned `var` currently discards the old closed value, and `match`
 may discard a payload. The communication capability check has exact
 disposition at return, but nested capabilities still need structural cleanup
 or explicit transfer on those exits.
-General loan lifetimes, region begin/end, cleanup edges,
-and cost events remain next steps. The verifier will need to check those
+General loan lifetimes beyond one call, lexical region begin/end, aggregate
+cleanup edges, and the remaining cost event kinds are still open. The verifier will need to check those
 without turning ordinary compilation into proof search.
 `capability-ir.md` gives the intended edge accounting and suspension rules
 for the next implementation slice.

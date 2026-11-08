@@ -35,6 +35,7 @@ fn two_task_program() -> Program {
                     Type::I64,
                 ],
                 place_types: vec![],
+                loan_regions: vec![],
                 blocks: vec![
                     Block {
                         params: vec![],
@@ -99,6 +100,7 @@ fn two_task_program() -> Program {
                 return_type: Type::I64,
                 value_types: vec![Type::SenderI64, Type::I64, Type::I64, Type::I64],
                 place_types: vec![],
+                loan_regions: vec![],
                 blocks: vec![
                     Block {
                         params: vec![ValueId(0)],
@@ -224,6 +226,7 @@ fn closed_nominal_argument_moves_only_if_spawn_commits() {
                 return_type: Type::I64,
                 value_types: vec![Type::Data(badge), Type::ResourceError, Type::I64, Type::I64],
                 place_types: vec![],
+                loan_regions: vec![],
                 blocks: vec![
                     Block {
                         params: vec![],
@@ -259,6 +262,7 @@ fn closed_nominal_argument_moves_only_if_spawn_commits() {
                 return_type: Type::I64,
                 value_types: vec![Type::Data(badge), Type::I64],
                 place_types: vec![],
+                loan_regions: vec![],
                 blocks: vec![Block {
                     params: vec![ValueId(0)],
                     instructions: vec![instruction(Some(1), Operation::Const(9))],

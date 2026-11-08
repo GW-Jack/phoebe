@@ -200,6 +200,44 @@ fn shared_and_exclusive_borrows_cross_calls() {
 }
 
 #[test]
+fn call_loan_regions_are_printed_and_verified() {
+    let source = include_str!("../examples/borrow.phoebe");
+    let program = compile(source);
+    let (_, main) = program.function("main").unwrap();
+    assert_eq!(main.loan_regions.len(), 4);
+    assert_eq!(
+        main.loan_regions[0].roots,
+        vec![core::LoanRoot::Place(core::PlaceId(0), false)]
+    );
+    let (_, forward) = program.function("forward").unwrap();
+    assert_eq!(
+        forward.loan_regions[0].roots,
+        vec![core::LoanRoot::Forwarded(core::ValueId(0), false)]
+    );
+    assert!(program.to_string().contains("region r0: begin block0.i2"));
+    core::verify(&program).unwrap();
+
+    let mut missing = program.clone();
+    let main_id = missing.function("main").unwrap().0;
+    missing.functions[main_id.0].loan_regions.pop();
+    assert!(
+        core::verify(&missing)
+            .unwrap_err()
+            .contains("loan region count mismatch")
+    );
+
+    let mut forged = program.clone();
+    let main_id = forged.function("main").unwrap().0;
+    forged.functions[main_id.0].loan_regions[0].roots[0] =
+        core::LoanRoot::Place(core::PlaceId(1), false);
+    assert!(
+        core::verify(&forged)
+            .unwrap_err()
+            .contains("loan region mismatch")
+    );
+}
+
+#[test]
 fn exclusive_borrow_can_be_forwarded_as_shared() {
     let program = compile(
         "fn read(x: &I64) -> I64 = x fn forward(x: &mut I64) -> I64 = read(&x) fn main() -> I64 { var x = 42; forward(&mut x) }",

@@ -26,6 +26,9 @@ pub struct BlockId(pub usize);
 pub struct PlaceId(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct RegionId(pub usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DataId(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +93,23 @@ pub enum CallArg {
     Value(ValueId),
     Borrow(PlaceId, bool),
     Ref(ValueId, bool),
+}
+
+/// A call-scoped loan starts immediately before its call and ends when that
+/// call returns or unwinds. Forwarded roots remain bounded by the caller's
+/// incoming loan; they do not create a reference that can escape the task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoanRoot {
+    Place(PlaceId, bool),
+    Forwarded(ValueId, bool),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoanRegion {
+    pub id: RegionId,
+    pub call_block: BlockId,
+    pub call_instruction: usize,
+    pub roots: Vec<LoanRoot>,
 }
 
 #[derive(Clone, Debug)]
@@ -239,6 +259,7 @@ pub struct Function {
     pub blocks: Vec<Block>,
     pub value_types: Vec<Type>,
     pub place_types: Vec<Type>,
+    pub loan_regions: Vec<LoanRegion>,
 }
 
 #[derive(Clone, Debug)]

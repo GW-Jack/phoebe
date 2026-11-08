@@ -17,14 +17,19 @@ parameters cannot be called as entry points from the CLI because the CLI has
 no Phoebe owner supplying a live place.
 
 Core IR represents a call argument as a value, a borrowed place, or a
-forwarded reference parameter. Callee reference values are confined to
+forwarded reference parameter. A call with any borrowed argument has a
+`LoanRegion` record in its caller. It identifies the call instruction and
+the roots in argument order; the region begins immediately before that call
+and ends when it returns or unwinds. The Core verifier rejects absent,
+duplicate, or mismatched records. Callee reference values are confined to
 `ref.load`, `ref.store` when exclusive, or a forwarded call argument. They
 cannot be returned or stored in another place. The verifier checks call
 signature modes, alias conflicts within a call, place initialization and
 dominance, reference operation types, and reference provenance restrictions.
 The interpreter resolves references to caller-owned slots. Direct Cranelift
 calls receive addresses of caller stack slots. When a callee can suspend, the
-frame analysis retains the borrowed caller place in the stable parent frame;
+frame analysis retains the borrowed caller place in the stable parent frame
+and checks it against the loan-region roots;
 the child frame stores its address until the call returns. Borrowed parameters
 and forwarded references can be read or written after a channel receive.
 The generated poll entry rejects borrowed external parameters because no
@@ -35,5 +40,5 @@ the receive. This is tested behavior, not a general proof of region safety.
 This subset has no first-class reference variables, field or element borrows,
 region inference, or cross-task references. It does not
 establish safety for the future general borrow system. The next step is to
-add explicit region roots and loan lifetimes to checked IR before extending
-references beyond the current call scope.
+model lexical region boundaries and reference lifetimes beyond one call
+before extending the source surface.

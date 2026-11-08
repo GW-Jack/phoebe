@@ -346,6 +346,34 @@ pub fn analyze(program: &Program) -> Result<Vec<FunctionFrame>, String> {
             }
         }
         points.sort_by_key(|point| (point.block.0, point.instruction.unwrap_or(usize::MAX)));
+        for region in &function.loan_regions {
+            let Operation::Call(target, _) = &function.blocks[region.call_block.0].instructions
+                [region.call_instruction]
+                .operation
+            else {
+                unreachable!("Core verifier checked the loan region call")
+            };
+            if !suspendable[target.0] {
+                continue;
+            }
+            let point = points
+                .iter()
+                .find(|point| {
+                    point.block == region.call_block
+                        && point.instruction == Some(region.call_instruction)
+                })
+                .ok_or("suspending loan has no retained call point")?;
+            for root in &region.roots {
+                if let core::LoanRoot::Place(place, _) = root
+                    && !point.places.contains(place)
+                {
+                    return Err(format!(
+                        "{}: borrowed p{} is missing from retained call frame",
+                        function.name, place.0
+                    ));
+                }
+            }
+        }
         frames.push(FunctionFrame {
             function: FunctionId(function_id),
             points,

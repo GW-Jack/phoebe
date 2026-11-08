@@ -87,7 +87,11 @@ block-argument types, call targets and modes, and return
 types. Source spans survive parsing and lowering. `docs/core-ir.md` and
 `docs/call-borrows.md` explain the current operations and their evidence
 boundary. Borrows are confined to one call chain and can span a channel
-suspension; general reference lifetimes and regions are not implemented.
+suspension. Each borrowed call now has a printed call-scoped loan region with
+explicit place or forwarded-reference roots and a return/unwind end. Core
+checks the region against the call; frame analysis checks that place roots
+survive a suspending call. General reference lifetimes and inferred regions
+remain unimplemented.
 `docs/result-try.md` states the current `?` rule and its remaining generic
 function and cleanup work. `examples/result_in_data.phoebe` exercises nested
 `Result` fields and variant payloads through all three execution paths.

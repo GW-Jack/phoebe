@@ -36,6 +36,7 @@ fn channel_program() -> Program {
                 Type::I64,
             ],
             place_types: vec![],
+            loan_regions: vec![],
             blocks: vec![
                 Block {
                     params: vec![],
@@ -175,6 +176,7 @@ fn owned_endpoint_call_transfers_the_right_to_the_callee() {
         return_type: Type::I64,
         value_types: vec![Type::SenderI64, Type::I64],
         place_types: vec![],
+        loan_regions: vec![],
         blocks: vec![Block {
             params: vec![ValueId(0)],
             instructions: vec![
@@ -355,6 +357,7 @@ fn nested_call_receives_the_native_runtime_context() {
         return_type: Type::I64,
         value_types: vec![Type::I64, Type::I64, Type::I64],
         place_types: vec![],
+        loan_regions: vec![],
         blocks: vec![Block {
             params: vec![ValueId(0)],
             instructions: vec![
@@ -384,6 +387,7 @@ fn runtime_context_propagates_to_callers_only() {
         return_type: Type::I64,
         value_types: vec![Type::I64],
         place_types: vec![],
+        loan_regions: vec![],
         blocks: vec![Block {
             params: vec![],
             instructions: vec![instruction(Some(0), Operation::Call(FunctionId(0), vec![]))],
