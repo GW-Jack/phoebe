@@ -1,8 +1,131 @@
 use std::task::Poll;
+use std::{cell::RefCell, rc::Rc};
 
 use phoebe::runtime::{
     Context, ReceiveResult, Receiver, Scheduler, ScopeId, SendResult, Sender, Task, TaskId,
 };
+
+struct LoggedFrame {
+    depth: usize,
+    fail_depth: usize,
+    ready_with_open_handle: bool,
+    polls: usize,
+    dropped: Rc<RefCell<Vec<usize>>>,
+}
+
+impl Drop for LoggedFrame {
+    fn drop(&mut self) {
+        self.dropped.borrow_mut().push(self.depth);
+    }
+}
+
+impl Task for LoggedFrame {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        if self.polls == 0 && self.depth < 2 {
+            context.spawn(
+                LoggedFrame {
+                    depth: self.depth + 1,
+                    fail_depth: self.fail_depth,
+                    ready_with_open_handle: self.ready_with_open_handle,
+                    polls: 0,
+                    dropped: self.dropped.clone(),
+                },
+                &[],
+            )?;
+        }
+        self.polls += 1;
+        if self.polls > 1 && self.depth == self.fail_depth {
+            if self.ready_with_open_handle {
+                let _ = context.channel(1)?;
+                return Ok(Poll::Ready(0));
+            }
+            return Err("deliberate failure".into());
+        }
+        context.yield_now()?;
+        Ok(Poll::Pending)
+    }
+}
+
+#[test]
+fn failure_drops_descendant_frames_before_ancestors() {
+    for (fail_depth, ready_with_open_handle) in [(0, false), (1, false), (1, true)] {
+        let dropped = Rc::new(RefCell::new(Vec::new()));
+        let root = LoggedFrame {
+            depth: 0,
+            fail_depth,
+            ready_with_open_handle,
+            polls: 0,
+            dropped: dropped.clone(),
+        };
+        let mut scheduler = Scheduler::new(root, 3, 1, 0).unwrap();
+        let error = scheduler.run().unwrap_err();
+        assert!(
+            error.contains(if ready_with_open_handle {
+                "open communication capabilities"
+            } else {
+                "deliberate failure"
+            }),
+            "{error}"
+        );
+        assert_eq!(&*dropped.borrow(), &[2, 1, 0]);
+        scheduler.verify().unwrap();
+    }
+}
+
+struct ParkedFrame {
+    depth: usize,
+    dropped: Rc<RefCell<Vec<usize>>>,
+    sender: Option<Sender>,
+    receiver: Option<Receiver>,
+}
+
+impl Drop for ParkedFrame {
+    fn drop(&mut self) {
+        self.dropped.borrow_mut().push(self.depth);
+    }
+}
+
+impl Task for ParkedFrame {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        if self.receiver.is_none() {
+            if self.depth < 2 {
+                context.spawn(
+                    ParkedFrame {
+                        depth: self.depth + 1,
+                        dropped: self.dropped.clone(),
+                        sender: None,
+                        receiver: None,
+                    },
+                    &[],
+                )?;
+            }
+            let (sender, receiver) = context.channel(1)?;
+            self.sender = Some(sender);
+            self.receiver = Some(receiver);
+        }
+        assert_eq!(
+            context.receive(self.receiver.as_ref().unwrap())?,
+            ReceiveResult::Pending
+        );
+        Ok(Poll::Pending)
+    }
+}
+
+#[test]
+fn deadlock_drops_descendant_frames_before_ancestors() {
+    let dropped = Rc::new(RefCell::new(Vec::new()));
+    let root = ParkedFrame {
+        depth: 0,
+        dropped: dropped.clone(),
+        sender: None,
+        receiver: None,
+    };
+    let mut scheduler = Scheduler::new(root, 3, 3, 0).unwrap();
+    assert_eq!(scheduler.run().unwrap_err(), "scope deadlocked");
+    assert_eq!(&*dropped.borrow(), &[2, 1, 0]);
+    assert_eq!(scheduler.open_handles(), 0);
+    scheduler.verify().unwrap();
+}
 
 struct Producer {
     sender: Option<Sender>,

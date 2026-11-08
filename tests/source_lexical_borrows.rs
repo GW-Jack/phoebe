@@ -349,6 +349,56 @@ fn main() -> I64 {
 }
 
 #[test]
+fn failing_child_cancels_pending_borrowed_call() {
+    let source = r#"
+fn grandchild() -> I64 { yield; 0 }
+
+fn build() -> Result<I64, ResourceError> {
+  spawn grandchild()?;
+  Result<I64, ResourceError>.Ok(0)
+}
+
+fn child() -> I64 {
+  scope { val unused = build(); }
+  0
+}
+
+fn wait(value: &mut I64) -> Result<I64, ResourceError> {
+  scope { spawn child()?; }
+  Result<I64, ResourceError>.Ok(value)
+}
+
+fn start() -> Result<I64, ResourceError> {
+  var x = 41;
+  with borrowed = &mut x {
+    val updated = wait(&mut borrowed)?;
+    borrowed = updated + 1;
+  };
+  Result<I64, ResourceError>.Ok(x)
+}
+
+fn main() -> I64 {
+  when (start()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let limits = ScopeLimits {
+        tasks: 3,
+        scopes: 1,
+        ..ScopeLimits::default()
+    };
+    let interpreted = program
+        .interpret_with_limits("main", &[], limits)
+        .unwrap_err();
+    assert!(interpreted.contains("scope"), "{interpreted}");
+    let native_error = native::run_with_limits(&program, "main", &[], limits).unwrap_err();
+    assert!(native_error.contains("task 1 failed"), "{native_error}");
+}
+
+#[test]
 fn shared_val_borrow_can_return_a_scalar_from_with_expression() {
     let source =
         "fn main() -> I64 { val ready = true; with r = &ready { if (r) { 42 } else { 0 } } }";

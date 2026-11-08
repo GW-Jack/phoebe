@@ -64,7 +64,9 @@ that identity. Across suspension, the caller retains the place and the callee
 retains its reference value.
 
 Ordinary ownership and capability-flow verification remain separate passes over the same explicit
-Core edges. Cancellation must release loans before their slots. These checks should
+Core edges. The scheduler now drops descendant task frames before ancestor
+frames on failure and deadlock. A source regression cancels a pending borrowed
+call after a child faults. Broader failure unwind coverage remains open. These checks should
 remain linear in Core size apart from the existing CFG fixed point, with no
 optimization search during compilation.
 

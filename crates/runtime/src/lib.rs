@@ -902,6 +902,20 @@ impl Scheduler {
         }
     }
 
+    fn cancel_nonterminal_descending(&mut self, ids: std::ops::Range<usize>, reason: &str) {
+        // Spawn always assigns a larger ID than the parent. Retire younger
+        // frames first so an address borrowed from an ancestor remains valid
+        // until every descendant frame has been dropped.
+        for other in ids.rev() {
+            if !matches!(
+                self.tasks[other].state,
+                TaskState::Done(_) | TaskState::Failed(_)
+            ) {
+                self.finish_task(TaskId(other), Err(reason.into()));
+            }
+        }
+    }
+
     pub fn run(&mut self) -> Result<i64, String> {
         if let Some(error) = &self.terminal_error {
             return Err(error.clone());
@@ -923,37 +937,42 @@ impl Scheduler {
                 let result = catch_unwind(AssertUnwindSafe(|| body.poll(&mut context)));
                 (result, context.wait)
             };
-            match result {
-                Ok(Ok(Poll::Ready(value))) => self.finish_task(task, Ok(value)),
+            let detached_body = match result {
+                Ok(Ok(Poll::Ready(value))) => {
+                    self.finish_task(task, Ok(value));
+                    Some(body)
+                }
                 Ok(Ok(Poll::Pending)) if wait == Some(Wait::Yield) => {
                     self.tasks[task.0].body = Some(body);
                     self.tasks[task.0].state = TaskState::Runnable;
                     self.ready.push_back(task);
                     self.stats.yields += 1;
+                    None
                 }
                 Ok(Ok(Poll::Pending)) if wait.is_some() => {
                     self.tasks[task.0].body = Some(body);
                     self.tasks[task.0].state = TaskState::Waiting(wait.expect("checked"));
                     self.stats.parks += 1;
+                    None
                 }
                 Ok(Ok(Poll::Pending)) => {
-                    self.finish_task(task, Err("task parked without a wait reason".into()))
+                    self.finish_task(task, Err("task parked without a wait reason".into()));
+                    Some(body)
                 }
-                Ok(Err(error)) => self.finish_task(task, Err(error)),
-                Err(_) => self.finish_task(task, Err("task panicked".into())),
-            }
+                Ok(Err(error)) => {
+                    self.finish_task(task, Err(error));
+                    Some(body)
+                }
+                Err(_) => {
+                    self.finish_task(task, Err("task panicked".into()));
+                    Some(body)
+                }
+            };
             if let TaskState::Failed(error) = &self.tasks[task.0].state {
                 let cause = format!("task {} failed: {error}", task.0);
-                for other in 0..self.tasks.len() {
-                    if other != task.0
-                        && !matches!(
-                            self.tasks[other].state,
-                            TaskState::Done(_) | TaskState::Failed(_)
-                        )
-                    {
-                        self.finish_task(TaskId(other), Err("scope cancelled".into()));
-                    }
-                }
+                self.cancel_nonterminal_descending(task.0 + 1..self.tasks.len(), "scope cancelled");
+                drop(detached_body);
+                self.cancel_nonterminal_descending(0..task.0, "scope cancelled");
                 self.clear_terminal_waiters();
                 self.close_terminal_scopes();
                 self.terminal_error = Some(cause.clone());
@@ -965,18 +984,7 @@ impl Scheduler {
             .iter()
             .any(|task| matches!(task.state, TaskState::Runnable | TaskState::Waiting(_)))
         {
-            let waiting = (0..self.tasks.len())
-                .filter(|index| {
-                    matches!(
-                        self.tasks[*index].state,
-                        TaskState::Runnable | TaskState::Waiting(_)
-                    )
-                })
-                .map(TaskId)
-                .collect::<Vec<_>>();
-            for task in waiting {
-                self.finish_task(task, Err("scope deadlocked".into()));
-            }
+            self.cancel_nonterminal_descending(0..self.tasks.len(), "scope deadlocked");
             self.clear_terminal_waiters();
             self.close_terminal_scopes();
             self.terminal_error = Some("scope deadlocked".into());

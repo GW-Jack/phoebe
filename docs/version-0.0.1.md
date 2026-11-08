@@ -338,6 +338,11 @@ the parent retained another sender and would otherwise report a deadlock
 instead of the child's fault. The bounded two-task Maude model includes
 atomic scope cancellation and queued-message discard; it remains an abstract
 model, not a proof about the executable scheduler.
+Failure and deadlock cleanup now drop descendant task frames before ancestor
+frames. Runtime tests inspect drop order for three generations, and a source
+test faults a child while its parent has a pending borrowed call. These are
+bounded checks of the current single-threaded runtime, not a proof of general
+failure unwind.
 Typed resource creation errors now distinguish invalid capacity, table
 limits, and allocation failure without publishing partial endpoint pairs.
 Task body boxing now fails before spawn transfers commit; an injected

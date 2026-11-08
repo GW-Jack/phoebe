@@ -111,7 +111,11 @@ the optional table verifier.
 
 Normal task completion with an open handle or reply capability is a task
 failure. Task failure or panic closes that task's owned capabilities, then
-cancels every remaining task in the scope before another task poll. The first
+cancels every remaining task in the scope before another task poll. Spawn IDs
+increase from parent to child; failure and deadlock cleanup retire live frames
+in descending ID order. When a task itself fails, its detached frame is
+dropped after younger frames and before older frames. Drop-order tests cover
+failure in a root or child and deadlock across three generations. The first
 failure is reported to the host; cancellation closes siblings' capabilities
 and discards queued messages whose final receiver closes. A root waiting on
 its own still-open sender therefore cannot mask a child fault as a deadlock.
