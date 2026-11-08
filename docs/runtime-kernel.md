@@ -25,6 +25,15 @@ channel handles, and 64 reply pairs; callers can set tighter limits through
 the Rust API. Task creation
 therefore succeeds in the ordinary interpreter CLI example, while a one-task
 limit exercises the typed failure edge.
+The Rust kernel also has lexical task groups: `scope_enter()` switches the
+calling task's spawn destination to a fresh scope, and `scope_join(scope)`
+waits for every task spawned there or in a nested scope. It does not wait for
+siblings started before entry. The owner must join innermost first and cannot
+finish successfully while an entered scope remains open. Scope slots are
+reused with generation-tagged tokens, so an old token cannot join a later
+scope. The kernel checks live task counts and scope ancestry in its optional
+verifier. Source and native lowering have not yet exposed these operations;
+this is the runtime boundary for that integration.
 The versioned `phoebe_rt_v1_main_poll` entry runs a native poll function with
 a stable word-array frame: program counter in word 0, result in word 1, and
 generated payload afterward. Status `0` means Ready, `1` Pending, and `255`
@@ -98,7 +107,8 @@ its own still-open sender therefore cannot mask a child fault as a deadlock.
 Detected scope deadlock also closes all task-owned capabilities. A task can
 join its entire descendant tree while unrelated sibling tasks remain active;
 the root joins all tasks. Spawn records each child's parent, and completion
-wakes a joiner only after its descendants have finished. A child fault still
+wakes a joiner only after its descendants have finished. `scope_join` uses
+scope membership instead of task ancestry. A child fault still
 fails the whole scope immediately. The source language does not yet expose
 lexical nested task scopes, and task completion without an explicit join still
 leaves its descendants under the root scope.

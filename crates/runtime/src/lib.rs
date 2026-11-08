@@ -95,6 +95,9 @@ mod allocation_tests {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TaskId(usize);
 
+mod scopes;
+pub use scopes::ScopeId;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Token(usize);
 
@@ -376,6 +379,7 @@ enum Wait {
     Receive(usize),
     Reply(usize),
     Join,
+    ScopeJoin(ScopeId),
     Yield,
 }
 
@@ -391,10 +395,14 @@ struct TaskRecord {
     body: Option<Box<dyn Task>>,
     state: TaskState,
     parent: Option<TaskId>,
+    home_scope: ScopeId,
+    current_scope: ScopeId,
 }
 
 pub struct Scheduler {
     tasks: Vec<TaskRecord>,
+    scopes: Vec<scopes::ScopeRecord>,
+    free_scope_head: Option<usize>,
     ready: VecDeque<TaskId>,
     channels: Vec<Channel>,
     handles: Vec<Handle>,
@@ -453,14 +461,23 @@ impl Scheduler {
             .try_reserve_exact(max_tasks)
             .map_err(|error| error.to_string())?;
         let root = try_box(root).map_err(|_| "root task frame allocation failed".to_owned())?;
+        let mut scopes = Vec::new();
+        scopes
+            .try_reserve_exact(1)
+            .map_err(|error| error.to_string())?;
+        scopes.push(scopes::ScopeRecord::root());
         tasks.push(TaskRecord {
             body: Some(root),
             state: TaskState::Runnable,
             parent: None,
+            home_scope: ScopeId::ROOT,
+            current_scope: ScopeId::ROOT,
         });
         ready.push_back(TaskId(0));
         Ok(Self {
             tasks,
+            scopes,
+            free_scope_head: None,
             ready,
             channels: Vec::new(),
             handles: Vec::new(),
@@ -502,6 +519,7 @@ impl Scheduler {
     }
 
     pub fn verify(&self) -> Result<(), String> {
+        self.verify_scopes()?;
         if self.handles.len() > self.max_handles {
             return Err("scope handle budget exceeded".into());
         }
@@ -631,6 +649,16 @@ impl Scheduler {
                     }
                     continue;
                 }
+                TaskState::Waiting(Wait::ScopeJoin(scope)) => {
+                    let record = self.scope_record(scope)?;
+                    if record.owner != TaskId(index)
+                        || record.live == 0
+                        || task.current_scope != scope
+                    {
+                        return Err(format!("task {index} waits for an invalid scope"));
+                    }
+                    continue;
+                }
                 TaskState::Waiting(Wait::Yield) => {
                     return Err("yielded task must be runnable".into());
                 }
@@ -754,6 +782,15 @@ impl Scheduler {
                 self.ready.push_back(TaskId(index));
                 self.stats.wakes += 1;
             }
+            if let TaskState::Waiting(Wait::ScopeJoin(scope)) = self.tasks[index].state
+                && self
+                    .scope_record(scope)
+                    .is_ok_and(|record| record.live == 0)
+            {
+                self.tasks[index].state = TaskState::Runnable;
+                self.ready.push_back(TaskId(index));
+                self.stats.wakes += 1;
+            }
         }
     }
 
@@ -787,6 +824,13 @@ impl Scheduler {
     }
 
     fn finish_task(&mut self, task: TaskId, outcome: Result<i64, String>) {
+        let outcome = if outcome.is_ok()
+            && self.tasks[task.0].current_scope != self.tasks[task.0].home_scope
+        {
+            Err("task exited with an unjoined nested scope".into())
+        } else {
+            outcome
+        };
         let owned = self
             .handles
             .iter()
@@ -833,6 +877,7 @@ impl Scheduler {
             Err(error) => TaskState::Failed(error),
         };
         self.tasks[task.0].body = None;
+        self.release_task_from_scopes(task);
         self.wake_joiners();
     }
 
@@ -1440,7 +1485,10 @@ impl Context<'_> {
             body: Some(child),
             state: TaskState::Runnable,
             parent: Some(self.task),
+            home_scope: self.scheduler.tasks[self.task.0].current_scope,
+            current_scope: self.scheduler.tasks[self.task.0].current_scope,
         });
+        self.scheduler.add_task_to_scopes(id);
         for transfer in transfers {
             match transfer {
                 CapabilityTransfer::Channel(token) => {
@@ -1538,12 +1586,12 @@ impl Context<'_> {
     }
 
     pub fn join(&mut self) -> Result<Poll<()>, String> {
+        if self.wait.is_some() {
+            return Err("task already registered a wait in this poll".into());
+        }
         if !self.scheduler.has_live_descendants(self.task) {
             Ok(Poll::Ready(()))
         } else {
-            if self.wait.is_some() {
-                return Err("task already registered a wait in this poll".into());
-            }
             self.wait = Some(Wait::Join);
             Ok(Poll::Pending)
         }

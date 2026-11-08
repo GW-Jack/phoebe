@@ -1,7 +1,7 @@
 use std::task::Poll;
 
 use phoebe::runtime::{
-    Context, ReceiveResult, Receiver, Scheduler, SendResult, Sender, Task, TaskId,
+    Context, ReceiveResult, Receiver, Scheduler, ScopeId, SendResult, Sender, Task, TaskId,
 };
 
 struct Producer {
@@ -541,5 +541,142 @@ fn failing_grandchild_cancels_waiting_ancestors() {
             .unwrap_err()
             .contains("task 2 failed: nested boom")
     );
+    scheduler.verify().unwrap();
+}
+
+struct SpawnGrandchildAndReturn;
+
+impl Task for SpawnGrandchildAndReturn {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        context.spawn(CountingChild { remaining: 1 }, &[])?;
+        Ok(Poll::Ready(1))
+    }
+}
+
+#[derive(Default)]
+struct LexicalScopeRoot {
+    outside: Option<TaskId>,
+    scope: Option<ScopeId>,
+    joined_inner: bool,
+}
+
+impl Task for LexicalScopeRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        if self.scope.is_none() {
+            self.outside = Some(context.spawn(CountingChild { remaining: 5 }, &[])?);
+            let scope = context.scope_enter()?;
+            context.spawn(SpawnGrandchildAndReturn, &[])?;
+            self.scope = Some(scope);
+        }
+        if !self.joined_inner {
+            match context.scope_join(self.scope.unwrap())? {
+                Poll::Pending => return Ok(Poll::Pending),
+                Poll::Ready(()) => {
+                    assert_eq!(context.task_result(self.outside.unwrap())?, None);
+                    self.joined_inner = true;
+                }
+            }
+        }
+        match context.join()? {
+            Poll::Pending => Ok(Poll::Pending),
+            Poll::Ready(()) => Ok(Poll::Ready(
+                context.task_result(self.outside.unwrap())?.unwrap(),
+            )),
+        }
+    }
+}
+
+#[test]
+fn lexical_scope_joins_transitive_children_without_waiting_for_prior_sibling() {
+    let mut scheduler = Scheduler::new(LexicalScopeRoot::default(), 4, 0, 0).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
+    scheduler.verify().unwrap();
+}
+
+struct ReusedScopeRoot;
+
+impl Task for ReusedScopeRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        let old = context.scope_enter()?;
+        assert_eq!(context.scope_join(old)?, Poll::Ready(()));
+        let current = context.scope_enter()?;
+        assert_ne!(old, current);
+        assert!(context.scope_join(old).is_err());
+        assert_eq!(context.scope_join(current)?, Poll::Ready(()));
+        Ok(Poll::Ready(42))
+    }
+}
+
+#[test]
+fn closed_scope_token_cannot_join_reused_slot() {
+    let mut scheduler = Scheduler::new(ReusedScopeRoot, 1, 0, 0).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
+    scheduler.verify().unwrap();
+}
+
+struct UnjoinedScopeRoot;
+
+impl Task for UnjoinedScopeRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        context.scope_enter()?;
+        Ok(Poll::Ready(42))
+    }
+}
+
+#[test]
+fn task_cannot_leave_a_nested_scope_unjoined() {
+    let mut scheduler = Scheduler::new(UnjoinedScopeRoot, 1, 0, 0).unwrap();
+    assert!(
+        scheduler
+            .run()
+            .unwrap_err()
+            .contains("unjoined nested scope")
+    );
+    scheduler.verify().unwrap();
+}
+
+#[derive(Default)]
+struct NestedScopeChild {
+    scope: Option<ScopeId>,
+}
+
+impl Task for NestedScopeChild {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        if self.scope.is_none() {
+            let scope = context.scope_enter()?;
+            context.spawn(CountingChild { remaining: 1 }, &[])?;
+            self.scope = Some(scope);
+        }
+        match context.scope_join(self.scope.unwrap())? {
+            Poll::Pending => Ok(Poll::Pending),
+            Poll::Ready(()) => Ok(Poll::Ready(41)),
+        }
+    }
+}
+
+#[derive(Default)]
+struct NestedScopeRoot {
+    scope: Option<ScopeId>,
+}
+
+impl Task for NestedScopeRoot {
+    fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+        if self.scope.is_none() {
+            let scope = context.scope_enter()?;
+            context.spawn(NestedScopeChild::default(), &[])?;
+            self.scope = Some(scope);
+        }
+        match context.scope_join(self.scope.unwrap())? {
+            Poll::Pending => Ok(Poll::Pending),
+            Poll::Ready(()) => Ok(Poll::Ready(42)),
+        }
+    }
+}
+
+#[test]
+fn nested_scope_joins_wake_in_descendant_order() {
+    let mut scheduler = Scheduler::new(NestedScopeRoot::default(), 3, 0, 0).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
+    assert_eq!(scheduler.stats().parks, 2);
     scheduler.verify().unwrap();
 }
