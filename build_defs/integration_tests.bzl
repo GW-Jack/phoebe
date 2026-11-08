@@ -206,7 +206,7 @@ def integration_tests(rust_test):
     rust_test(
         name = "cost_acceptance_tests",
         crate_root = "tests/cost_acceptance.rs",
-        srcs = ["tests/cost_acceptance.rs", "examples/cost/identity.phoebe", "examples/cost/empty_scope.phoebe", "examples/cost/unit_identity.phoebe", "examples/spawn_pair.phoebe"],
+        srcs = ["tests/cost_acceptance.rs", "examples/cost/identity.phoebe", "examples/cost/product_identity.phoebe", "examples/cost/empty_scope.phoebe", "examples/cost/unit_identity.phoebe", "examples/spawn_pair.phoebe"],
         edition = "2024",
         deps = [":phoebe_lib"],
         resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},

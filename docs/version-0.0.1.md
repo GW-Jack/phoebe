@@ -81,8 +81,9 @@ each and checks that parse/lower errors stay in source bounds. It also covers
 deeply nested expressions, types, and branches. This is bounded test evidence,
 not a proof for every input.
 `phoebe clif <file>` prints the pre-legalization Cranelift IR. The scalar
-`identity` and `empty_scope` cost fixtures are executable acceptance tests; the other cost
-fixtures remain design sketches. `docs/performance-baseline.md` records a
+`identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
+cost fixtures are executable acceptance tests; the collection cost fixtures
+remain design sketches. `docs/performance-baseline.md` records a
 local phase-timing snapshot without a general speed claim.
 Native execution uses Cranelift JIT or Cranelift object emission linked with
 the host `cc`; `--interp` selects the reference interpreter. The built
@@ -167,8 +168,8 @@ dependencies and cached typed interfaces remain open. Core reuse now rebases sou
 every such span. In-process Core reuse also remaps call and spawn IDs when a
 private function is inserted or removed without changing existing signatures
 or referenced nominal layouts. It also remaps nominal IDs across unrelated
-data insertions, after checking nested layout compatibility. The `examples/cost/` files other than `identity` and `empty_scope` remain
-design fixtures, not executable acceptance tests.
+data insertions, after checking nested layout compatibility. The collection
+fixtures in `examples/cost/` remain design sketches.
 Standalone emission starts at `main` and omits unreachable direct functions
 and their spawned poll children. A dead runtime-using function cannot change
 the entry wrapper ABI.

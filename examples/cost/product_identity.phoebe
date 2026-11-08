@@ -1,0 +1,5 @@
+data Pair { left: I64, right: I64 }
+
+fn identity(pair: Pair) -> Pair = pair
+fn sum(pair: Pair) -> I64 = pair.left + pair.right
+fn main() -> I64 = sum(identity(Pair(19, 23)))

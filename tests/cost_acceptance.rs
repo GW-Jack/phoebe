@@ -20,6 +20,37 @@ fn scalar_identity_has_no_phoebe_cost_or_backend_runtime_work() {
 }
 
 #[test]
+fn nominal_product_identity_passes_components_without_work() {
+    let source = include_str!("../examples/cost/product_identity.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let identity = &program.functions[0];
+    assert_eq!(identity.blocks[0].instructions.len(), 1);
+    assert!(matches!(
+        identity.blocks[0].instructions[0].operation,
+        core::Operation::Move(core::ValueId(0))
+    ));
+    assert!(program.cost_events().is_empty());
+    let clif = native::clif(&program).unwrap();
+    let identity_clif = clif
+        .split("; Phoebe function identity\n")
+        .nth(1)
+        .unwrap()
+        .split("; Phoebe function sum\n")
+        .next()
+        .unwrap();
+    assert!(
+        identity_clif.contains("(i64, i64) -> i64, i64"),
+        "{identity_clif}"
+    );
+    assert!(identity_clif.contains("return v0, v1"), "{identity_clif}");
+    assert!(!identity_clif.contains(" = "), "{identity_clif}");
+    assert!(!identity_clif.contains("call "), "{identity_clif}");
+    assert!(!identity_clif.contains("stack_slot"), "{identity_clif}");
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
 fn empty_scope_has_no_scope_cost_or_runtime_call() {
     let source = include_str!("../examples/cost/empty_scope.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

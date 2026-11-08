@@ -1,9 +1,10 @@
 # Cost acceptance examples
 
-`identity.phoebe`, `unit_identity.phoebe`, and `empty_scope.phoebe` compile today. Their executable
-acceptance tests check zero Phoebe cost events and no runtime calls in
-Cranelift IR. The other files use draft syntax and cannot compile yet. The snippets
-below describe the checked IR shape required by the non-pessimization contract.
+`identity.phoebe`, `product_identity.phoebe`, `unit_identity.phoebe`, and
+`empty_scope.phoebe` compile today. Their executable acceptance tests check
+zero Phoebe cost events and no runtime calls in Cranelift IR. The other files
+use draft syntax and cannot compile yet. The snippets below describe the
+checked IR shape required by the non-pessimization contract.
 `cost.*` denotes a logical event with source and reason metadata. Ordinary
 loads, stores, branches, and scalar arithmetic are omitted from the snippets.
 
@@ -15,6 +16,19 @@ entry(x: I64):
 ```
 
 No `cost.*` event, runtime call, retained task frame, or variable-size copy.
+
+## `product_identity.phoebe`
+
+```text
+entry(pair: Pair):
+  return pair
+```
+
+The two-word product crosses the native function boundary as two scalar
+components. Its identity body has one logical Core move for ownership, but
+no native computation, cost event, runtime call, or stack slot. The acceptance
+test checks the emitted Cranelift IR and interpreter/native agreement for a
+call through that body.
 
 ## `unit_identity.phoebe`
 
