@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use phoebe_core::Type as ConcreteType;
-use phoebe_generic_core::{self as generic_core, Operation, Type as GenericType};
+use phoebe_generic_core::{self as generic_core, CheckedModule, Operation, Type as GenericType};
 
 use crate::{Shape, Shapes};
 
@@ -124,6 +124,23 @@ impl<'a> Planner<'a> {
         target: TargetAbi,
     ) -> Result<Self, String> {
         generic_core::verify_module(module)?;
+        Self::from_verified(module, shapes, target)
+    }
+
+    /// Use a module whose body proof was already retained by source lowering.
+    pub fn from_checked(
+        module: &'a CheckedModule,
+        shapes: &'a Shapes,
+        target: TargetAbi,
+    ) -> Result<Self, String> {
+        Self::from_verified(module.as_module(), shapes, target)
+    }
+
+    fn from_verified(
+        module: &'a generic_core::Module,
+        shapes: &'a Shapes,
+        target: TargetAbi,
+    ) -> Result<Self, String> {
         check_acyclic(module)?;
         Ok(Self {
             module,
@@ -300,10 +317,13 @@ mod tests {
 
     #[test]
     fn equal_shapes_share_one_body_and_transitive_callee() {
-        let module =
-            generic_module("fn identity<T>(x: T) -> T = x\nfn through<U>(x: U) -> U = identity(x)");
+        let source = phoebe_syntax::parse(
+            "fn identity<T>(x: T) -> T = x\nfn through<U>(x: U) -> U = identity(x)",
+        )
+        .unwrap();
+        let module = generic_core::lower_program_checked(&source).unwrap();
         let layouts = shapes();
-        let mut planner = Planner::new(
+        let mut planner = Planner::from_checked(
             &module,
             &layouts,
             TargetAbi {

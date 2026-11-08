@@ -5,6 +5,7 @@ rust_library(
     edition = "2024",
     deps = [
         "//crates/capability:phoebe_capability",
+        "//crates/generic-core:phoebe_generic_core",
         "//crates/runtime:phoebe_runtime",
         "//crates/syntax:phoebe_syntax",
     ],
@@ -19,6 +20,7 @@ rust_test(
     edition = "2024",
     deps = [
         "//crates/capability:phoebe_capability",
+        "//crates/generic-core:phoebe_generic_core",
         "//crates/runtime:phoebe_runtime",
         "//crates/syntax:phoebe_syntax",
     ],

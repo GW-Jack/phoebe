@@ -10,7 +10,7 @@ mod display;
 mod source;
 mod verification;
 
-pub use source::{lower, lower_program};
+pub use source::{lower, lower_program, lower_program_checked};
 pub use verification::{verify, verify_module};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -40,6 +40,27 @@ pub struct Function {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Module {
     pub functions: Vec<Function>,
+}
+
+/// Immutable evidence that every parametric body and call has passed the
+/// module verifier. Concrete call sites may use its signatures without
+/// checking those bodies again.
+#[derive(Clone, Debug)]
+pub struct CheckedModule(Module);
+
+impl CheckedModule {
+    pub fn check(module: Module) -> Result<Self, String> {
+        verify_module(&module)?;
+        Ok(Self(module))
+    }
+
+    pub fn as_module(&self) -> &Module {
+        &self.0
+    }
+
+    pub fn into_module(self) -> Module {
+        self.0
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

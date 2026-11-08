@@ -382,6 +382,7 @@ pub struct DataDef {
     pub fields: Vec<(String, Type)>,
 }
 
+pub mod generic_calls;
 mod interpreter;
 mod lowering;
 mod scope_verification;

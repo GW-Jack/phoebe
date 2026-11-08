@@ -432,6 +432,7 @@ name = "phoebe-core"
 version = "0.0.1"
 dependencies = [
  "phoebe-capability",
+ "phoebe-generic-core",
  "phoebe-runtime",
  "phoebe-syntax",
 ]

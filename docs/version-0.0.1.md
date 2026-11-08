@@ -94,6 +94,10 @@ transitive generic calls. A shared Cranelift emitter produces JIT code and
 linkable objects through an isolated native API. Tests execute scalar calls,
 verify wide return-buffer code generation, and link a standalone generic
 object. Concrete source call sites and compiler build integration remain open.
+Concrete signature resolution against an already checked generic module now
+infers owning type arguments for scalar, nominal, and communication-right
+values without checking the generic body again; it has not yet been wired into
+the source expression lowerer or runtime dispatch.
 The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures

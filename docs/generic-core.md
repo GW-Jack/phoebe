@@ -89,6 +89,14 @@ native body without forcing downstream type checking when the interface is
 unchanged. A native cache key includes the normalized body, transport and
 call shape, dictionary layout, target, and compiler version.
 
+Source lowering can retain a `CheckedModule` after one body verification.
+`phoebe-core::generic_calls` infers concrete type arguments from the owned
+argument types already known to concrete lowering, or validates an explicit
+substitution against that checked signature. It rejects borrowed references
+at an owning binder and reports uninferred phantom binders. This resolver is
+signature-only: ordinary concrete Core call operations and CLI execution do
+not yet route through it.
+
 ## First executable acceptance cases
 
 - `identity<T>(x: T) -> T` works for `I64`, `Unit`, two distinct closed

@@ -63,6 +63,8 @@ Cranelift JIT emission runs the first identity, branch, and generic-call
 subset. The same emitter can produce a linkable object; a standalone smoke
 test executes a transitive generic call. Ordinary source calls and compiler
 build integration remain open.
+Concrete call-signature resolution against a verified generic module is
+available as a compiler API; source expression lowering does not use it yet.
 The isolated `phoebe-generic-core` crate now verifies a first opaque-owner
 IR slice. `phoebe generic-ir <file>` lowers identity, forwarding, and
 generic-to-generic calls into printable parametric Core. The module verifier

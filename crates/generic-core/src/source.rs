@@ -5,7 +5,8 @@ use phoebe_syntax::{Diagnostic, Span};
 
 use crate::verification::verify_module_at;
 use crate::{
-    Block, BlockId, Function, Instruction, Module, Operation, Terminator, Type, ValueId, verify,
+    Block, BlockId, CheckedModule, Function, Instruction, Module, Operation, Terminator, Type,
+    ValueId, verify,
 };
 
 fn signature(source: &syntax::Function) -> Result<Function, Diagnostic> {
@@ -198,6 +199,12 @@ pub fn lower_program(source: &syntax::Program) -> Result<Module, Diagnostic> {
     verify_module_at(&module)
         .map_err(|(index, message)| Diagnostic::new(definitions[index].name_span, message))?;
     Ok(module)
+}
+
+/// Source lowering already verifies the module, so this wrapper retains its
+/// evidence without a second verifier pass.
+pub fn lower_program_checked(source: &syntax::Program) -> Result<CheckedModule, Diagnostic> {
+    lower_program(source).map(CheckedModule)
 }
 
 fn lower_inner(source: &syntax::Function, signatures: &[Function]) -> Result<Function, Diagnostic> {
