@@ -1,0 +1,29 @@
+load request_backpressure.maude
+
+--- Sanity: a queued second request without queue ownership is bad.
+reduce in PHOEBE-REQUEST-BACKPRESSURE : bad(st(pSent2, cReady2, qSecond,
+  oClosed, oParent, rFull, rEmpty)) .
+
+search [1] in PHOEBE-REQUEST-BACKPRESSURE : initial =>* X:State
+  such that bad(X:State) == true .
+
+--- The second right stays with the parent while its send is pending.
+search [1] in PHOEBE-REQUEST-BACKPRESSURE : initial =>*
+  st(pWaiting2, cReady1, qFirst, oQueue, oParent, rEmpty, rEmpty) .
+--- Dequeue frees the slot and the second request can enter the queue.
+search [1] in PHOEBE-REQUEST-BACKPRESSURE : initial =>*
+  st(pSent2, cReady2, qSecond, oClosed, oQueue, rFull, rEmpty) .
+--- The sender may retry before the service completes the first reply.
+search [1] in PHOEBE-REQUEST-BACKPRESSURE : initial =>*
+  st(pSent2, cGot1, qSecond, oChild, oQueue, rEmpty, rEmpty) .
+--- The service may park on its second receive before the send retries.
+search [1] in PHOEBE-REQUEST-BACKPRESSURE : initial =>*
+  st(pWaiting2, cWaiting2, qEmpty, oClosed, oParent, rFull, rEmpty) .
+--- Both replies can be consumed after successful delivery.
+search [1] in PHOEBE-REQUEST-BACKPRESSURE : initial =>*
+  st(pDone, cDone, qEmpty, oClosed, oClosed, rConsumed, rConsumed) .
+--- A receiver close wakes the sender with its intact second request.
+search [1] in PHOEBE-REQUEST-BACKPRESSURE : initial =>*
+  st(pRejected2, cDone, qEmpty, oClosed, oParent, rFull, rEmpty) .
+search [1] in PHOEBE-REQUEST-BACKPRESSURE : initial =>*
+  st(pDone, cDone, qEmpty, oClosed, oClosed, rConsumed, rEnded) .

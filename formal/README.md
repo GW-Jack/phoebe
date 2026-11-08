@@ -48,6 +48,26 @@ reachable states with no encoded bad state. Ten positive queries witness
 ownership transfer, successful and canceled completion, discard, failure,
 and both scope outcomes. A deliberately inconsistent state is classified bad.
 
+## Two-request backpressure model
+
+`request_backpressure.maude` has one parent, one service, two requests, two
+reply rights, and one queue slot. The second send first returns pending with
+its right owned by the parent. Dequeue permits a retry to transfer that right
+to the queue. The service may park waiting for the second request. A separate
+branch closes the last receiver while the send is pending; the rejected send
+retains its request until the parent closes it. The encoded bad predicate
+checks queue/right coupling, right ownership during pending and rejection,
+reply publication, and terminal cleanup. The exhaustive search visits 25
+states with no encoded bad state. Seven witnesses cover pending send, retry
+before and after first completion, pending receive, successful completion,
+rejection, and cleanup after
+rejection. A deliberately mismatched queue/right state is classified bad.
+
+This model fixes the number of requests and rights at two and abstracts away
+the runtime frame layout, scheduler fairness, channel allocation, and memory
+regions. The source and native regression for the successful retry path is
+`examples/request_backpressure.phoebe`.
+
 ## Retained borrow through a nested call
 
 `retained_borrow.maude` models one parent-owned scalar place borrowed by a
@@ -63,11 +83,13 @@ bad.
 
 ## Evidence boundary
 
-These are finite explorations of four handwritten abstract machines. The
+These are finite explorations of five handwritten abstract machines. The
 two-task model does not include regions or references; the one-task model
 does not include handle fork. Neither models multiple queued messages or
 blocking/parking. The reply model does not cover multiple reply rights,
 general transferable handles, multiple queued requests, or memory regions.
+The backpressure model covers exactly two requests and one queue slot; it
+does not model executable frame spills or every cancellation interleaving.
 The retained borrow model includes parking but only one same-task call chain,
 one scalar place, and an abstract ordered unwind. It does not encode the
 generated frame offsets, Rust pointer operations, or allocator behavior.

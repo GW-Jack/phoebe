@@ -1,0 +1,101 @@
+--- Two requests, one queue slot, one parent, one service. Each request owns
+--- one ReplyTo token. A full queue forces the second send to retain its token.
+mod PHOEBE-REQUEST-BACKPRESSURE is
+  protecting BOOL .
+
+  sorts Parent Child Queue Owner Reply State .
+  ops pStart pReady2 pWaiting2 pSent2 pRejected2 pClosed2 pDone : -> Parent [ctor] .
+  ops cReady1 cGot1 cReady2 cWaiting2 cGot2 cDone : -> Child [ctor] .
+  ops qEmpty qFirst qSecond : -> Queue [ctor] .
+  ops oParent oQueue oChild oClosed : -> Owner [ctor] .
+  ops rEmpty rFull rConsumed rEnded : -> Reply [ctor] .
+
+  op st : Parent Child Queue Owner Owner Reply Reply -> State [ctor] .
+  op initial : -> State .
+  eq initial = st(pStart, cReady1, qEmpty, oParent, oParent, rEmpty, rEmpty) .
+
+  vars P : Parent .
+  vars C : Child .
+  vars Q : Queue .
+  vars A B : Owner .
+  vars R S : Reply .
+
+  rl [send-first] :
+    st(pStart, C, qEmpty, oParent, oParent, rEmpty, rEmpty)
+    => st(pReady2, C, qFirst, oQueue, oParent, rEmpty, rEmpty) .
+  rl [second-send-pends] :
+    st(pReady2, C, qFirst, oQueue, oParent, R, rEmpty)
+    => st(pWaiting2, C, qFirst, oQueue, oParent, R, rEmpty) .
+  rl [receive-first] :
+    st(P, cReady1, qFirst, oQueue, oParent, R, rEmpty)
+    => st(P, cGot1, qEmpty, oChild, oParent, R, rEmpty) .
+  rl [complete-first] :
+    st(P, cGot1, Q, oChild, B, rEmpty, rEmpty)
+    => st(P, cReady2, Q, oClosed, B, rFull, rEmpty) .
+  rl [second-receive-pends] :
+    st(P, cReady2, qEmpty, oClosed, oParent, rFull, rEmpty)
+    => st(P, cWaiting2, qEmpty, oClosed, oParent, rFull, rEmpty) .
+  crl [second-send-immediate] :
+    st(pReady2, C, qEmpty, A, oParent, R, rEmpty)
+    => st(pSent2, C, qSecond, A, oQueue, R, rEmpty)
+    if C =/= cDone .
+  crl [second-send-retries] :
+    st(pWaiting2, C, qEmpty, A, oParent, R, rEmpty)
+    => st(pSent2, C, qSecond, A, oQueue, R, rEmpty)
+    if C =/= cDone .
+  rl [receive-second-immediate] :
+    st(pSent2, cReady2, qSecond, oClosed, oQueue, R, rEmpty)
+    => st(pSent2, cGot2, qEmpty, oClosed, oChild, R, rEmpty) .
+  rl [receive-second-woken] :
+    st(pSent2, cWaiting2, qSecond, oClosed, oQueue, R, rEmpty)
+    => st(pSent2, cGot2, qEmpty, oClosed, oChild, R, rEmpty) .
+  rl [complete-second] :
+    st(pSent2, cGot2, qEmpty, oClosed, oChild, R, rEmpty)
+    => st(pSent2, cDone, qEmpty, oClosed, oClosed, R, rFull) .
+
+  --- Closing the final receiver while the second send waits wakes it with
+  --- Closed. The parent still owns the intact second request and closes it.
+  rl [service-closes-after-first] :
+    st(pWaiting2, cReady2, qEmpty, oClosed, oParent, rFull, rEmpty)
+    => st(pWaiting2, cDone, qEmpty, oClosed, oParent, rFull, rEmpty) .
+  rl [service-closes-while-waiting] :
+    st(pWaiting2, cWaiting2, qEmpty, oClosed, oParent, rFull, rEmpty)
+    => st(pWaiting2, cDone, qEmpty, oClosed, oParent, rFull, rEmpty) .
+  rl [second-send-rejected] :
+    st(pWaiting2, cDone, qEmpty, oClosed, oParent, rFull, rEmpty)
+    => st(pRejected2, cDone, qEmpty, oClosed, oParent, rFull, rEmpty) .
+  rl [close-rejected-request] :
+    st(pRejected2, cDone, qEmpty, oClosed, oParent, rFull, rEmpty)
+    => st(pClosed2, cDone, qEmpty, oClosed, oClosed, rFull, rEnded) .
+
+  rl [receive-first-reply] :
+    st(pSent2, C, Q, oClosed, B, rFull, S)
+    => st(pSent2, C, Q, oClosed, B, rConsumed, S) .
+  rl [receive-first-after-rejection] :
+    st(pClosed2, cDone, qEmpty, oClosed, oClosed, rFull, rEnded)
+    => st(pClosed2, cDone, qEmpty, oClosed, oClosed, rConsumed, rEnded) .
+  rl [receive-second-reply] :
+    st(pSent2, cDone, qEmpty, oClosed, oClosed, rConsumed, rFull)
+    => st(pSent2, cDone, qEmpty, oClosed, oClosed, rConsumed, rConsumed) .
+  rl [finish-delivered] :
+    st(pSent2, cDone, qEmpty, oClosed, oClosed, rConsumed, rConsumed)
+    => st(pDone, cDone, qEmpty, oClosed, oClosed, rConsumed, rConsumed) .
+  rl [finish-rejected] :
+    st(pClosed2, cDone, qEmpty, oClosed, oClosed, rConsumed, rEnded)
+    => st(pDone, cDone, qEmpty, oClosed, oClosed, rConsumed, rEnded) .
+
+  op bad : State -> Bool .
+  eq bad(st(P, C, Q, A, B, R, S)) =
+    not ((Q == qFirst) == (A == oQueue)) or
+    not ((Q == qSecond) == (B == oQueue)) or
+    (A == oChild and not (C == cGot1)) or
+    (B == oChild and not (C == cGot2)) or
+    (P == pWaiting2 and not (B == oParent)) or
+    (P == pRejected2 and not (B == oParent and C == cDone)) or
+    ((R == rFull or R == rConsumed) and not (A == oClosed)) or
+    ((S == rFull or S == rConsumed) and not (B == oClosed)) or
+    (S == rEnded and not (B == oClosed and C == cDone)) or
+    (P == pDone and not (C == cDone and Q == qEmpty and
+      A == oClosed and B == oClosed and R == rConsumed and
+      (S == rConsumed or S == rEnded))) .
+endm

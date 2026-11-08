@@ -147,6 +147,10 @@ resource limits, and a full request queue. The two-request, one-slot example
 retains the second request's nested reply right across a pending send and
 resumes after the first dequeue. General capability-bearing aggregates remain
 open.
+The bounded two-request Maude model explores both successful retry and
+receiver closure during a pending send. It checks encoded queue/right
+ownership and terminal cleanup over 25 states; it is not a proof about the
+generated frame or scheduler. See `formal/README.md`.
 The runtime also has native ABI shims for this concrete request layout.
 Native poll tests cover atomic creation, enqueue/dequeue transfer, closed-send
 retention, and pending receive wakeup. Cranelift lowering uses these shims for
