@@ -651,7 +651,11 @@ pub(super) fn compile_functions<M: Module>(
                             )?)
                         }
                         Operation::LoadRef(reference) => Some(vec![builder.ins().load(
-                            types::I64,
+                            if function.value_types[instruction.result.unwrap().0] == Type::Bool {
+                                types::I8
+                            } else {
+                                types::I64
+                            },
                             MemFlagsData::new(),
                             one(*reference),
                             0,

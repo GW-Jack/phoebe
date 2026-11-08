@@ -484,7 +484,10 @@ impl Lowerer<'_> {
                             self.emit_effect(Operation::Store(place, value), *span);
                         }
                         Binding::Ref(reference, ParamMode::Exclusive) => {
-                            self.require(ty, Type::I64, expr.span)?;
+                            let expected = self.value_types[reference.0]
+                                .referent()
+                                .expect("validated reference parameter");
+                            self.require(ty, expected, expr.span)?;
                             self.emit_effect(Operation::StoreRef(reference, value), *span);
                         }
                         _ => {

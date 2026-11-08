@@ -94,11 +94,7 @@ impl<'a> Lowerer<'a> {
             automatic_checkpoints,
         };
         for (mode, own_type) in params {
-            let ty = match mode {
-                ParamMode::Own => own_type,
-                ParamMode::Shared => Type::RefI64,
-                ParamMode::Exclusive => Type::RefMutI64,
-            };
+            let ty = Type::parameter(mode, own_type).expect("validated parameter type");
             let id = lowerer.value(ty);
             lowerer.blocks[0].params.push(id);
         }
@@ -491,7 +487,16 @@ fn lower_internal(
                     params: function
                         .params
                         .iter()
-                        .map(|param| Ok((param.mode, resolve(&param.ty, param.span)?)))
+                        .map(|param| {
+                            let ty = resolve(&param.ty, param.span)?;
+                            Type::parameter(param.mode, ty).ok_or_else(|| {
+                                Diagnostic::new(
+                                    param.span,
+                                    "only I64 and Bool borrows are implemented",
+                                )
+                            })?;
+                            Ok((param.mode, ty))
+                        })
                         .collect::<Result<Vec<_>, Diagnostic>>()?,
                     return_type: resolve(&function.return_type, function.name_span)?,
                 },

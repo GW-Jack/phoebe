@@ -273,6 +273,44 @@ fn shared_and_exclusive_borrows_cross_calls() {
 }
 
 #[test]
+fn bool_borrows_read_write_and_forward_without_copying_owner() {
+    let program = compile(
+        "fn read(x: &Bool) -> Bool = x \
+         fn flip(x: &mut Bool) -> Bool { x = !x; x } \
+         fn forward(x: &mut Bool) -> Bool = read(&x) \
+         fn main() -> I64 { val initial = false; var flag = read(&initial); flip(&mut flag); \
+           if (forward(&mut flag) && flag) { 42 } else { 0 } }",
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-bool-borrow-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = std::process::Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn bool_borrow_type_and_alias_conflicts_are_rejected() {
+    let wrong = "fn read(x: &Bool) -> Bool = x fn main() -> I64 { var x = 1; read(&x); 0 }";
+    let error = core::lower(&syntax::parse(wrong).unwrap()).unwrap_err();
+    assert!(error.message.contains("expected Bool"), "{error:?}");
+
+    let overlap = "fn pair(a: &Bool, b: &mut Bool) -> Bool = a && b \
+                   fn main() -> I64 { var x = true; pair(&x, &mut x); 0 }";
+    let error = core::lower(&syntax::parse(overlap).unwrap()).unwrap_err();
+    assert!(
+        error.message.contains("overlapping call borrows"),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn call_loan_regions_are_printed_and_verified() {
     let source = include_str!("../examples/borrow.phoebe");
     let program = compile(source);

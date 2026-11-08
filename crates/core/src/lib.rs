@@ -43,6 +43,8 @@ pub enum Type {
     Data(DataId),
     RefI64,
     RefMutI64,
+    RefBool,
+    RefMutBool,
     SenderI64,
     ReceiverI64,
     ReplyToI64,
@@ -51,6 +53,27 @@ pub enum Type {
     RequestSenderI64,
     RequestReceiverI64,
     ResourceError,
+}
+
+impl Type {
+    fn parameter(mode: ParamMode, owner: Self) -> Option<Self> {
+        match (mode, owner) {
+            (ParamMode::Own, owner) => Some(owner),
+            (ParamMode::Shared, Self::I64) => Some(Self::RefI64),
+            (ParamMode::Exclusive, Self::I64) => Some(Self::RefMutI64),
+            (ParamMode::Shared, Self::Bool) => Some(Self::RefBool),
+            (ParamMode::Exclusive, Self::Bool) => Some(Self::RefMutBool),
+            _ => None,
+        }
+    }
+
+    fn referent(self) -> Option<Self> {
+        match self {
+            Self::RefI64 | Self::RefMutI64 => Some(Self::I64),
+            Self::RefBool | Self::RefMutBool => Some(Self::Bool),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

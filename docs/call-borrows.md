@@ -3,12 +3,14 @@
 Status: implemented subset, 2026-11-06. This is a step toward Phoebe's
 general reference and region design, not a proof of it.
 
-A function may declare `&I64` or `&mut I64` parameters. A caller writes `&x`
-or `&mut x` as a direct call argument. The loan begins at the call after value
-arguments have been evaluated, and ends when the callee returns. `&x` can read;
-`&mut x` can read and assign the caller's scalar place. A mutable local has a
-stable place. A shared borrow of a scalar `val` materializes a temporary
-read-only place; a scalar `val` cannot be mutably borrowed.
+A function may declare `&I64`, `&mut I64`, `&Bool`, or `&mut Bool` parameters.
+A caller writes `&x` or `&mut x` as a direct call argument. The loan begins
+at the call after value arguments have been evaluated, and ends when the
+callee returns. `&x` can read; `&mut x` can read and assign the caller's
+scalar place. A mutable local has a stable place. A shared borrow of a scalar
+`val` materializes a temporary read-only place; a scalar `val` cannot be
+mutably borrowed. The native ABI passes one address for either scalar, with
+the referent's own load and store width.
 
 The source checker rejects a call with overlapping arguments if any loan to
 that place is exclusive. It permits repeated shared loans. A borrowed

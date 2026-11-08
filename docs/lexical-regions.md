@@ -1,7 +1,7 @@
 # Lexical borrow regions
 
 Status: design obligation for borrowing beyond one call. Current executable
-Core supports only call-scoped `&I64` and `&mut I64` loans. The finite
+Core supports only call-scoped I64 and Bool loans. The finite
 `formal/lexical_borrows.maude` model checks a two-level instance of the rules
 below; it is not a proof of Core or native code.
 

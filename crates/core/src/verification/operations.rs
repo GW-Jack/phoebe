@@ -152,14 +152,20 @@ pub(super) fn op_type(
                     (CallArg::Value(value), ParamMode::Own) => ty(*value) == expected,
                     (CallArg::Borrow(place, false), ParamMode::Shared)
                     | (CallArg::Borrow(place, true), ParamMode::Exclusive) => {
-                        function.place_types.get(place.0) == Some(&Type::I64)
+                        function.place_types.get(place.0)
+                            == Some(&match expected {
+                                Type::RefBool | Type::RefMutBool => Type::Bool,
+                                _ => Type::I64,
+                            })
                     }
                     (CallArg::Ref(value, false), ParamMode::Shared) => {
-                        matches!(ty(*value), Type::RefI64 | Type::RefMutI64)
+                        matches!(
+                            (ty(*value), expected),
+                            (Type::RefI64 | Type::RefMutI64, Type::RefI64)
+                                | (Type::RefBool | Type::RefMutBool, Type::RefBool)
+                        )
                     }
-                    (CallArg::Ref(value, true), ParamMode::Exclusive) => {
-                        ty(*value) == Type::RefMutI64
-                    }
+                    (CallArg::Ref(value, true), ParamMode::Exclusive) => ty(*value) == expected,
                     _ => false,
                 };
                 if !valid {
@@ -184,15 +190,17 @@ pub(super) fn op_type(
             let resolved = crate::generic_calls::instantiate(module, *callee, type_args, &actual)?;
             Ok(Some(resolved.result))
         }
-        Operation::LoadRef(reference) => {
-            if !matches!(ty(*reference), Type::RefI64 | Type::RefMutI64) {
-                return Err("load requires a reference".into());
-            }
-            Ok(Some(Type::I64))
-        }
+        Operation::LoadRef(reference) => match ty(*reference) {
+            Type::RefI64 | Type::RefMutI64 => Ok(Some(Type::I64)),
+            Type::RefBool | Type::RefMutBool => Ok(Some(Type::Bool)),
+            _ => Err("load requires a reference".into()),
+        },
         Operation::StoreRef(reference, value) => {
-            if ty(*reference) != Type::RefMutI64 || ty(*value) != Type::I64 {
-                return Err("store requires an exclusive I64 reference".into());
+            if !matches!(
+                (ty(*reference), ty(*value)),
+                (Type::RefMutI64, Type::I64) | (Type::RefMutBool, Type::Bool)
+            ) {
+                return Err("store requires a matching exclusive reference".into());
             }
             Ok(None)
         }

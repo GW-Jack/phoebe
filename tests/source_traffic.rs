@@ -184,6 +184,41 @@ fn main() -> I64 {
 }
 
 #[test]
+fn bool_borrow_is_retained_through_pending_receive() {
+    let source = r#"
+fn close(sender: Sender<I64>) -> I64 {
+  sender.close();
+  0
+}
+
+fn wait(flag: &mut Bool, receiver: Receiver<I64>) -> Bool {
+  val item = receiver.receive();
+  receiver.close();
+  flag = !flag;
+  flag
+}
+
+fn exchange() -> Result<Bool, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  var held = false;
+  spawn close(sender)?;
+  Result<Bool, ResourceError>.Ok(wait(&mut held, receiver))
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<Bool, ResourceError>.Ok(value) -> { if (value) { 42 } else { 0 } },
+    Result<Bool, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "bool-borrow-across-wait", 42);
+}
+
+#[test]
 fn deadlocked_borrowed_call_releases_native_scope_resources() {
     let source = r#"
 fn wait(value: &I64, receiver: Receiver<I64>) -> I64 {

@@ -87,8 +87,7 @@ impl Parser {
         }
         match name.as_str() {
             "I64" => Ok(TypeName::I64),
-            "Bool" if !borrowed => Ok(TypeName::Bool),
-            "Bool" => Err(Diagnostic::new(span, "Bool borrows are not implemented")),
+            "Bool" => Ok(TypeName::Bool),
             "Unit" if !borrowed => Ok(TypeName::Unit),
             "Unit" => Err(Diagnostic::new(span, "Unit borrows are not implemented")),
             _ if !borrowed => Ok(TypeName::Named(name)),

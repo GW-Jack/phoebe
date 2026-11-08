@@ -196,7 +196,7 @@ impl Shapes {
                 .get(id.0)
                 .map(Shape::parts)
                 .ok_or("unknown ABI data type".into()),
-            Type::RefI64 | Type::RefMutI64 => Ok(ADDRESS),
+            Type::RefI64 | Type::RefMutI64 | Type::RefBool | Type::RefMutBool => Ok(ADDRESS),
             Type::SenderI64
             | Type::ReceiverI64
             | Type::ReplyToI64

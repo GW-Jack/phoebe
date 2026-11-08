@@ -25,7 +25,7 @@ and block boundaries. The current shapes are:
 | Nullary sum | one I64 variant tag |
 | Sum with payload variants | I64 tag and enough I64 words for the largest flattened payload |
 | Product of finite fields | concatenated field shapes, in declaration order |
-| `&I64`, `&mut I64` | one native address |
+| `&I64`, `&mut I64`, `&Bool`, `&mut Bool` | one native address |
 | Bare `SenderI64`, `ReceiverI64`, `ResourceError` | one I64 handle or error code |
 
 Functions that perform channel runtime operations, and their transitive callers,

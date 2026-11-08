@@ -35,7 +35,10 @@ fn substitute(ty: GenericType, type_args: &[Type]) -> Result<Type, String> {
 }
 
 fn owning_type(ty: Type) -> Result<(), String> {
-    if matches!(ty, Type::RefI64 | Type::RefMutI64) {
+    if matches!(
+        ty,
+        Type::RefI64 | Type::RefMutI64 | Type::RefBool | Type::RefMutBool
+    ) {
         Err("borrowed reference cannot instantiate an owned type parameter".into())
     } else {
         Ok(())
@@ -177,7 +180,12 @@ mod tests {
     #[test]
     fn owned_binder_rejects_borrowed_reference() {
         let module = module("fn identity<T>(x: T) -> T = x");
-        for ty in [Type::RefI64, Type::RefMutI64] {
+        for ty in [
+            Type::RefI64,
+            Type::RefMutI64,
+            Type::RefBool,
+            Type::RefMutBool,
+        ] {
             assert!(
                 infer(&module, "identity", &[ty])
                     .unwrap_err()

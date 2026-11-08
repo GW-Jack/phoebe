@@ -926,7 +926,12 @@ fn compile_poll_module<M: Module>(
                         Operation::LoadRef(reference) => {
                             let address = get(*reference, &mut builder)[0];
                             Some(vec![builder.ins().load(
-                                types::I64,
+                                if function.value_types[instruction.result.unwrap().0] == Type::Bool
+                                {
+                                    types::I8
+                                } else {
+                                    types::I64
+                                },
                                 MemFlagsData::new(),
                                 address,
                                 0,

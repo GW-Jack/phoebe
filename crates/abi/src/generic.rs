@@ -123,10 +123,15 @@ impl<'a> Planner<'a> {
         if type_args.len() != definition.type_params {
             return Err(format!("{} type argument count mismatch", definition.name));
         }
-        if type_args
-            .iter()
-            .any(|ty| matches!(ty, ConcreteType::RefI64 | ConcreteType::RefMutI64))
-        {
+        if type_args.iter().any(|ty| {
+            matches!(
+                ty,
+                ConcreteType::RefI64
+                    | ConcreteType::RefMutI64
+                    | ConcreteType::RefBool
+                    | ConcreteType::RefMutBool
+            )
+        }) {
             return Err("borrowed reference cannot instantiate an owned type parameter".into());
         }
         let params = definition
@@ -347,12 +352,19 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(
-            planner
-                .plan(0, &[Type::RefI64])
-                .unwrap_err()
-                .contains("borrowed reference")
-        );
+        for ty in [
+            Type::RefI64,
+            Type::RefMutI64,
+            Type::RefBool,
+            Type::RefMutBool,
+        ] {
+            assert!(
+                planner
+                    .plan(0, &[ty])
+                    .unwrap_err()
+                    .contains("borrowed reference")
+            );
+        }
         assert!(planner.instances().is_empty());
     }
 

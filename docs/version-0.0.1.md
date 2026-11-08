@@ -44,12 +44,12 @@ receive a zero-word `Unit` result. `examples/unit_tasks.phoebe` and
 `examples/unit_data.phoebe` run in the interpreter, JIT, and standalone paths.
 Zero-width product fields can be read from mutable task-local places before
 or after suspension; `examples/unit_place.phoebe` exercises the latter.
-It supports up to four owned parameters (I64 borrows only), `val` and
+It supports up to four parameters (I64 and Bool borrows only), `val` and
 `var` bindings, assignment, `while`, integer and boolean literals, unary
 numeric negation, Boolean `!`, `+`, `-`, `*`, `==`, `!=`, `<`, `<=`, `>`, `>=`,
 short-circuit `&&` and `||`, `if` expressions with block arms, exhaustive `when` expressions,
 acyclic direct calls (a recursive cycle is diagnosed at a participating call
-site), call-site `&I64` and `&mut I64`
+site), call-site `&I64`, `&mut I64`, `&Bool`, and `&mut Bool`
 arguments, `?` on concrete built-in `Result<T, E>` applications with
 primitive, existing nominal, or finite `Option`/`Result` payloads and the same
 error type as the enclosing function's `Result<U, E>`, and a matching tail expression.

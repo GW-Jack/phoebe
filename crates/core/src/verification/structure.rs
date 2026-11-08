@@ -116,7 +116,7 @@ pub(crate) fn verify_structure(
             Type::I64 | Type::Bool | Type::Unit => false,
             Type::Data(id) => id.0 >= index,
             Type::ResourceError => false,
-            Type::RefI64 | Type::RefMutI64 => true,
+            Type::RefI64 | Type::RefMutI64 | Type::RefBool | Type::RefMutBool => true,
             Type::SenderI64 | Type::ReceiverI64 | Type::ReplyToI64 | Type::ReplyReceiverI64 => {
                 false
             }
@@ -131,7 +131,7 @@ pub(crate) fn verify_structure(
                     Type::I64 | Type::Bool | Type::Unit => false,
                     Type::Data(id) => id.0 >= index,
                     Type::ResourceError => false,
-                    Type::RefI64 | Type::RefMutI64 => true,
+                    Type::RefI64 | Type::RefMutI64 | Type::RefBool | Type::RefMutBool => true,
                     Type::SenderI64
                     | Type::ReceiverI64
                     | Type::ReplyToI64
@@ -198,35 +198,34 @@ pub(crate) fn verify_structure(
                     return Err(format!("{}: duplicate value definition", function.name));
                 }
                 if block_id == 0 {
-                    let expected = match function.param_modes[param_index] {
-                        ParamMode::Own => function.value_types[param.0],
-                        ParamMode::Shared => Type::RefI64,
-                        ParamMode::Exclusive => Type::RefMutI64,
+                    let actual = function.value_types[param.0];
+                    let valid = match function.param_modes[param_index] {
+                        ParamMode::Own => matches!(
+                            actual,
+                            Type::I64
+                                | Type::Bool
+                                | Type::Unit
+                                | Type::Data(_)
+                                | Type::SenderI64
+                                | Type::ReceiverI64
+                                | Type::ReplyToI64
+                                | Type::ReplyReceiverI64
+                                | Type::RequestI64
+                                | Type::RequestSenderI64
+                                | Type::RequestReceiverI64
+                                | Type::ResourceError
+                        ),
+                        ParamMode::Shared => matches!(actual, Type::RefI64 | Type::RefBool),
+                        ParamMode::Exclusive => {
+                            matches!(actual, Type::RefMutI64 | Type::RefMutBool)
+                        }
                     };
-                    if param_index != param.0
-                        || function.value_types[param.0] != expected
-                        || (function.param_modes[param_index] == ParamMode::Own
-                            && !matches!(
-                                expected,
-                                Type::I64
-                                    | Type::Bool
-                                    | Type::Unit
-                                    | Type::Data(_)
-                                    | Type::SenderI64
-                                    | Type::ReceiverI64
-                                    | Type::ReplyToI64
-                                    | Type::ReplyReceiverI64
-                                    | Type::RequestI64
-                                    | Type::RequestSenderI64
-                                    | Type::RequestReceiverI64
-                                    | Type::ResourceError
-                            ))
-                    {
+                    if param_index != param.0 || !valid {
                         return Err(format!("{}: invalid function parameter", function.name));
                     }
                 } else if matches!(
                     function.value_types[param.0],
-                    Type::RefI64 | Type::RefMutI64
+                    Type::RefI64 | Type::RefMutI64 | Type::RefBool | Type::RefMutBool
                 ) {
                     return Err(format!(
                         "{}: reference cannot be a block parameter",

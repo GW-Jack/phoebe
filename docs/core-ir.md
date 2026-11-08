@@ -63,8 +63,8 @@ place operations are `place.init`, `place.load`, `place.take`, `place.field`,
 and `place.store`. An
 initializer dominates every use, including on a loop backedge. A place can
 hold `I64`, `Bool`, `Unit`, sums, or finite products. A synchronous call can
-borrow an `I64` place through
-`&I64` or `&mut I64`; the callee uses `ref.load` and, for an exclusive loan,
+borrow an I64 or Bool place through an explicit shared or exclusive argument;
+the callee uses `ref.load` and, for an exclusive loan,
 `ref.store`. The interpreter stores a value per place and resolves the call
 borrow to the caller's slot. Cranelift lowers places to typed stack slots and
 passes their addresses. This separation keeps reference and region rules

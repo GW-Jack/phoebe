@@ -27,7 +27,7 @@ impl Lowerer<'_> {
                     let ty = match binding {
                         Binding::Val(value) => self.value_types[value.0],
                         Binding::Var(place) => self.place_types[place.0],
-                        Binding::Ref(_, _) => Type::RefI64,
+                        Binding::Ref(value, _) => self.value_types[value.0],
                     };
                     let Type::Data(id) = ty else {
                         return Err(Diagnostic::new(
@@ -246,10 +246,12 @@ impl Lowerer<'_> {
                         };
                         (self.emit(operation, ty, expr.span), ty)
                     }
-                    Binding::Ref(reference, _) => (
-                        self.emit(Operation::LoadRef(reference), Type::I64, expr.span),
-                        Type::I64,
-                    ),
+                    Binding::Ref(reference, _) => {
+                        let ty = self.value_types[reference.0]
+                            .referent()
+                            .expect("validated reference parameter");
+                        (self.emit(Operation::LoadRef(reference), ty, expr.span), ty)
+                    }
                 });
             }
             ExprKind::Copy(inner) => {
@@ -522,18 +524,22 @@ impl Lowerer<'_> {
                             })?;
                             let call_arg = match binding {
                                 Binding::Var(place) => {
-                                    self.require(self.place_types[place.0], Type::I64, *span)?;
+                                    self.require(self.place_types[place.0], param_type, *span)?;
                                     CallArg::Borrow(place, *mutable)
                                 }
                                 Binding::Val(value) if !*mutable => {
-                                    self.require(self.value_types[value.0], Type::I64, *span)?;
-                                    let place = self.place(Type::I64);
+                                    self.require(self.value_types[value.0], param_type, *span)?;
+                                    let place = self.place(param_type);
                                     self.emit_effect(Operation::PlaceInit(place, value), *span);
                                     CallArg::Borrow(place, false)
                                 }
                                 Binding::Ref(value, source_mode)
                                     if !*mutable || source_mode == ParamMode::Exclusive =>
                                 {
+                                    let actual = self.value_types[value.0]
+                                        .referent()
+                                        .expect("validated reference parameter");
+                                    self.require(actual, param_type, *span)?;
                                     CallArg::Ref(value, *mutable)
                                 }
                                 _ => {

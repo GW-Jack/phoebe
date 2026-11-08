@@ -93,11 +93,7 @@ pub(super) fn same_signature(
                             .get(value.0)
                             .copied()
                             .and_then(|ty| remap_type(ty, data_ids))
-                            == Some(match mode {
-                                ParamMode::Own => *ty,
-                                ParamMode::Shared => Type::RefI64,
-                                ParamMode::Exclusive => Type::RefMutI64,
-                            })
+                            == Type::parameter(*mode, *ty)
                     })
         })
 }
