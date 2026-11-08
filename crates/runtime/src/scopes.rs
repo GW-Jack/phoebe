@@ -71,6 +71,23 @@ impl Scheduler {
         }
     }
 
+    /// Failure and deadlock terminate the whole scheduler. Once every task
+    /// has released its membership, no nested scope can be joined again.
+    pub(super) fn close_terminal_scopes(&mut self) {
+        debug_assert!(self.tasks.iter().all(|task| matches!(
+            task.state,
+            super::TaskState::Done(_) | super::TaskState::Failed(_)
+        )));
+        for slot in 1..self.scopes.len() {
+            if self.scopes[slot].active {
+                debug_assert_eq!(self.scopes[slot].live, 0);
+                self.scopes[slot].active = false;
+                self.scopes[slot].next_free = self.free_scope_head;
+                self.free_scope_head = Some(slot);
+            }
+        }
+    }
+
     pub(super) fn verify_scopes(&self) -> Result<(), String> {
         if self.scopes.len() - 1 > self.max_scopes {
             return Err("task scope slot budget exceeded".into());
@@ -124,6 +141,12 @@ impl Scheduler {
                 self.scope_record(parent)?;
                 if record.owner.0 >= self.tasks.len() {
                     return Err("task scope has invalid owner".into());
+                }
+                if matches!(
+                    self.tasks[record.owner.0].state,
+                    super::TaskState::Done(_) | super::TaskState::Failed(_)
+                ) {
+                    return Err("active task scope has a terminal owner".into());
                 }
             }
         }
@@ -216,6 +239,7 @@ impl Context<'_> {
 #[cfg(test)]
 mod tests {
     use super::super::Task;
+    use super::super::{ReceiveResult, Receiver, Sender};
     use super::*;
 
     struct RepeatedEmptyScopes;
@@ -274,6 +298,71 @@ mod tests {
         .unwrap();
         assert_eq!(scheduler.run().unwrap(), 42);
         assert_eq!(scheduler.scopes.len(), 2);
+        scheduler.verify().unwrap();
+    }
+
+    struct FaultWithOpenScope;
+
+    impl Task for FaultWithOpenScope {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            context.scope_enter()?;
+            context.spawn(RepeatedEmptyScopes, &[])?;
+            Err("fault after scope entry".into())
+        }
+    }
+
+    #[test]
+    fn fault_cancels_child_and_retires_open_scope() {
+        let mut scheduler = Scheduler::new(FaultWithOpenScope, 2, 0, 0).unwrap();
+        assert!(
+            scheduler
+                .run()
+                .unwrap_err()
+                .contains("fault after scope entry")
+        );
+        assert!(!scheduler.scopes[1].active);
+        assert_eq!(scheduler.scopes[1].live, 0);
+        scheduler.verify().unwrap();
+    }
+
+    struct WaitingReceiver(Receiver);
+
+    impl Task for WaitingReceiver {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            assert_eq!(context.receive(&self.0)?, ReceiveResult::Pending);
+            Ok(Poll::Pending)
+        }
+    }
+
+    #[derive(Default)]
+    struct DeadlockedScope {
+        sender: Option<Sender>,
+        scope: Option<ScopeId>,
+    }
+
+    impl Task for DeadlockedScope {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            if self.scope.is_none() {
+                let (sender, receiver) = context.channel(1)?;
+                let scope = context.scope_enter()?;
+                let token = receiver.token();
+                context.spawn(WaitingReceiver(receiver), &[token])?;
+                self.sender = Some(sender);
+                self.scope = Some(scope);
+            }
+            match context.scope_join(self.scope.expect("entered"))? {
+                Poll::Pending => Ok(Poll::Pending),
+                Poll::Ready(()) => Ok(Poll::Ready(42)),
+            }
+        }
+    }
+
+    #[test]
+    fn deadlock_retires_open_scope_after_capability_cleanup() {
+        let mut scheduler = Scheduler::new(DeadlockedScope::default(), 2, 1, 0).unwrap();
+        assert_eq!(scheduler.run().unwrap_err(), "scope deadlocked");
+        assert!(!scheduler.scopes[1].active);
+        assert_eq!(scheduler.open_handles(), 0);
         scheduler.verify().unwrap();
     }
 }

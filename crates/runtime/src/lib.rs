@@ -955,6 +955,7 @@ impl Scheduler {
                     }
                 }
                 self.clear_terminal_waiters();
+                self.close_terminal_scopes();
                 self.terminal_error = Some(cause.clone());
                 return Err(cause);
             }
@@ -977,6 +978,7 @@ impl Scheduler {
                 self.finish_task(task, Err("scope deadlocked".into()));
             }
             self.clear_terminal_waiters();
+            self.close_terminal_scopes();
             self.terminal_error = Some("scope deadlocked".into());
             return Err("scope deadlocked".into());
         }

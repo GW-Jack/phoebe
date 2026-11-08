@@ -151,6 +151,9 @@ Nested scope slots have a caller-settable budget, with 64 slots by default;
 the root does not count and closed slots are reused. Source interpreter and
 JIT tests exercise a zero-slot fault, while runtime tests check that failed
 entry leaves the current scope unchanged.
+Fault and deadlock cleanup now retire remaining open scope records after all
+tasks and their capabilities have been closed; the runtime verifier rejects
+an active nested scope with a terminal owner.
 The source differential suite also retains a mutable caller place through a
 borrowed callee's pending scope join, then checks the task-limit error path.
 The finite Maude lexical-scope model explores a fixed root, earlier sibling,

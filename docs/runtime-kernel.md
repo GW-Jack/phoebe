@@ -35,6 +35,10 @@ scope. The kernel checks live task counts and scope ancestry in its optional
 verifier. A scope entry at capacity faults before changing the task's current
 scope. Closed slots can be reused at the limit. Source `scope { ... }` lowers
 through these operations when its body may spawn.
+After a fault or deadlock cancels every task, the scheduler retires any open
+nested scope slots. The verifier rejects an active nested scope whose owner
+has already terminated. Runtime tests cover an open scope with an unpolled
+child on fault and an open scope with a parked receiver on deadlock.
 The native archive exports `phoebe_rt_v1_scope_enter` and
 `phoebe_rt_v1_scope_join`. Join returns Ready or Pending and is retried after
 the scheduler wakes the task. A synthetic native poll task exercises entry,
