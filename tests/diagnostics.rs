@@ -21,6 +21,8 @@ fn check_source(source: &str) {
         Err(error) => {
             assert!(error.span.start <= error.span.end);
             assert!(error.span.end <= source.len(), "{error:?}");
+            assert!(source.is_char_boundary(error.span.start), "{error:?}");
+            assert!(source.is_char_boundary(error.span.end), "{error:?}");
             let _ = error.render(source);
         }
     });
@@ -74,8 +76,33 @@ fn nearby_malformed_programs_return_diagnostics() {
 
 #[test]
 fn unsupported_unicode_has_a_renderable_diagnostic() {
-    check_source("fn main() -> I64 = 🦆");
+    let source = "fn main() -> I64 = 🦆";
+    let error = syntax::parse(source).unwrap_err();
+    assert_eq!(&source[error.span.start..error.span.end], "🦆");
+    assert_eq!(error.render(source), "1:20: unrecognized character");
+    check_source(source);
     check_source("fn main() -> I64 = 7\n🦆");
+
+    let after_unicode_comment = "// 🦆\nfn main() -> I64 = 🦆";
+    let error = syntax::parse(after_unicode_comment).unwrap_err();
+    assert_eq!(
+        error.render(after_unicode_comment),
+        "2:20: unrecognized character"
+    );
+    assert_eq!(
+        &after_unicode_comment[error.span.start..error.span.end],
+        "🦆"
+    );
+}
+
+#[test]
+fn diagnostic_columns_count_characters_after_unicode() {
+    let source = "// 🦆 invalid source\nfn main() -> I64 = 7";
+    let span = phoebe::Span { start: 6, end: 6 };
+    assert_eq!(
+        phoebe::Diagnostic::new(span, "test").render(source),
+        "1:4: test"
+    );
 }
 
 #[test]

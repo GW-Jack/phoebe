@@ -207,11 +207,9 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 TokenKind::Minus
             }
             _ => {
+                let end = start + source[start..].chars().next().unwrap().len_utf8();
                 return Err(Diagnostic::new(
-                    Span {
-                        start,
-                        end: start + 1,
-                    },
+                    Span { start, end },
                     "unrecognized character",
                 ));
             }
