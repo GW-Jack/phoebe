@@ -120,9 +120,9 @@ join its entire descendant tree while unrelated sibling tasks remain active;
 the root joins all tasks. Spawn records each child's parent, and completion
 wakes a joiner only after its descendants have finished. `scope_join` uses
 scope membership instead of task ancestry. A child fault still
-fails the whole scope immediately. The source language does not yet expose
-lexical nested task scopes, and task completion without an explicit join still
-leaves its descendants under the root scope.
+fails the whole scope immediately. Source `scope { ... }` exposes lexical
+nested task scopes; task completion without an explicit join still leaves
+its descendants under the root scope.
 The optional `Scheduler::verify` scans handle counts, queue bounds, reply
 owners, message shapes, and waiter registrations in tests; ordinary polling
 does not run that scan.
@@ -143,9 +143,11 @@ that boundary.
 Reply slots are not reused yet, so the reply limit bounds the total number
 created in one scope rather than only the number simultaneously open.
 
-The compiler integration target is a generated poll function with a typed,
-scope-owned frame. The frame retains task-local values and places across
-suspension; its capability slots are included in failure cleanup metadata.
+Generated poll functions use typed, scope-owned frames to retain task-local
+values and places across suspension. For the current concrete rights, the
+runtime ownership tables close all rights still owned by a failed or canceled
+task. A compiler-derived frame cleanup table remains a target for general
+typed messages and resource values that the runtime cannot enumerate.
 Typed channel slots need a compiler-provided layout and structural cleanup
 table before arbitrary source-language messages can carry `ReplyTo` or other
 capabilities. The current request layout is hard-coded to an `I64` payload and

@@ -439,3 +439,71 @@ fn main() -> I64 {
     );
     assert_eq!(output.stdout, b"42\n");
 }
+
+#[test]
+fn early_failure_closes_owned_place_before_joining_waiting_child() {
+    let source = r#"
+data Holder { sender: Sender<I64> }
+
+fn child(receiver: Receiver<I64>) -> Unit {
+  val outcome = receiver.receive();
+  receiver.close();
+}
+
+fn work(capacity: I64) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  var held = Holder(sender);
+  scope {
+    spawn child(receiver)?;
+    val (extra_sender, extra_receiver) = channel<I64>(capacity = capacity)?;
+    extra_sender.close();
+    extra_receiver.close();
+    val owner = held;
+    owner.close_caps();
+  }
+  Result<I64, ResourceError>.Ok(42)
+}
+
+fn value(result: Result<I64, ResourceError>) -> I64 = when (result) {
+  Result<I64, ResourceError>.Ok(number) -> { number },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+fn main() -> I64 = value(work(1))
+fn fail() -> I64 = value(work(0))
+"#;
+    let program = lower(source);
+    core::verify(&program).unwrap();
+    for (entry, expected) in [("main", 42), ("fail", 0)] {
+        assert_eq!(program.interpret(entry, &[]).unwrap(), expected);
+        assert_eq!(native::run(&program, entry, &[]).unwrap(), expected);
+    }
+    let failure = &program.functions[1];
+    let cleanup_before_join = failure.blocks.iter().any(|block| {
+        matches!(block.terminator, Terminator::ScopeJoin { .. })
+            && block.instructions.windows(2).any(|pair| {
+                matches!(pair[0].operation, Operation::Take(_))
+                    && matches!(pair[1].operation, Operation::CloseCaps(_))
+            })
+    });
+    assert!(cleanup_before_join);
+    for (capacity, expected) in [(1, b"42\n".as_slice()), (0, b"0\n".as_slice())] {
+        let source = source.replace(
+            "main() -> I64 = value(work(1))",
+            &format!("main() -> I64 = value(work({capacity}))"),
+        );
+        let program = lower(&source);
+        let path = std::env::temp_dir().join(format!(
+            "phoebe-scope-place-cleanup-{}-{capacity}",
+            std::process::id()
+        ));
+        native::build_executable(&program, &path).unwrap();
+        let output = Command::new(&path).output().unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected);
+    }
+}

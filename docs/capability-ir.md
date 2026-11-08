@@ -216,12 +216,11 @@ disposition. This is the first cleanup rule, not a general lexical or
 cancellation cleanup implementation.
 
 The scheduler owns a pending task's frame, so suspension does not release any
-of its rights. The generated frame has a fixed layout and a compiler-derived
-cleanup table listing every possible capability slot. A discriminant records
-which slots are live at each suspension state. On task failure or scope
-cancellation, runtime cleanup closes exactly those live slots without running
-user code. A queue slot has its own structural cleanup entry; dropping a
-queued request closes its `ReplyTo` and wakes a waiting reply receiver.
+of its rights. Current concrete channel and reply rights are tracked in
+runtime ownership tables. On task failure or scope cancellation, the runtime
+closes rights still owned by each task and discards queued requests when their
+last receiver closes. A compiler-derived frame cleanup table for arbitrary
+typed resources remains an integration target.
 
 ## Exit rule
 
@@ -234,11 +233,11 @@ old content. A match arm that discards a capability-bearing payload must
 close it explicitly. The verifier rejects a missing close, including one
 hidden by a branch join.
 
-Failure is a separate terminator: it transfers the frame's live-slot bitmap
-to runtime cleanup. It is not a normal return with ignored capabilities.
-Cleanup itself is a small, compiler-generated operation table shared by the
-interpreter and native runtime ABI. This keeps ownership decisions visible
-in printable IR and avoids a second, implicit compiler cleanup algorithm.
+The target general failure terminator will transfer a frame live-slot bitmap
+to runtime cleanup. Current source `?` exits have explicit cleanup
+instructions in printable Core, while runtime faults close concrete rights
+through the task ownership tables. General resource cleanup must preserve
+this distinction between normal returns and failed tasks.
 
 ## Verification boundary and implementation order
 

@@ -205,6 +205,9 @@ tasks and their capabilities have been closed; the runtime verifier rejects
 an active nested scope with a terminal owner.
 The source differential suite also retains a mutable caller place through a
 borrowed callee's pending scope join, then checks the task-limit error path.
+A source test also checks that an early `?` closes a sender held in a nominal
+mutable place before joining the child blocked on its receiver; interpreter,
+JIT, and standalone paths agree on success and failure.
 The finite Maude lexical-scope model explores a fixed root, earlier sibling,
 inner child, and grandchild with independently checked live counts. It does
 not establish a refinement from the compiler or runtime to that model.
