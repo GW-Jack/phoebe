@@ -420,6 +420,8 @@ mod lowering;
 mod scope_verification;
 mod verification;
 
-pub use lowering::{lower, lower_checked, lower_linked_checked, lower_reusing};
+pub use lowering::{
+    lower, lower_checked, lower_linked_checked, lower_linked_reusing, lower_reusing,
+};
 use verification::{capability_graph, recursive_call_span, verify_ownership, verify_structure};
 pub use verification::{operands, verify};

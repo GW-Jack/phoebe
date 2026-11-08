@@ -258,7 +258,7 @@ impl<'a> Lowerer<'a> {
 }
 
 pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
-    lower_internal(ast, None, None).map(|(program, _)| program)
+    lower_internal(ast, None, None, None).map(|(program, _)| program)
 }
 
 /// Lower and verify once, then retain the verifier guarantee for downstream
@@ -270,6 +270,31 @@ pub fn lower_checked(ast: &syntax::Program) -> Result<CheckedProgram, Diagnostic
 /// Lower concrete definitions alongside a separately checked generic module.
 /// The returned boundary retains both proofs for later dispatch planning.
 pub fn lower_linked_checked(ast: &syntax::Program) -> Result<CheckedLinkedProgram, Diagnostic> {
+    lower_linked_internal(ast, None).map(|(program, _)| program)
+}
+
+/// Reuse concrete bodies in a linked program while checking the current
+/// parametric module. Generic call IDs are remapped by definition name.
+pub fn lower_linked_reusing(
+    ast: &syntax::Program,
+    previous_ast: &syntax::Program,
+    previous: &CheckedLinkedProgram,
+    reusable: &[bool],
+    span_deltas: &[isize],
+) -> Result<(CheckedLinkedProgram, usize), Diagnostic> {
+    if reusable.len() != ast.functions.len() || span_deltas.len() != ast.functions.len() {
+        return Err(Diagnostic::new(
+            Span { start: 0, end: 0 },
+            "incremental function map length mismatch",
+        ));
+    }
+    lower_linked_internal(ast, Some((previous_ast, previous, reusable, span_deltas)))
+}
+
+fn lower_linked_internal(
+    ast: &syntax::Program,
+    reuse: Option<(&syntax::Program, &CheckedLinkedProgram, &[bool], &[isize])>,
+) -> Result<(CheckedLinkedProgram, usize), Diagnostic> {
     let generics = phoebe_generic_core::lower_program_checked(ast)?;
     phoebe_generic_core::check_acyclic(generics.as_module())
         .map_err(|message| Diagnostic::new(Span { start: 0, end: 0 }, message))?;
@@ -307,8 +332,57 @@ pub fn lower_linked_checked(ast: &syntax::Program) -> Result<CheckedLinkedProgra
             ));
         }
     }
-    let (program, _) = lower_internal(&concrete, None, Some(&generics))?;
-    Ok(CheckedLinkedProgram { program, generics })
+    let mut previous_concrete = reuse.map(|(previous_ast, _, _, _)| previous_ast.clone());
+    if let Some(previous_concrete) = &mut previous_concrete {
+        previous_concrete
+            .functions
+            .retain(|function| function.type_params.is_empty());
+    }
+    let filtered_reusable = reuse.map(|(_, _, reusable, _)| {
+        ast.functions
+            .iter()
+            .zip(reusable)
+            .filter_map(|(function, reusable)| function.type_params.is_empty().then_some(*reusable))
+            .collect::<Vec<_>>()
+    });
+    let filtered_deltas = reuse.map(|(_, _, _, deltas)| {
+        ast.functions
+            .iter()
+            .zip(deltas)
+            .filter_map(|(function, delta)| function.type_params.is_empty().then_some(*delta))
+            .collect::<Vec<_>>()
+    });
+    let generic_remap = reuse.map(|(_, previous, _, _)| {
+        let names = generics
+            .as_module()
+            .functions
+            .iter()
+            .enumerate()
+            .map(|(index, function)| (function.name.as_str(), index))
+            .collect::<HashMap<_, _>>();
+        previous
+            .generics()
+            .as_module()
+            .functions
+            .iter()
+            .map(|function| names.get(function.name.as_str()).copied())
+            .collect::<Vec<_>>()
+    });
+    let reuse_inputs = reuse.map(|(_, previous, _, _)| {
+        (
+            previous_concrete.as_ref().expect("previous AST"),
+            previous.program(),
+            filtered_reusable.as_ref().expect("reuse map").as_slice(),
+            filtered_deltas.as_ref().expect("span deltas").as_slice(),
+        )
+    });
+    let (program, reused) = lower_internal(
+        &concrete,
+        reuse_inputs,
+        Some(&generics),
+        generic_remap.as_deref(),
+    )?;
+    Ok((CheckedLinkedProgram { program, generics }, reused))
 }
 
 /// Reuse verified function bodies when their ASTs match under a source offset.
@@ -333,6 +407,7 @@ pub fn lower_reusing(
         ast,
         Some((previous_ast, previous, reusable, span_deltas)),
         None,
+        None,
     )
 }
 
@@ -340,6 +415,7 @@ fn lower_internal(
     ast: &syntax::Program,
     reuse: Option<(&syntax::Program, &Program, &[bool], &[isize])>,
     generics: Option<&CheckedModule>,
+    generic_remap: Option<&[Option<usize>]>,
 ) -> Result<(Program, usize), Diagnostic> {
     if let Some(import) = ast.imports.first() {
         return Err(Diagnostic::new(
@@ -484,7 +560,7 @@ fn lower_internal(
         {
             let mut cached = previous.functions[previous_index].clone();
             if remap_function_data(&mut cached, &data_ids)
-                && remap_function_targets(&mut cached, &old_to_new)
+                && remap_function_targets(&mut cached, &old_to_new, generic_remap)
                 && rebase_function(&mut cached, deltas[index]).is_ok()
             {
                 lowered.push(cached);

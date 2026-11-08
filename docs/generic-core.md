@@ -128,7 +128,9 @@ Moves and scalar copies alias existing SSA values, generating no explicit
 copy instruction. Non-suspending concrete source calls now use these planned
 instances in the same JIT module or standalone object. Project qualification
 allows public generic calls across imported modules; incremental project
-sessions and a persistent object cache key remain open. The current IR has no
+compiler sessions now reuse checked concrete bodies across edits, remapping
+generic callee and nominal type IDs. Incremental native object emission and a
+persistent object cache key for linked programs remain open. The current IR has no
 suspension, hidden runtime context, or dictionary
 operations; adding any of them requires extending the sharing key and its
 soundness argument before emission.

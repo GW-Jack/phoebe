@@ -119,6 +119,14 @@ pub(super) fn remap_function_data(function: &mut Function, data_ids: &[Option<Da
     }
     for block in &mut function.blocks {
         for instruction in &mut block.instructions {
+            if let Operation::GenericCall { type_args, .. } = &mut instruction.operation {
+                for ty in type_args {
+                    let Some(mapped) = remap_type(*ty, data_ids) else {
+                        return false;
+                    };
+                    *ty = mapped;
+                }
+            }
             let id = match &mut instruction.operation {
                 Operation::Variant(id, ..) | Operation::Product(id, ..) => id,
                 _ => continue,
@@ -135,6 +143,7 @@ pub(super) fn remap_function_data(function: &mut Function, data_ids: &[Option<Da
 pub(super) fn remap_function_targets(
     function: &mut Function,
     old_to_new: &[Option<FunctionId>],
+    generic_old_to_new: Option<&[Option<usize>]>,
 ) -> bool {
     for block in &mut function.blocks {
         for instruction in &mut block.instructions {
@@ -143,6 +152,16 @@ pub(super) fn remap_function_targets(
                     return false;
                 };
                 *target = mapped;
+            }
+            if let Operation::GenericCall { callee, .. } = &mut instruction.operation {
+                let Some(mapped) = generic_old_to_new
+                    .and_then(|mapping| mapping.get(*callee))
+                    .copied()
+                    .flatten()
+                else {
+                    return false;
+                };
+                *callee = mapped;
             }
         }
         if let Terminator::Spawn { child, .. } = &mut block.terminator {

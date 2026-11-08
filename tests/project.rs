@@ -31,6 +31,125 @@ fn temp_project() -> PathBuf {
     path
 }
 
+fn temp_generic_project() -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "phoebe-generic-project-test-{}-{}",
+        std::process::id(),
+        NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&path).unwrap();
+    for (name, source) in [
+        (
+            "phoebe.toml",
+            include_str!("../examples/generic_project/phoebe.toml"),
+        ),
+        (
+            "app.phoebe",
+            include_str!("../examples/generic_project/app.phoebe"),
+        ),
+        (
+            "math.phoebe",
+            include_str!("../examples/generic_project/math.phoebe"),
+        ),
+        (
+            "base.phoebe",
+            include_str!("../examples/generic_project/base.phoebe"),
+        ),
+    ] {
+        std::fs::write(path.join(name), source).unwrap();
+    }
+    path
+}
+
+#[test]
+fn linked_reuse_remaps_generic_call_after_definition_insertion() {
+    let path = temp_generic_project();
+    let before = project::load(&path).unwrap();
+    let checked = core::lower_linked_checked(&before.ast).unwrap();
+    assert_eq!(checked.interpret("main", &[]).unwrap(), 42);
+
+    let base = path.join("base.phoebe");
+    let original = std::fs::read_to_string(&base).unwrap();
+    std::fs::write(
+        &base,
+        format!("pub fn unused<T>(value: T) -> T = value\n{original}"),
+    )
+    .unwrap();
+    let after = project::load(&path).unwrap();
+    let previous = before
+        .ast
+        .functions
+        .iter()
+        .map(|function| (function.name.as_str(), function.name_span.start))
+        .collect::<std::collections::HashMap<_, _>>();
+    let (reuse, deltas): (Vec<_>, Vec<_>) = after
+        .ast
+        .functions
+        .iter()
+        .map(|function| match previous.get(function.name.as_str()) {
+            Some(start) => (true, function.name_span.start as isize - *start as isize),
+            None => (false, 0),
+        })
+        .unzip();
+    let (updated, reused) =
+        core::lower_linked_reusing(&after.ast, &before.ast, &checked, &reuse, &deltas).unwrap();
+    assert!(reused > 0);
+    assert_eq!(updated.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run_linked(&updated, "main", &[]).unwrap(), 42);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn linked_reuse_remaps_nominal_generic_type_arguments() {
+    let body = "fn identity<T>(value: T) -> T = value\nfn main() -> I64 { val boxed = identity(Box(42)); boxed.value }";
+    let before_source = format!("data Box {{ value: I64 }}\n{body}");
+    let after_source = format!("data Noise {{ value: I64 }}\ndata Box {{ value: I64 }}\n{body}");
+    let before = syntax::parse(&before_source).unwrap();
+    let after = syntax::parse(&after_source).unwrap();
+    let checked = core::lower_linked_checked(&before).unwrap();
+    let delta =
+        after.functions[0].name_span.start as isize - before.functions[0].name_span.start as isize;
+    let (updated, reused) =
+        core::lower_linked_reusing(&after, &before, &checked, &[true, true], &[delta, delta])
+            .unwrap();
+    assert_eq!(reused, 1);
+    assert_eq!(updated.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run_linked(&updated, "main", &[]).unwrap(), 42);
+}
+
+#[test]
+fn generic_project_compiler_session_reuses_checked_concrete_bodies() {
+    let path = temp_generic_project();
+    let mut session = ProjectCompilerSession::new();
+    let (first, report) = session.compile_linked(&path).unwrap();
+    assert_eq!(report.reused_core_functions, 0);
+    assert_eq!(first.interpret("main", &[]).unwrap(), 42);
+    let (warm, report) = session.compile_linked(&path).unwrap();
+    assert!(report.load.parsed.is_empty());
+    assert!(report.reused_core_functions > 0);
+    assert_eq!(native::run_linked(&warm, "main", &[]).unwrap(), 42);
+
+    let base = path.join("base.phoebe");
+    let original = std::fs::read_to_string(&base).unwrap();
+    std::fs::write(
+        &base,
+        format!("pub fn unused<T>(value: T) -> T = value\n{original}"),
+    )
+    .unwrap();
+    let (updated, report) = session.compile_linked(&path).unwrap();
+    assert_eq!(report.load.parsed, ["base"]);
+    assert!(report.reused_core_functions > 0);
+    assert_eq!(native::run_linked(&updated, "main", &[]).unwrap(), 42);
+
+    std::fs::write(&base, "pub fn identity<T>(value: T) -> T = missing").unwrap();
+    assert!(session.compile_linked(&path).is_err());
+    std::fs::write(&base, original).unwrap();
+    let (repaired, report) = session.compile_linked(&path).unwrap();
+    assert_eq!(report.load.parsed, ["base"]);
+    assert_eq!(repaired.interpret("main", &[]).unwrap(), 42);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
 #[test]
 fn project_build_session_reuses_bodies_and_objects_after_body_edits() {
     let path = temp_project();
