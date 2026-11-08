@@ -72,9 +72,10 @@ claiming every execution parks.
 - Differential runs across child failure and allocation failure paths. A
   hand-built Core program already covers Ready, Pending, and a spawn-limit
   failure in the interpreter and JIT, plus Pending in standalone code.
-- More frame tests for borrowed places across a pending join. Existing
-  scalar and mutable-place tests show that generated code retries the join
-  rather than re-entering.
+- A source test now keeps a caller-owned mutable place live through a callee's
+  pending join, in the interpreter, JIT, and standalone executable. It also
+  checks the task-limit error path. Broader nested loan and cancellation
+  combinations remain open.
 - The finite `formal/lexical_scopes.maude` model checks transitive membership,
   sibling isolation, and fault cancellation for four fixed tasks. A separate
   argument is still needed for the compiler's region stack and backend erasure

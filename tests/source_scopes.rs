@@ -310,3 +310,62 @@ fn main() -> I64 {
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
 }
+
+#[test]
+fn borrowed_caller_place_survives_pending_scope_join() {
+    let program = lower(
+        r#"
+fn child() -> I64 { yield; 0 }
+fn update_after_join(value: &mut I64) -> Result<I64, ResourceError> {
+  scope { spawn child()?; }
+  value = value + 1;
+  Result<I64, ResourceError>.Ok(value)
+}
+fn start() -> Result<I64, ResourceError> {
+  var held = 41;
+  val answer = update_after_join(&mut held)?;
+  Result<I64, ResourceError>.Ok(answer)
+}
+fn main() -> I64 {
+  when (start()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#,
+    );
+    core::verify(&program).unwrap();
+    let frames = phoebe::frame_layout::analyze(&program).unwrap();
+    assert!(
+        frames[2]
+            .points
+            .iter()
+            .any(|point| point.places.contains(&core::PlaceId(0)))
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let no_child = ScopeLimits {
+        tasks: 1,
+        ..ScopeLimits::default()
+    };
+    assert_eq!(
+        program
+            .interpret_with_limits("main", &[], no_child)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        native::run_with_limits(&program, "main", &[], no_child).unwrap(),
+        0
+    );
+    let path = std::env::temp_dir().join(format!("phoebe-scope-borrow-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\n");
+}

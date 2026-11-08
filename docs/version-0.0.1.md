@@ -110,7 +110,9 @@ root modules and their transitive calls compile and run in the interpreter,
 Cranelift JIT, and standalone executable; see `examples/package_graph/app/`.
 Project declarations are private by default; `pub` exports functions and data
 types, and the interface tracks private nominal layouts exposed by public
-signatures. Public imported nominal variants can be constructed and matched
+signatures. Interfaces now have a versioned canonical byte encoding and
+SHA-256 fingerprint for a future persistent cache; in-process invalidation
+still compares exact structures. Public imported nominal variants can be constructed and matched
 with qualified names. An in-process `NativeBuildSession` now emits separate
 objects for direct functions and reuses them after checked Core edits when
 their body and ABI inputs are unchanged; standalone one-shot builds retain
@@ -145,6 +147,8 @@ standalone tests cover a pending join and spawn-limit failure. Source
 join open scopes from inner to outer, and then return the error. A directed
 spawn-effect summary erases scopes that cannot spawn, including calls to pure
 helpers. `docs/scope-ir.md` records the invariant and remaining evidence.
+The source differential suite also retains a mutable caller place through a
+borrowed callee's pending scope join, then checks the task-limit error path.
 The finite Maude lexical-scope model explores a fixed root, earlier sibling,
 inner child, and grandchild with independently checked live counts. It does
 not establish a refinement from the compiler or runtime to that model.

@@ -8,4 +8,5 @@ license = "Apache-2.0"
 [dependencies]
 phoebe-package = { path = "../package" }
 phoebe-syntax = { path = "../syntax" }
+sha2 = "=0.10.9"
 toml = "=1.2.1"

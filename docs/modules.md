@@ -59,6 +59,13 @@ lists parsed and reused modules, changed interfaces, and a conservative set
 of modules affected through imports. A failed load leaves the previous session
 state intact. Exact structural equality, rather than a truncated hash, decides
 whether an interface changed.
+`ModuleInterface::canonical_bytes()` now encodes the ordered source-visible
+facts with length prefixes and a format version; `fingerprint()` returns its
+SHA-256 digest. Body text, local parameter names, and source spans are absent.
+Reachable private data layouts are included. The in-process session still
+uses exact structural equality, so a digest collision cannot make it reuse a
+stale interface. The digest is a candidate key for a future persistent cache,
+not a deployed cache format or a stable external ABI.
 
 `phoebe::ProjectCompilerSession` extends this with in-process checked-Core
 function-body reuse. The compiler compares the old and new function ASTs,

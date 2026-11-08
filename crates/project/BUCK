@@ -6,7 +6,22 @@ rust_library(
     deps = [
         "//crates/package:phoebe_package",
         "//crates/syntax:phoebe_syntax",
+        "//third-party/rust:sha2",
         "//third-party/rust:toml",
     ],
     visibility = ["PUBLIC"],
+    tests = [":unit_tests"],
+)
+
+rust_test(
+    name = "unit_tests",
+    crate_root = "src/lib.rs",
+    srcs = ["src/lib.rs", "src/graph.rs", "src/interface.rs", "src/session.rs"],
+    edition = "2024",
+    deps = [
+        "//crates/package:phoebe_package",
+        "//crates/syntax:phoebe_syntax",
+        "//third-party/rust:sha2",
+        "//third-party/rust:toml",
+    ],
 )
