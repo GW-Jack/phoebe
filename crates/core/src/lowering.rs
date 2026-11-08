@@ -297,9 +297,9 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
 
 /// Reuse verified function bodies when their ASTs match under a source offset.
 /// The caller supplies reuse hints and span offsets. Core checks those hints,
-/// every global data shape, and existing function signatures before accepting
-/// a cached body. Function IDs in reused calls and spawns are remapped after
-/// insertions or removals. An unsafe hint falls back to lowering afresh.
+/// compatible nominal data layouts, and existing function signatures before
+/// accepting a cached body. Data and function IDs are remapped after insertions
+/// or removals. An unsafe hint falls back to lowering afresh.
 pub fn lower_reusing(
     ast: &syntax::Program,
     previous_ast: &syntax::Program,
@@ -332,8 +332,60 @@ fn rebase_function(function: &mut Function, delta: isize) -> Result<(), Diagnost
     error.map_or(Ok(()), Err)
 }
 
-fn same_signature(cached: &Function, signature: &FunctionSignature) -> bool {
-    cached.return_type == signature.return_type
+fn remap_type(ty: Type, data_ids: &[Option<DataId>]) -> Option<Type> {
+    match ty {
+        Type::Data(id) => data_ids.get(id.0).copied().flatten().map(Type::Data),
+        _ => Some(ty),
+    }
+}
+
+// Data definitions are acyclic: a field or payload can only name a type
+// declared earlier. A layout remains compatible only if its whole reachable
+// representation is compatible, even when the immediate field list is equal.
+fn compatible_data_ids(previous: &[DataDef], current: &[DataDef]) -> Vec<Option<DataId>> {
+    let names = current
+        .iter()
+        .enumerate()
+        .map(|(index, def)| (def.name.as_str(), DataId(index)))
+        .collect::<HashMap<_, _>>();
+    let mut mapped = vec![None; previous.len()];
+    for (old_index, old) in previous.iter().enumerate() {
+        let Some(&new_id) = names.get(old.name.as_str()) else {
+            continue;
+        };
+        let new = &current[new_id.0];
+        if old.variants == new.variants
+            && old.payloads.len() == new.payloads.len()
+            && old
+                .payloads
+                .iter()
+                .zip(&new.payloads)
+                .all(|(a, b)| match (a, b) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => remap_type(*a, &mapped) == Some(*b),
+                    _ => false,
+                })
+            && old.fields.len() == new.fields.len()
+            && old
+                .fields
+                .iter()
+                .zip(&new.fields)
+                .all(|((a_name, a), (b_name, b))| {
+                    a_name == b_name && remap_type(*a, &mapped) == Some(*b)
+                })
+        {
+            mapped[old_index] = Some(new_id);
+        }
+    }
+    mapped
+}
+
+fn same_signature(
+    cached: &Function,
+    signature: &FunctionSignature,
+    data_ids: &[Option<DataId>],
+) -> bool {
+    remap_type(cached.return_type, data_ids) == Some(signature.return_type)
         && cached.param_modes
             == signature
                 .params
@@ -347,7 +399,11 @@ fn same_signature(cached: &Function, signature: &FunctionSignature) -> bool {
                     .iter()
                     .zip(&signature.params)
                     .all(|(value, (mode, ty))| {
-                        cached.value_types.get(value.0).copied()
+                        cached
+                            .value_types
+                            .get(value.0)
+                            .copied()
+                            .and_then(|ty| remap_type(ty, data_ids))
                             == Some(match mode {
                                 ParamMode::Own => *ty,
                                 ParamMode::Shared => Type::RefI64,
@@ -355,6 +411,36 @@ fn same_signature(cached: &Function, signature: &FunctionSignature) -> bool {
                             })
                     })
         })
+}
+
+fn remap_function_data(function: &mut Function, data_ids: &[Option<DataId>]) -> bool {
+    let Some(return_type) = remap_type(function.return_type, data_ids) else {
+        return false;
+    };
+    function.return_type = return_type;
+    for ty in function
+        .value_types
+        .iter_mut()
+        .chain(&mut function.place_types)
+    {
+        let Some(mapped) = remap_type(*ty, data_ids) else {
+            return false;
+        };
+        *ty = mapped;
+    }
+    for block in &mut function.blocks {
+        for instruction in &mut block.instructions {
+            let id = match &mut instruction.operation {
+                Operation::Variant(id, ..) | Operation::Product(id, ..) => id,
+                _ => continue,
+            };
+            let Some(mapped) = data_ids.get(id.0).copied().flatten() else {
+                return false;
+            };
+            *id = mapped;
+        }
+    }
+    true
 }
 
 fn remap_function_targets(function: &mut Function, old_to_new: &[Option<FunctionId>]) -> bool {
@@ -629,9 +715,11 @@ fn lower_internal(
                 .collect::<HashMap<_, _>>()
         })
         .unwrap_or_default();
+    let data_ids = reuse
+        .map(|(_, previous, _, _)| compatible_data_ids(&previous.data, &data))
+        .unwrap_or_default();
     let stable_environment = reuse.is_some_and(|(previous_ast, previous, _, _)| {
-        previous.data == data
-            && previous.functions.len() == previous_ast.functions.len()
+        previous.functions.len() == previous_ast.functions.len()
             && previous_ast
                 .functions
                 .iter()
@@ -640,7 +728,7 @@ fn lower_internal(
                     source.name == cached.name
                         && functions
                             .get(&source.name)
-                            .is_none_or(|signature| same_signature(cached, signature))
+                            .is_none_or(|signature| same_signature(cached, signature, &data_ids))
                 })
     });
     let old_to_new = reuse
@@ -673,7 +761,8 @@ fn lower_internal(
             )
         {
             let mut cached = previous.functions[previous_index].clone();
-            if remap_function_targets(&mut cached, &old_to_new)
+            if remap_function_data(&mut cached, &data_ids)
+                && remap_function_targets(&mut cached, &old_to_new)
                 && rebase_function(&mut cached, deltas[index]).is_ok()
             {
                 lowered.push(cached);
@@ -864,4 +953,44 @@ fn lower_internal(
         Diagnostic::new(span, message)
     })?;
     Ok((program, reused))
+}
+
+#[cfg(test)]
+mod data_reuse_tests {
+    use super::*;
+
+    #[test]
+    fn nested_layout_change_invalidates_containing_type() {
+        let old = vec![
+            DataDef {
+                name: "Inner".into(),
+                variants: vec!["A".into()],
+                payloads: vec![Some(Type::I64)],
+                fields: vec![],
+            },
+            DataDef {
+                name: "Outer".into(),
+                variants: vec!["B".into()],
+                payloads: vec![Some(Type::Data(DataId(0)))],
+                fields: vec![],
+            },
+        ];
+        let mut new = old.clone();
+        new.insert(
+            0,
+            DataDef {
+                name: "Extra".into(),
+                variants: vec!["A".into()],
+                payloads: vec![None],
+                fields: vec![],
+            },
+        );
+        new[2].payloads[0] = Some(Type::Data(DataId(1)));
+        assert_eq!(
+            compatible_data_ids(&old, &new),
+            vec![Some(DataId(1)), Some(DataId(2))]
+        );
+        new[1].payloads[0] = Some(Type::Bool);
+        assert_eq!(compatible_data_ids(&old, &new), vec![None, None]);
+    }
 }

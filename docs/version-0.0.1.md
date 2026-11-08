@@ -130,7 +130,8 @@ dependencies and cached typed interfaces remain open. Core reuse now rebases sou
 `scope.join` as well as instructions and `yield`; direct-object keys ignore
 every such span. In-process Core reuse also remaps call and spawn IDs when a
 private function is inserted or removed without changing existing signatures
-or nominal layouts. The `examples/cost/` files other than `identity` and `empty_scope` remain
+or referenced nominal layouts. It also remaps nominal IDs across unrelated
+data insertions, after checking nested layout compatibility. The `examples/cost/` files other than `identity` and `empty_scope` remain
 design fixtures, not executable acceptance tests.
 Standalone emission starts at `main` and omits unreachable direct functions
 and their spawned poll children. A dead runtime-using function cannot change

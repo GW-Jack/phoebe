@@ -606,8 +606,29 @@ fn compiler_session_reuses_checked_core_bodies_and_rebases_spans() {
     std::fs::write(&math, format!("{source}\npub data Extra {{ A }}\n")).unwrap();
     let (layout, report) = session.compile(&path).unwrap();
     assert_eq!(report.load.affected, ["app", "math"]);
-    assert_eq!(report.reused_core_functions, 0);
+    assert_eq!(report.reused_core_functions, count - 1);
     assert_eq!(layout.interpret("main", &[]).unwrap(), 42);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn unrelated_data_insertion_remaps_reused_nominal_types() {
+    let path = temp_project();
+    let mut session = ProjectCompilerSession::new();
+    let (before, _) = session.compile(&path).unwrap();
+    let count = before.functions.len();
+    let math = path.join("math.phoebe");
+    let source = std::fs::read_to_string(&math).unwrap();
+    std::fs::write(&math, format!("data Extra {{ A }}\n{source}")).unwrap();
+    let (after, report) = session.compile(&path).unwrap();
+    assert_eq!(report.reused_core_functions, count);
+    assert_eq!(after.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&after, "main", &[]).unwrap(), 42);
+    let fresh = project::load(&path).unwrap();
+    assert_eq!(
+        after.to_string(),
+        core::lower(&fresh.ast).unwrap().to_string()
+    );
     std::fs::remove_dir_all(path).unwrap();
 }
 
