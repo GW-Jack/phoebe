@@ -133,7 +133,13 @@ their body and ABI inputs are unchanged, including across unrelated function
 insertions or removals and unrelated nominal data insertions. A changed or
 removed existing data layout conservatively invalidates the in-process
 direct-object cache; standalone one-shot builds retain
-single-object emission. The optional CLI `--cache-dir` now persists a complete
+single-object emission. In-process retained poll objects now reuse exact
+reachable call and spawn
+closures after unrelated body edits or function insertions. Their keys ignore
+spans and normalize call targets to names; poll-local symbols use those names.
+A reachable helper or task change rebuilds the object. Unrelated nominal data
+insertions still invalidate it. The optional CLI `--cache-dir` persists a
+complete
 emitted object set for unchanged codegen inputs, ignoring source spans and
 unreachable pure leaf bodies, but still parses, verifies Core,
 lowers, and links each invocation. A changed program recompiles that set;

@@ -1,6 +1,6 @@
 //! In-process native object reuse and standalone object emission.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use cranelift_codegen::settings::{self, Configurable};
@@ -19,6 +19,7 @@ pub struct NativeBuildSession {
     data_layouts: BTreeMap<String, String>,
     facts: BTreeMap<String, String>,
     objects: BTreeMap<String, (String, Vec<u8>)>,
+    poll_objects: BTreeMap<String, (String, Vec<u8>, usize)>,
 }
 
 fn canonical_type(ty: &mut Type, data_ids: &[core::DataId]) {
@@ -83,13 +84,78 @@ fn direct_function_key(program: &Program, index: usize, data_ids: &[core::DataId
     format!("{:?}", (function, targets))
 }
 
+/// A poll object contains its retained callees, direct helpers, and spawn
+/// wrappers. Poll and direct linker names derive from qualified names, so
+/// unrelated function-ID shifts do not affect this key. Source spans do not
+/// affect code generation. Including all data layouts conservatively invalidates a
+/// poll object when even an unrelated nominal layout changes.
+fn poll_object_key(program: &Program, root: core::FunctionId, symbol: &str) -> String {
+    let mut reachable = vec![false; program.functions.len()];
+    let mut pending = vec![root];
+    while let Some(id) = pending.pop() {
+        if std::mem::replace(&mut reachable[id.0], true) {
+            continue;
+        }
+        for block in &program.functions[id.0].blocks {
+            for instruction in &block.instructions {
+                if let Operation::Call(target, _) = instruction.operation {
+                    pending.push(target);
+                }
+            }
+            if let Terminator::Spawn { child, .. } = block.terminator {
+                pending.push(child);
+            }
+        }
+    }
+    let data_ids = (0..program.data.len())
+        .map(core::DataId)
+        .collect::<Vec<_>>();
+    let mut key = format!("{:?}", (symbol, &program.data));
+    for (index, included) in reachable.into_iter().enumerate() {
+        if included {
+            key.push_str(&format!(
+                "\n{}:{}",
+                program.functions[index].name,
+                direct_function_key(program, index, &data_ids)
+            ));
+        }
+    }
+    key
+}
+
+fn emit_cached_poll_object(
+    program: &Program,
+    name: &str,
+    symbol: &str,
+    cache: Option<&mut NativeBuildSession>,
+) -> Result<(Vec<u8>, usize, bool), String> {
+    let Some(session) = cache else {
+        let (object, words) = poll::emit_poll_object(program, name, symbol)?;
+        return Ok((object, words, false));
+    };
+    let (root, _) = program.function(name).ok_or("unknown poll entry")?;
+    let key = poll_object_key(program, root, symbol);
+    if let Some((_, object, words)) = session
+        .poll_objects
+        .get(symbol)
+        .filter(|(previous, _, _)| *previous == key)
+    {
+        return Ok((object.clone(), *words, true));
+    }
+    let (object, words) = poll::emit_poll_object(program, name, symbol)?;
+    session
+        .poll_objects
+        .insert(symbol.into(), (key, object.clone(), words));
+    Ok((object, words, false))
+}
+
 impl NativeBuildSession {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Build with one object per direct function. Returns the number of
-    /// objects reused from the preceding successful build in this session.
+    /// Build with one object per direct function and retained poll entry.
+    /// Returns the number of objects reused from this session's last build.
     pub fn build_executable(&mut self, program: &Program, output: &Path) -> Result<usize, String> {
         let mut next = self.clone();
         let (emitted, reused) = emit_object_with_poll_layout(program, true, Some(&mut next))?;
@@ -117,24 +183,44 @@ pub(super) fn emit_object_with_poll_layout(
     }
     let suspendable = frame_layout::suspendable_functions(program)?;
     if suspendable[main.0] {
-        let (object, words) = poll::emit_poll_object(program, "main", "phoebe_main_poll")?;
+        if let Some(session) = cache.as_deref_mut() {
+            session
+                .poll_objects
+                .retain(|symbol, _| symbol == "phoebe_main_poll");
+        }
+        let (object, words, reused) =
+            emit_cached_poll_object(program, "main", "phoebe_main_poll", cache.as_deref_mut())?;
         return Ok((
             ObjectEmission {
                 root: object,
                 poll_words: Some(words),
                 children: Vec::new(),
             },
-            0,
+            usize::from(reused),
         ));
     }
     let mut poll_objects = Vec::new();
     let direct = standalone_direct_functions(program, main, &suspendable);
-    for child in spawned_poll_children_in(program, &direct)? {
-        let (object, _) = poll::emit_poll_object(
+    let children = spawned_poll_children_in(program, &direct)?;
+    if let Some(session) = cache.as_deref_mut() {
+        let symbols = children
+            .iter()
+            .map(|child| spawn_poll_symbol(&program.functions[child.0].name))
+            .collect::<BTreeSet<_>>();
+        session
+            .poll_objects
+            .retain(|symbol, _| symbols.contains(symbol));
+    }
+    let mut reused_poll = 0;
+    for child in children {
+        let name = &program.functions[child.0].name;
+        let (object, _, reused) = emit_cached_poll_object(
             program,
-            &program.functions[child.0].name,
-            &spawn_poll_symbol(&program.functions[child.0].name),
+            name,
+            &spawn_poll_symbol(name),
+            cache.as_deref_mut(),
         )?;
+        reused_poll += usize::from(reused);
         poll_objects.push(object);
     }
     if !split_direct {
@@ -247,7 +333,7 @@ pub(super) fn emit_object_with_poll_layout(
         })
         .collect::<BTreeMap<_, _>>();
     let mut direct_objects = Vec::new();
-    let mut reused = 0;
+    let mut reused = reused_poll;
     if let Some(session) = cache.as_deref_mut() {
         if session
             .data_layouts

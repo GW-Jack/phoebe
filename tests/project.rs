@@ -73,6 +73,58 @@ fn project_build_session_reuses_bodies_and_objects_after_body_edits() {
     std::fs::remove_dir_all(path).unwrap();
 }
 
+#[test]
+fn retained_poll_object_reuses_unrelated_edits_and_rebuilds_reachable_code() {
+    let source = include_str!("../examples/channel_exchange.phoebe");
+    let executable =
+        std::env::temp_dir().join(format!("phoebe-poll-object-cache-{}", std::process::id()));
+    let mut session = native::NativeBuildSession::new();
+    let initial = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(session.build_executable(&initial, &executable).unwrap(), 0);
+    assert_eq!(session.build_executable(&initial, &executable).unwrap(), 1);
+
+    let unrelated = format!("{source}\nfn unused() -> I64 = 9\n");
+    let unrelated = core::lower(&syntax::parse(&unrelated).unwrap()).unwrap();
+    assert_eq!(
+        session.build_executable(&unrelated, &executable).unwrap(),
+        1
+    );
+    let shifted = format!("fn unused() -> I64 = 9\n{source}");
+    let shifted = core::lower(&syntax::parse(&shifted).unwrap()).unwrap();
+    assert_eq!(session.build_executable(&shifted, &executable).unwrap(), 1);
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+
+    let edited = source.replace("sender.send(20)", "sender.send(21)");
+    let edited = core::lower(&syntax::parse(&edited).unwrap()).unwrap();
+    assert_eq!(session.build_executable(&edited, &executable).unwrap(), 0);
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"43\n");
+
+    let helper_source = format!(
+        "{}\nfn helper() -> I64 = 20\n",
+        source.replace("sender.send(20)", "sender.send(helper())")
+    );
+    let helper = core::lower(&syntax::parse(&helper_source).unwrap()).unwrap();
+    assert_eq!(session.build_executable(&helper, &executable).unwrap(), 0);
+    assert_eq!(session.build_executable(&helper, &executable).unwrap(), 1);
+    let changed_helper =
+        helper_source.replace("fn helper() -> I64 = 20", "fn helper() -> I64 = 21");
+    let changed_helper = core::lower(&syntax::parse(&changed_helper).unwrap()).unwrap();
+    assert_eq!(
+        session
+            .build_executable(&changed_helper, &executable)
+            .unwrap(),
+        0
+    );
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"43\n");
+    std::fs::remove_file(executable).unwrap();
+}
+
 fn temp_package_graph() -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "phoebe-package-project-test-{}-{}",

@@ -431,13 +431,17 @@ fn compile_poll_module<M: Module>(
     signature.returns.push(AbiParam::new(types::I64));
     let mut ids = vec![None; program.functions.len()];
     for id in &reachable {
+        let local_symbol = format!(
+            "phoebe_poll_{}",
+            symbol_suffix(&program.functions[id.0].name)
+        );
         let (symbol, linkage) = if *id == root {
             match export_symbol {
                 Some(symbol) => (symbol.to_owned(), Linkage::Export),
-                None => (format!("phoebe_poll_{}", id.0), Linkage::Local),
+                None => (local_symbol, Linkage::Local),
             }
         } else {
-            (format!("phoebe_poll_{}", id.0), Linkage::Local)
+            (local_symbol, Linkage::Local)
         };
         ids[id.0] = Some(
             module

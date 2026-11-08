@@ -124,6 +124,7 @@ def integration_tests(rust_test):
             "examples/multi_module/app.phoebe",
             "examples/multi_module/math.phoebe",
             "examples/request_exchange.phoebe",
+            "examples/channel_exchange.phoebe",
             "examples/package_graph/app/phoebe.toml",
             "examples/package_graph/app/phoebe.lock",
             "examples/package_graph/app/app.phoebe",
