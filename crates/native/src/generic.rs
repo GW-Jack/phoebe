@@ -134,7 +134,7 @@ fn get(values: &[Option<Vec<ClValue>>], value: generic_core::ValueId) -> Vec<ClV
 
 /// Emit every planned instance through the same direct-call convention as
 /// concrete Core. The planner has already checked bodies and call shapes.
-fn emit_into<M: Module>(
+pub(super) fn emit_into<M: Module>(
     module: &mut M,
     planner: &Planner<'_>,
     entry: usize,

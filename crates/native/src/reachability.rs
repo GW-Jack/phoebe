@@ -13,6 +13,18 @@ pub(super) fn spawned_poll_children_in(
     parents: &[bool],
 ) -> Result<Vec<FunctionId>, String> {
     let suspendable = frame_layout::suspendable_functions(program)?;
+    Ok(spawned_poll_children_with_suspendable(
+        program,
+        parents,
+        &suspendable,
+    ))
+}
+
+pub(super) fn spawned_poll_children_with_suspendable(
+    program: &Program,
+    parents: &[bool],
+    suspendable: &[bool],
+) -> Vec<FunctionId> {
     let mut children = vec![false; program.functions.len()];
     for (index, function) in program.functions.iter().enumerate() {
         if !parents[index] {
@@ -26,11 +38,11 @@ pub(super) fn spawned_poll_children_in(
             }
         }
     }
-    Ok(children
+    children
         .iter()
         .enumerate()
         .filter_map(|(index, found)| found.then_some(FunctionId(index)))
-        .collect())
+        .collect()
 }
 
 pub(super) fn standalone_direct_functions(

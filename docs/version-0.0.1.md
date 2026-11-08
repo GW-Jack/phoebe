@@ -97,8 +97,11 @@ object. Concrete source calls now infer owning type arguments and lower into
 linked Core against an already checked generic module. Linked verification
 checks substitution and capability transfer; ordinary Core rejects unlinked
 calls. The interpreter executes this subset, including transitive calls and
-branches, through single-file `phoebe run <file> --interp`. Native dispatch,
-project builds, and standalone executable integration remain open.
+branches, through single-file `phoebe run <file> --interp`. The normal
+`phoebe run <file>` route now plans shape-shared instances and calls them from
+non-suspending concrete functions in the same Cranelift JIT module. Tests
+cover a transitive branch and a wide nominal return buffer. Retained native
+tasks, project builds, and standalone executable integration remain open.
 The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures

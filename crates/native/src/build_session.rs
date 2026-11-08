@@ -465,6 +465,7 @@ pub(super) fn emit_object_with_poll_layout(
             true,
             None,
             Some(&direct),
+            None,
         )?;
         return Ok((
             ObjectEmission {
@@ -594,6 +595,7 @@ pub(super) fn emit_object_with_poll_layout(
             true,
             None,
             Some(&selected),
+            None,
         )?;
         let object = module.finish().emit().map_err(|e| e.to_string())?;
         if let Some(session) = cache.as_deref_mut() {

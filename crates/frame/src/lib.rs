@@ -254,6 +254,15 @@ impl Live {
 /// separate task, so it does not make the parent suspendable by itself.
 pub fn suspendable_functions(program: &Program) -> Result<Vec<bool>, String> {
     core::verify(program)?;
+    Ok(suspendable_functions_verified(program))
+}
+
+/// Suspension facts for Core already verified with its generic module.
+pub fn suspendable_functions_linked(linked: &core::CheckedLinkedProgram) -> Vec<bool> {
+    suspendable_functions_verified(linked.program())
+}
+
+fn suspendable_functions_verified(program: &Program) -> Vec<bool> {
     let mut suspendable = program
         .functions
         .iter()
@@ -286,7 +295,7 @@ pub fn suspendable_functions(program: &Program) -> Result<Vec<bool>, String> {
             }
         }
         if !changed {
-            return Ok(suspendable);
+            return suspendable;
         }
     }
 }

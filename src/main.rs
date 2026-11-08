@@ -91,25 +91,42 @@ fn command() -> Result<(), String> {
         return Ok(());
     }
     let mut args = args.collect::<Vec<_>>().into_iter();
-    if action == "run"
-        && !Path::new(&path).is_dir()
-        && !path.ends_with(".toml")
-        && args.clone().any(|arg| arg == "--interp")
-    {
+    let mut preloaded = None;
+    if action == "run" && !Path::new(&path).is_dir() && !path.ends_with(".toml") {
         let source = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
         let ast = syntax::parse(&source).map_err(|e| format!("{path}:{}", e.render(&source)))?;
-        let linked = core::lower_linked_checked(&ast)
-            .map_err(|e| format!("{path}:{}", e.render(&source)))?;
-        let (name, values) = run_arguments(&args.collect::<Vec<_>>())?;
-        println!("{}", linked.interpret(&name, &values)?);
-        return Ok(());
+        let interpreted = args.clone().any(|arg| arg == "--interp");
+        if interpreted
+            || ast
+                .functions
+                .iter()
+                .any(|function| !function.type_params.is_empty())
+        {
+            let linked = core::lower_linked_checked(&ast)
+                .map_err(|e| format!("{path}:{}", e.render(&source)))?;
+            let (name, values) = run_arguments(&args.collect::<Vec<_>>())?;
+            let result = if interpreted {
+                linked.interpret(&name, &values)?
+            } else {
+                native::run_linked(&linked, &name, &values)?
+            };
+            println!("{result}");
+            return Ok(());
+        }
+        preloaded = Some((source, ast));
     }
     let program = if Path::new(&path).is_dir() || path.ends_with(".toml") {
         let loaded = project::load(Path::new(&path))?;
         core::lower_checked(&loaded.ast).map_err(|error| loaded.render(&error))?
     } else {
-        let source = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
-        let ast = syntax::parse(&source).map_err(|e| format!("{path}:{}", e.render(&source)))?;
+        let (source, ast) = if let Some(preloaded) = preloaded {
+            preloaded
+        } else {
+            let source = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+            let ast =
+                syntax::parse(&source).map_err(|e| format!("{path}:{}", e.render(&source)))?;
+            (source, ast)
+        };
         core::lower_checked(&ast).map_err(|e| format!("{path}:{}", e.render(&source)))?
     };
     match action.as_str() {

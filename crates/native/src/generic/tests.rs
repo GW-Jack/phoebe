@@ -9,6 +9,28 @@ fn source(source: &str) -> generic_core::Module {
 }
 
 #[test]
+fn linked_source_generic_calls_agree_in_interpreter_and_jit() {
+    let ast = phoebe_syntax::parse(
+        "fn choose<T>(flag: Bool, x: T) -> T = if (flag) { x } else { x }\nfn through<U>(flag: Bool, x: U) -> U = choose(flag, x)\nfn main() -> I64 = through(true, 41)",
+    )
+    .unwrap();
+    let linked = phoebe_core::lower_linked_checked(&ast).unwrap();
+    assert_eq!(linked.interpret("main", &[]).unwrap(), 41);
+    assert_eq!(crate::run_linked(&linked, "main", &[]).unwrap(), 41);
+}
+
+#[test]
+fn linked_source_wide_nominal_generic_result_uses_return_buffer() {
+    let ast = phoebe_syntax::parse(
+        "data Triple { a: I64, b: I64, c: I64 }\nfn identity<T>(x: T) -> T = x\nfn sum(x: Triple) -> I64 = x.a + x.b + x.c\nfn main() -> I64 = sum(identity(Triple(10, 20, 12)))",
+    )
+    .unwrap();
+    let linked = phoebe_core::lower_linked_checked(&ast).unwrap();
+    assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(crate::run_linked(&linked, "main", &[]).unwrap(), 42);
+}
+
+#[test]
 fn generic_identity_and_transitive_call_run_as_native_i64() {
     let generic = source("fn identity<T>(x: T) -> T = x\nfn through<U>(x: U) -> U = identity(x)");
     let concrete = Program {

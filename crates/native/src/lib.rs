@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::io::Write;
@@ -40,8 +40,8 @@ pub use codegen::frame_word_layouts;
 pub use poll::{PollExecutable, PollLeafExecutable, compile_poll_jit, compile_poll_leaf_jit};
 
 use build_session::emit_object_with_poll_layout;
-use codegen::{AbiShapes, compile_functions};
-use reachability::spawned_poll_children;
+use codegen::{AbiShapes, GenericTargets, compile_functions};
+use reachability::{spawned_poll_children, spawned_poll_children_with_suspendable};
 
 /// Injective internal symbol encoding. Names are source identifiers qualified
 /// by modules, while linkers see only ASCII letters, digits, and underscores.
@@ -91,11 +91,31 @@ fn compile_jit_verified(
     verified: core::VerifiedProgram<'_>,
     name: &str,
 ) -> Result<JitExecutable, String> {
-    let program = verified.as_program();
+    compile_jit_impl(verified.as_program(), Some(verified), None, name)
+}
+
+pub fn compile_jit_linked(
+    linked: &core::CheckedLinkedProgram,
+    name: &str,
+) -> Result<JitExecutable, String> {
+    compile_jit_impl(linked.program(), None, Some(linked), name)
+}
+
+fn compile_jit_impl(
+    program: &Program,
+    verified: Option<core::VerifiedProgram<'_>>,
+    linked: Option<&core::CheckedLinkedProgram>,
+    name: &str,
+) -> Result<JitExecutable, String> {
     let (entry_id, entry) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
-    if frame_layout::suspendable_functions(program)?[entry_id.0] {
+    let suspendable = if let Some(linked) = linked {
+        frame_layout::suspendable_functions_linked(linked)
+    } else {
+        frame_layout::suspendable_functions(program)?
+    };
+    if suspendable[entry_id.0] {
         return Err("suspendable entry requires the retained native backend".into());
     }
     let arity = entry.blocks[0].params.len();
@@ -121,7 +141,18 @@ fn compile_jit_verified(
         .map_err(|e| e.to_string())?;
     let mut jit = JITBuilder::with_isa(isa, default_libcall_names());
     let mut poll_children = Vec::new();
-    for child in spawned_poll_children(program)? {
+    let poll_children_ids = if linked.is_some() {
+        spawned_poll_children_with_suspendable(
+            program,
+            &vec![true; program.functions.len()],
+            &suspendable,
+        )
+    } else {
+        spawned_poll_children(program)?
+    };
+    for child in poll_children_ids {
+        let verified = verified
+            .ok_or("linked generic calls in spawned poll tasks need native poll dispatch")?;
         let executable =
             poll::compile_poll_jit_verified(verified, &program.functions[child.0].name)?;
         jit.symbol(
@@ -182,7 +213,51 @@ fn compile_jit_verified(
         );
     }
     let mut module = JITModule::new(jit);
-    let ids = compile_functions(&mut module, program, &context_functions, false, None, None)?;
+    let targets = if let Some(linked) = linked {
+        let shapes = phoebe_abi::Shapes::new(program)?;
+        let mut planner = phoebe_abi::generic::Planner::from_checked(
+            linked.generics(),
+            &shapes,
+            generic::host_target_abi()?,
+        )?;
+        let mut calls = HashMap::new();
+        for (function_id, function) in program.functions.iter().enumerate() {
+            for (block_id, block) in function.blocks.iter().enumerate() {
+                for (instruction_id, instruction) in block.instructions.iter().enumerate() {
+                    if let Operation::GenericCall {
+                        callee, type_args, ..
+                    } = &instruction.operation
+                    {
+                        calls.insert(
+                            (function_id, block_id, instruction_id),
+                            planner.plan(*callee, type_args)?,
+                        );
+                    }
+                }
+            }
+        }
+        let calls = if calls.is_empty() {
+            HashMap::new()
+        } else {
+            let (ids, _) = generic::emit_into(&mut module, &planner, 0, false)?;
+            calls
+                .into_iter()
+                .map(|(site, instance)| (site, ids[instance]))
+                .collect()
+        };
+        Some(GenericTargets { calls, suspendable })
+    } else {
+        None
+    };
+    let ids = compile_functions(
+        &mut module,
+        program,
+        &context_functions,
+        false,
+        None,
+        None,
+        targets.as_ref(),
+    )?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
     let (entry_id, _) = program.function(name).expect("checked above");
     Ok(JitExecutable {
@@ -315,6 +390,14 @@ pub fn run_checked(
     run_checked_with_limits(program, name, args, ScopeLimits::default())
 }
 
+pub fn run_linked(
+    linked: &core::CheckedLinkedProgram,
+    name: &str,
+    args: &[i64],
+) -> Result<i64, String> {
+    compile_jit_linked(linked, name)?.run(args)
+}
+
 pub fn run_checked_with_limits(
     program: &core::CheckedProgram,
     name: &str,
@@ -422,6 +505,7 @@ fn clif_verified(verified: core::VerifiedProgram<'_>) -> Result<String, String> 
         &context_functions,
         false,
         Some(&mut output),
+        None,
         None,
     )?;
     for child in spawned_poll_children(program)? {

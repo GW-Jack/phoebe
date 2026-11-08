@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 use super::runtime_imports::{declare_reply_imports, declare_request_imports};
 
@@ -132,6 +133,11 @@ struct SpawnEntry {
     needs_wrapper: bool,
 }
 
+pub(super) struct GenericTargets {
+    pub calls: HashMap<(usize, usize, usize), FuncId>,
+    pub suspendable: Vec<bool>,
+}
+
 pub(super) fn compile_functions<M: Module>(
     module: &mut M,
     program: &Program,
@@ -141,12 +147,17 @@ pub(super) fn compile_functions<M: Module>(
     // A poll module passes the direct-call closure; ordinary direct builds
     // define every non-suspendable function.
     selected: Option<&[bool]>,
+    generics: Option<&GenericTargets>,
 ) -> Result<Vec<(FuncId, Signature)>, String> {
     let uses_runtime = context_functions
         .iter()
         .enumerate()
         .any(|(index, needed)| *needed && selected.is_none_or(|set| set[index]));
-    let suspendable = frame_layout::suspendable_functions(program)?;
+    let suspendable = if let Some(generics) = generics {
+        generics.suspendable.clone()
+    } else {
+        frame_layout::suspendable_functions(program)?
+    };
     let mut poll_layouts = vec![None; program.functions.len()];
     if program.functions.iter().any(|function| {
         function.blocks.iter().any(|block| {
@@ -467,7 +478,7 @@ pub(super) fn compile_functions<M: Module>(
             for block_id in order {
                 let block = &function.blocks[block_id];
                 builder.switch_to_block(blocks[block_id]);
-                for instruction in &block.instructions {
+                for (instruction_index, instruction) in block.instructions.iter().enumerate() {
                     let get = |id: core::ValueId| {
                         values[id.0].clone().expect("verified value is defined")
                     };
@@ -604,8 +615,22 @@ pub(super) fn compile_functions<M: Module>(
                                 register_results,
                             )?)
                         }
-                        Operation::GenericCall { .. } => {
-                            return Err("linked generic call requires native dispatch".into());
+                        Operation::GenericCall { args, .. } => {
+                            let target = generics
+                                .and_then(|generics| {
+                                    generics.calls.get(&(index, block_id, instruction_index))
+                                })
+                                .ok_or("linked generic call has no planned native instance")?;
+                            let callee = module.declare_func_in_func(*target, builder.func);
+                            let arguments = args.iter().flat_map(|value| get(*value)).collect();
+                            Some(emit_direct_call(
+                                &mut builder,
+                                callee,
+                                arguments,
+                                &shapes.types(function.value_types[instruction.result.unwrap().0]),
+                                pointer_type,
+                                register_results,
+                            )?)
                         }
                         Operation::LoadRef(reference) => Some(vec![builder.ins().load(
                             types::I64,

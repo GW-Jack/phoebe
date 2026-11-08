@@ -213,6 +213,7 @@ fn compile_poll_module<M: Module>(
             false,
             Some(&mut clif),
             Some(&selected),
+            None,
         )?)
     } else {
         None
