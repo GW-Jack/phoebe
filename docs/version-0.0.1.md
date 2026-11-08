@@ -70,6 +70,10 @@ the host `cc`; `--interp` selects the reference interpreter. The built
 executable runs without the compiler process and prints the I64 returned by
 zero-argument `main`. External JIT and interpreter entries also require I64
 signatures; calls within Phoebe can pass and return Bool or nominal data.
+Standalone runtime failures now print a bounded diagnostic rather than a
+generic failure line; a source deadlock has the same reason in interpreter,
+JIT, and standalone runs. The C entry keeps its original v1 symbol and adds
+diagnostic variants with a caller-owned 512-byte error buffer.
 Finite products also cross calls and returns by flattened scalar
 components, without native heap allocation. Direct returns wider than the
 target's register return capacity use a caller-owned stack buffer, so x86-64

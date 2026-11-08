@@ -580,10 +580,10 @@ fn link_executable(
             .map_err(|e| format!("failed to launch C linker: {e}"))?;
         let wrapper = if let Some(words) = emitted.poll_words {
             format!(
-                "#include <stdio.h>\nextern long long phoebe_main_poll(void *, long long *);\nextern int phoebe_rt_v1_main_poll(long long (*)(void *, long long *), long long, long long *);\nint main(void) {{ long long value = 0; if (phoebe_rt_v1_main_poll(phoebe_main_poll, {words}, &value)) {{ fputs(\"phoebe runtime failed\\n\", stderr); return 1; }} printf(\"%lld\\n\", value); return 0; }}\n"
+                "#include <stdio.h>\n#include <stddef.h>\nextern long long phoebe_main_poll(void *, long long *);\nextern int phoebe_rt_v1_main_poll_diagnostic(long long (*)(void *, long long *), long long, long long *, unsigned char *, size_t);\nint main(void) {{ long long value = 0; unsigned char error[512] = {{0}}; if (phoebe_rt_v1_main_poll_diagnostic(phoebe_main_poll, {words}, &value, error, sizeof(error))) {{ fprintf(stderr, \"phoebe runtime failed: %s\\n\", error[0] ? (char *)error : \"unknown error\"); return 1; }} printf(\"%lld\\n\", value); return 0; }}\n"
             )
         } else if runtime_archive.is_some() {
-            "#include <stdio.h>\nextern long long phoebe_main(void *);\nextern int phoebe_rt_v1_main(long long (*)(void *), long long *);\nint main(void) { long long value = 0; if (phoebe_rt_v1_main(phoebe_main, &value)) { fputs(\"phoebe runtime failed\\n\", stderr); return 1; } printf(\"%lld\\n\", value); return 0; }\n".to_owned()
+            "#include <stdio.h>\n#include <stddef.h>\nextern long long phoebe_main(void *);\nextern int phoebe_rt_v1_main_diagnostic(long long (*)(void *), long long *, unsigned char *, size_t);\nint main(void) { long long value = 0; unsigned char error[512] = {0}; if (phoebe_rt_v1_main_diagnostic(phoebe_main, &value, error, sizeof(error))) { fprintf(stderr, \"phoebe runtime failed: %s\\n\", error[0] ? (char *)error : \"unknown error\"); return 1; } printf(\"%lld\\n\", value); return 0; }\n".to_owned()
         } else {
             "#include <stdio.h>\nextern long long phoebe_main(void);\nint main(void) { printf(\"%lld\\n\", phoebe_main()); return 0; }\n".to_owned()
         };

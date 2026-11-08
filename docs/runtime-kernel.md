@@ -162,6 +162,11 @@ a Cargo development build can produce it with
 compiler must include the matching archive.
 The exported symbols carry a `phoebe_rt_v1_` prefix, so an archive with a
 different ABI version fails at link time.
+The standalone wrapper uses `phoebe_rt_v1_main_diagnostic` or
+`phoebe_rt_v1_main_poll_diagnostic` to receive a bounded error string and
+print the scheduler's failure reason. The original entry symbols remain
+available for existing hosts. A source deadlock test checks the standalone
+stderr against the interpreter and native scheduler reason.
 
 The creation status is `0` on success, `1` for invalid capacity, `2` for the
 channel limit, and `4` for allocation failure (`3` is reserved for the reply

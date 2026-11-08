@@ -207,6 +207,14 @@ fn main() -> I64 {
     let mut scheduler = Scheduler::new(root, 1, 1, 0).unwrap();
     assert!(scheduler.run().unwrap_err().contains("scope deadlocked"));
     scheduler.verify().unwrap();
+
+    let path = std::env::temp_dir().join(format!("phoebe-deadlock-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_eq!(output.stderr, b"phoebe runtime failed: scope deadlocked\n");
 }
 
 #[test]

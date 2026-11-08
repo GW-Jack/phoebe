@@ -617,6 +617,22 @@ impl Task for StandaloneRootTask {
     }
 }
 
+fn run_direct_root(entry: extern "C" fn(*mut NativeCallContext) -> i64) -> Result<i64, String> {
+    let mut scheduler =
+        Scheduler::with_limits(StandaloneRootTask { entry }, ScopeLimits::default())?;
+    scheduler.run()
+}
+
+/// # Safety
+///
+/// `entry` must satisfy `NativePollTask::new` for `frame_words` words.
+unsafe fn run_poll_root(entry: NativePollEntry, frame_words: i64) -> Result<i64, String> {
+    let words = usize::try_from(frame_words).map_err(|_| "negative poll frame size")?;
+    let root = unsafe { NativePollTask::new(entry, words) }.map_err(|error| error.to_string())?;
+    let mut scheduler = Scheduler::with_limits(root, ScopeLimits::default())?;
+    scheduler.run()
+}
+
 /// Run a zero-argument compiled `main` under the default bounded scope.
 ///
 /// # Safety
@@ -628,18 +644,71 @@ pub unsafe extern "C" fn phoebe_runtime_main(
     entry: extern "C" fn(*mut NativeCallContext) -> i64,
     result_out: *mut i64,
 ) -> i32 {
-    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let limits = ScopeLimits::default();
-        let mut scheduler = Scheduler::with_limits(StandaloneRootTask { entry }, limits)?;
-        scheduler.run()
-    }));
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| run_direct_root(entry)));
+    unsafe { finish_root(outcome, result_out, std::ptr::null_mut(), 0) }
+}
+
+/// Copy a runtime failure into a caller-owned, NUL-terminated byte buffer.
+///
+/// # Safety
+///
+/// If `capacity` is nonzero, `out` must be writable for `capacity` bytes.
+unsafe fn write_diagnostic(out: *mut u8, capacity: usize, message: &str) {
+    if capacity == 0 || out.is_null() {
+        return;
+    }
+    let mut count = message.len().min(capacity - 1);
+    while !message.is_char_boundary(count) {
+        count -= 1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(message.as_ptr(), out, count);
+        *out.add(count) = 0;
+    }
+}
+
+/// # Safety
+///
+/// `result_out` must be writable for one i64. If `error_capacity` is nonzero,
+/// `error_out` must be writable for that many bytes.
+unsafe fn finish_root(
+    outcome: std::thread::Result<Result<i64, String>>,
+    result_out: *mut i64,
+    error_out: *mut u8,
+    error_capacity: usize,
+) -> i32 {
     match outcome {
         Ok(Ok(value)) => {
             unsafe { *result_out = value };
             0
         }
-        _ => 1,
+        Ok(Err(error)) => {
+            unsafe { write_diagnostic(error_out, error_capacity, &error) };
+            1
+        }
+        Err(_) => {
+            unsafe { write_diagnostic(error_out, error_capacity, "runtime panicked") };
+            1
+        }
     }
+}
+
+/// Run a direct entry and return a bounded diagnostic to the host wrapper.
+/// The original `phoebe_rt_v1_main` symbol remains available.
+///
+/// # Safety
+///
+/// `entry` and `result_out` obey `phoebe_runtime_main`'s contract. If
+/// `error_capacity` is nonzero, `error_out` is writable for that many bytes.
+#[unsafe(export_name = "phoebe_rt_v1_main_diagnostic")]
+pub unsafe extern "C" fn phoebe_runtime_main_diagnostic(
+    entry: extern "C" fn(*mut NativeCallContext) -> i64,
+    result_out: *mut i64,
+    error_out: *mut u8,
+    error_capacity: usize,
+) -> i32 {
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| run_direct_root(entry)));
+    unsafe { finish_root(outcome, result_out, error_out, error_capacity) }
 }
 
 /// Run a zero-argument generated poll entry under the default bounded scope.
@@ -654,26 +723,86 @@ pub unsafe extern "C" fn phoebe_runtime_main_poll(
     frame_words: i64,
     result_out: *mut i64,
 ) -> i32 {
-    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let words = usize::try_from(frame_words).map_err(|_| "negative poll frame size")?;
-        let root =
-            unsafe { NativePollTask::new(entry, words) }.map_err(|error| error.to_string())?;
-        let limits = ScopeLimits::default();
-        let mut scheduler = Scheduler::with_limits(root, limits)?;
-        scheduler.run()
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| unsafe {
+        run_poll_root(entry, frame_words)
     }));
-    match outcome {
-        Ok(Ok(value)) => {
-            unsafe { *result_out = value };
-            0
-        }
-        _ => 1,
-    }
+    unsafe { finish_root(outcome, result_out, std::ptr::null_mut(), 0) }
+}
+
+/// Run a generated poll entry and return a bounded diagnostic to the host
+/// wrapper. The original `phoebe_rt_v1_main_poll` symbol remains available.
+///
+/// # Safety
+///
+/// `entry`, `frame_words`, and `result_out` obey
+/// `phoebe_runtime_main_poll`'s contract. If `error_capacity` is nonzero,
+/// `error_out` is writable for that many bytes.
+#[unsafe(export_name = "phoebe_rt_v1_main_poll_diagnostic")]
+pub unsafe extern "C" fn phoebe_runtime_main_poll_diagnostic(
+    entry: NativePollEntry,
+    frame_words: i64,
+    result_out: *mut i64,
+    error_out: *mut u8,
+    error_capacity: usize,
+) -> i32 {
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| unsafe {
+        run_poll_root(entry, frame_words)
+    }));
+    unsafe { finish_root(outcome, result_out, error_out, error_capacity) }
 }
 
 #[cfg(test)]
 mod native_poll_tests {
     use super::*;
+
+    extern "C" fn synthetic_direct_fault(bridge: *mut NativeCallContext) -> i64 {
+        unsafe { *(*bridge).fault = true };
+        0
+    }
+
+    #[test]
+    fn diagnostic_entry_reports_direct_fault_and_bounds_poll_error() {
+        let mut value = 0;
+        let mut message = [0u8; 96];
+        assert_eq!(
+            unsafe {
+                phoebe_runtime_main_diagnostic(
+                    synthetic_direct_fault,
+                    &mut value,
+                    message.as_mut_ptr(),
+                    message.len(),
+                )
+            },
+            1
+        );
+        let written = std::ffi::CStr::from_bytes_until_nul(&message).unwrap();
+        assert!(
+            written
+                .to_str()
+                .unwrap()
+                .contains("native runtime ABI fault")
+        );
+
+        let mut short = [0u8; 8];
+        assert_eq!(
+            unsafe {
+                phoebe_runtime_main_poll_diagnostic(
+                    synthetic_poll,
+                    -1,
+                    &mut value,
+                    short.as_mut_ptr(),
+                    short.len(),
+                )
+            },
+            1
+        );
+        assert_eq!(
+            std::ffi::CStr::from_bytes_until_nul(&short)
+                .unwrap()
+                .to_bytes(),
+            b"negativ"
+        );
+    }
 
     extern "C" fn synthetic_call_child(bridge: *mut NativeCallContext, frame: *mut i64) -> i64 {
         let words = unsafe { std::slice::from_raw_parts_mut(frame, 3) };
