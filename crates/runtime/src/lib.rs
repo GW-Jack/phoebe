@@ -612,7 +612,7 @@ impl Scheduler {
                 if task.parent.is_some() {
                     return Err("root task has a parent".into());
                 }
-            } else if !task.parent.is_some_and(|parent| parent.0 < index) {
+            } else if task.parent.is_none_or(|parent| parent.0 >= index) {
                 return Err(format!("task {index} lacks an earlier parent"));
             }
             let waiters = match task.state {
