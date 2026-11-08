@@ -145,6 +145,33 @@ cache directories took 397.8, 172.7, and 172.0 ms (median 172.7 ms). The
 cached executable returned `1000`. This chain stresses code emission and is
 not representative of a typical Phoebe program.
 
+## Linked generic object granularity experiment
+
+On 2026-11-08, a macOS ARM64 debug build compared the current whole-object
+linked build session at `572b0f6` with an uncommitted experiment that emitted
+one object per reachable concrete function plus one object for planned generic
+instances. Both compiled the same generated 120-function direct call chain
+ending in generic `identity<T>`. Five fresh sessions per path were interleaved.
+Each session built once, repeated an unchanged build, then edited the terminal
+helper from `identity(x)` to `identity(x + 1)` and rebuilt. The resulting
+executable printed `43`.
+
+| Linked build-session path | Cold median | Unchanged median | Edited median |
+| --- | ---: | ---: | ---: |
+| Whole object | 53.8 ms | 3.3 ms | 50.9 ms |
+| Split concrete and generic objects | 162.3 ms | 24.2 ms | 93.1 ms |
+
+The whole-object ranges were 52.0–54.6, 3.3–3.5, and 50.5–52.0 ms. The
+split ranges were 159.7–180.8, 24.0–24.3, and 92.8–94.2 ms. The split path
+reported 121 reused objects after the edit, but the end-to-end rebuild was
+slower. Object handling and linking are plausible contributors; this experiment
+did not isolate their costs.
+A three-function comparison was roughly tied on edited builds (36–39 ms),
+with no useful gain. The split implementation was discarded. These are local
+debug measurements of two synthetic projects, not general performance
+claims. Future linked-cache work needs a bounded object count or a faster
+link strategy and must measure end-to-end rebuild time, not reuse counts alone.
+
 ## Reachable native emission
 
 On the same 2026-11-07 debug build, a generated chain of 1,000 functions was

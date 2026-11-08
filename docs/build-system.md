@@ -113,6 +113,9 @@ linked generic project path. The linked generic cache stores the complete
 object set. Its key uses names for reachable generic callees, so adding or editing
 an unused generic definition does not rebuild it. Reachable changes and a new
 compiler executable invalidate the entry.
+An in-process experiment with one object per linked concrete function
+regressed cold, no-op, and edited builds on a generated 120-function fixture;
+the measured result and its limits are in `docs/performance-baseline.md`.
 
 `third-party/rust/Cargo.toml` and its lockfile pin third-party Rust versions.
 Reindeer generates `third-party/rust/BUCK` and sha256-checked archive rules.
