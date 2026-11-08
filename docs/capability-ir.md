@@ -25,7 +25,7 @@ The compiler will classify every type recursively as:
 
 | Class | Examples | Implicit discard |
 | --- | --- | --- |
-| Copy | `I64`, `Bool` | Yes |
+| Copy | `I64`, `Bool`, `Unit` | Yes |
 | Closed affine | Current nominal sums/products of closed values | Yes |
 | Capability-bearing | `Sender<T>`, `Receiver<T>`, `ReplyTo<T>`, `ReplyReceiver<T>`, aggregates containing them | No |
 

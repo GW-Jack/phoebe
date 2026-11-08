@@ -32,6 +32,21 @@ fn empty_scope_has_no_scope_cost_or_runtime_call() {
 }
 
 #[test]
+fn unit_identity_has_no_scalar_argument_result_or_instruction() {
+    let source = include_str!("../examples/cost/unit_identity.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let clif = native::clif(&program).unwrap();
+    let identity = clif.split("; Phoebe function main").next().unwrap();
+    assert!(identity.contains("function u0:0()"), "{identity}");
+    assert!(identity.contains("    return\n"), "{identity}");
+    assert!(!identity.contains("iconst"), "{identity}");
+    assert!(!identity.contains("stack_slot"), "{identity}");
+    assert!(program.cost_events().is_empty());
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
 fn each_source_spawn_has_one_attributed_task_creation_site() {
     let source = include_str!("../examples/spawn_pair.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

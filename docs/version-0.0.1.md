@@ -34,10 +34,16 @@ only by prose at release.
 
 ## Current executable slice
 
-The Rust workspace currently parses functions over I64, Bool, nominal sums with
+The Rust workspace currently parses functions over I64, Bool, Unit, nominal sums with
 at most one payload per variant, and nominal products with finite fields.
 User-declared payloads and fields may contain earlier nominal types and finite
 concrete `Option` and `Result` applications; recursive data remains unsupported.
+`Unit` has no native transport components; a `Unit` function block may omit its
+final expression. Spawned tasks may return `Unit`, and a suspending call may
+receive a zero-word `Unit` result. `examples/unit_tasks.phoebe` and
+`examples/unit_data.phoebe` run in the interpreter, JIT, and standalone paths.
+Zero-width product fields can be read from mutable task-local places before
+or after suspension; `examples/unit_place.phoebe` exercises the latter.
 It supports up to four owned parameters (I64 borrows only), `val` and
 `var` bindings, assignment, `while`, integer and boolean literals, unary
 numeric negation, Boolean `!`, `+`, `-`, `*`, `==`, `!=`, `<`, `<=`, `>`, `>=`,
@@ -378,6 +384,8 @@ buck2 run //:phoebe -- run examples/try.phoebe
 buck2 run //:phoebe -- run examples/nested_result.phoebe
 buck2 run //:phoebe -- run examples/option.phoebe
 buck2 run //:phoebe -- run examples/nested_variant.phoebe
+buck2 run //:phoebe -- run examples/unit_tasks.phoebe
+buck2 run //:phoebe -- run examples/unit_data.phoebe
 buck2 run //:phoebe -- run examples/copy.phoebe
 buck2 run //:phoebe -- run examples/channel_create.phoebe
 buck2 run //:phoebe -- run examples/channel_cleanup.phoebe

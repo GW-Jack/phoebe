@@ -1,0 +1,23 @@
+fn worker(sender: Sender<I64>) -> Unit {
+  val sent = sender.send(1);
+  sender.close();
+}
+
+fn wait_for(receiver: Receiver<I64>) -> Unit {
+  val received = receiver.receive();
+  receiver.close();
+}
+
+fn start() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  spawn worker(sender)?;
+  wait_for(receiver);
+  Result<I64, ResourceError>.Ok(42)
+}
+
+fn main() -> I64 {
+  when (start()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

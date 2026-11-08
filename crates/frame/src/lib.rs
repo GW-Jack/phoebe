@@ -75,7 +75,7 @@ pub fn word_layout(
     let mut next = 1usize;
     let mut reserve = |ty| -> Result<Range<usize>, String> {
         let count = width(ty);
-        if count == 0 {
+        if count == 0 && !matches!(ty, core::Type::Unit | core::Type::Data(_)) {
             return Err("zero-width native frame value".into());
         }
         let end = next
@@ -85,7 +85,13 @@ pub fn word_layout(
         next = end;
         Ok(words)
     };
-    let result = reserve(function.return_type)?;
+    // Word 1 also serves as scratch for scalar receive operations and as the
+    // scheduler's ignored completion word for spawned Unit tasks.
+    let result = reserve(if width(function.return_type) == 0 {
+        core::Type::I64
+    } else {
+        function.return_type
+    })?;
     let values = frame
         .value_slots
         .iter()
@@ -156,13 +162,13 @@ pub fn word_layout(
             .get(target.0)
             .ok_or("invalid frame call target")?;
         let words = width(callee.return_type);
+        if words == 0 && !matches!(callee.return_type, core::Type::Unit | core::Type::Data(_)) {
+            return Err("zero-width native call result".into());
+        }
         call_result_width = Some(call_result_width.unwrap_or(0).max(words));
     }
     let call_result = call_result_width
         .map(|words| {
-            if words == 0 {
-                return Err("zero-width native call result".into());
-            }
             let end = next
                 .checked_add(words)
                 .ok_or("native call result size overflow")?;

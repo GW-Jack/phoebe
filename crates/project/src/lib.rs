@@ -483,6 +483,7 @@ fn qualify_type(
     match ty {
         TypeName::I64
         | TypeName::Bool
+        | TypeName::Unit
         | TypeName::SenderI64
         | TypeName::ReceiverI64
         | TypeName::ReplyToI64

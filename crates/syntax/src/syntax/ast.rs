@@ -55,6 +55,7 @@ pub struct Function {
 pub enum TypeName {
     I64,
     Bool,
+    Unit,
     SenderI64,
     ReceiverI64,
     ReplyToI64,
@@ -72,6 +73,7 @@ impl TypeName {
         match self {
             Self::I64 => "I64".into(),
             Self::Bool => "Bool".into(),
+            Self::Unit => "Unit".into(),
             Self::SenderI64 => "Sender<I64>".into(),
             Self::ReceiverI64 => "Receiver<I64>".into(),
             Self::ReplyToI64 => "ReplyTo<I64>".into(),

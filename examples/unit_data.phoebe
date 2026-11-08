@@ -1,0 +1,16 @@
+data Marker { blank: Unit, number: I64 }
+
+fn choose(flag: Bool) -> Result<Unit, I64> {
+  if (flag) { Result<Unit, I64>.Ok(Unit) }
+  else { Result<Unit, I64>.Err(9) }
+}
+
+fn main() -> I64 {
+  var nothing = Unit;
+  nothing = Unit;
+  val marker = Marker(nothing, 42);
+  when (choose(true)) {
+    Result<Unit, I64>.Ok(value) -> { value; marker.number },
+    Result<Unit, I64>.Err(error) -> { error }
+  }
+}

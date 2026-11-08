@@ -162,8 +162,8 @@ fn compile_poll_module<M: Module>(
     let (root, entry_function) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
-    if entry_function.return_type != Type::I64 {
-        return Err("external poll entry requires an I64 result".into());
+    if !matches!(entry_function.return_type, Type::I64 | Type::Unit) {
+        return Err("poll entry requires an I64 or Unit result".into());
     }
     if entry_function
         .param_modes
@@ -764,6 +764,7 @@ fn compile_poll_module<M: Module>(
                         Operation::Bool(value) => {
                             Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
                         }
+                        Operation::Unit => Some(Vec::new()),
                         Operation::Move(value) | Operation::Copy(value) => {
                             Some(get(*value, &mut builder))
                         }
@@ -798,13 +799,21 @@ fn compile_poll_module<M: Module>(
                                 .iter()
                                 .map(|(_, ty)| shapes.types(*ty).len())
                                 .sum::<usize>();
-                            let ty = shapes.types(fields[*index].1)[0];
-                            Some(vec![builder.ins().load(
-                                ty,
-                                MemFlagsData::new(),
-                                places[place.0][offset],
-                                0,
-                            )])
+                            Some(
+                                shapes
+                                    .types(fields[*index].1)
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(part, ty)| {
+                                        builder.ins().load(
+                                            ty,
+                                            MemFlagsData::new(),
+                                            places[place.0][offset + part],
+                                            0,
+                                        )
+                                    })
+                                    .collect(),
+                            )
                         }
                         Operation::Variant(id, tag, payload) => {
                             let mut parts = vec![builder.ins().iconst(types::I64, *tag as i64)];
@@ -1666,6 +1675,7 @@ fn validate_poll_function(
                 instruction.operation,
                 Operation::Const(_)
                     | Operation::Bool(_)
+                    | Operation::Unit
                     | Operation::Move(_)
                     | Operation::Copy(_)
                     | Operation::PlaceInit(_, _)

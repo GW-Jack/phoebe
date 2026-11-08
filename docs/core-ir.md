@@ -44,7 +44,7 @@ receives and returns the original sum value through a block parameter; its
 place operations are `place.init`, `place.load`, `place.take`, `place.field`,
 and `place.store`. An
 initializer dominates every use, including on a loop backedge. A place can
-hold `I64`, `Bool`, sums, or finite products. A synchronous call can
+hold `I64`, `Bool`, `Unit`, sums, or finite products. A synchronous call can
 borrow an `I64` place through
 `&I64` or `&mut I64`; the callee uses `ref.load` and, for an exclusive loan,
 `ref.store`. The interpreter stores a value per place and resolves the call

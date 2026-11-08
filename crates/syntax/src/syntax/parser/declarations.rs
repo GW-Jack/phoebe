@@ -97,7 +97,7 @@ impl Parser {
                 tail: Some(self.expr(0)?),
             }
         } else {
-            self.block(true)?
+            self.block(return_type != TypeName::Unit)?
         };
         Ok(Function {
             name,

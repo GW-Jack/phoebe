@@ -38,6 +38,7 @@ pub struct DataId(pub usize);
 pub enum Type {
     I64,
     Bool,
+    Unit,
     Data(DataId),
     RefI64,
     RefMutI64,
@@ -55,6 +56,7 @@ pub enum Type {
 pub enum Value {
     I64(i64),
     Bool(bool),
+    Unit,
     Data(DataId, usize, Option<Box<Value>>),
     Product(DataId, Vec<Value>),
     Ref(usize),
@@ -119,6 +121,7 @@ pub struct LoanRegion {
 pub enum Operation {
     Const(i64),
     Bool(bool),
+    Unit,
     Move(ValueId),
     Copy(ValueId),
     Variant(DataId, usize, Option<ValueId>),

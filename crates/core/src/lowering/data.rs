@@ -16,6 +16,7 @@ fn register_application(
         match ty {
             TypeName::I64 => Ok(Type::I64),
             TypeName::Bool => Ok(Type::Bool),
+            TypeName::Unit => Ok(Type::Unit),
             TypeName::SenderI64
             | TypeName::ReceiverI64
             | TypeName::ReplyToI64
@@ -69,6 +70,7 @@ pub(super) fn lower_data(
             declaration.name.as_str(),
             "I64"
                 | "Bool"
+                | "Unit"
                 | "Result"
                 | "Option"
                 | "ResourceError"
@@ -101,6 +103,7 @@ pub(super) fn lower_data(
                 None => None,
                 Some(TypeName::I64) => Some(Type::I64),
                 Some(TypeName::Bool) => Some(Type::Bool),
+                Some(TypeName::Unit) => Some(Type::Unit),
                 Some(
                     TypeName::SenderI64
                     | TypeName::ReceiverI64
@@ -144,6 +147,7 @@ pub(super) fn lower_data(
                 match &field.ty {
                     TypeName::I64 => Type::I64,
                     TypeName::Bool => Type::Bool,
+                    TypeName::Unit => Type::Unit,
                     TypeName::SenderI64
                     | TypeName::ReceiverI64
                     | TypeName::ReplyToI64

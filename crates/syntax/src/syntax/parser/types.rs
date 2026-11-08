@@ -89,6 +89,8 @@ impl Parser {
             "I64" => Ok(TypeName::I64),
             "Bool" if !borrowed => Ok(TypeName::Bool),
             "Bool" => Err(Diagnostic::new(span, "Bool borrows are not implemented")),
+            "Unit" if !borrowed => Ok(TypeName::Unit),
+            "Unit" => Err(Diagnostic::new(span, "Unit borrows are not implemented")),
             _ if !borrowed => Ok(TypeName::Named(name)),
             _ => Err(Diagnostic::new(span, "only I64 borrows are implemented")),
         }

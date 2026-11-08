@@ -377,8 +377,7 @@ impl Task for NativePollTask {
                         .children
                         .last()
                         .map_or(self.frame.len(), |frame| frame.frame.len());
-                    if child.result_words == 0
-                        || child.result_words + 1 > child.frame.len()
+                    if child.result_words + 1 > child.frame.len()
                         || child.parent_result_word == 0
                         || child
                             .parent_result_word
@@ -441,7 +440,6 @@ pub unsafe extern "C" fn phoebe_call_poll(
                 .is_none_or(|bytes| bytes > i32::MAX as usize)
             || count > words
             || (count != 0 && initial.is_null())
-            || result_words == 0
             || result_words + 1 > words
         {
             return Err(());

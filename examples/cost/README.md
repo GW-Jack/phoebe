@@ -1,6 +1,6 @@
 # Cost acceptance examples
 
-`identity.phoebe` and `empty_scope.phoebe` compile today. Their executable
+`identity.phoebe`, `unit_identity.phoebe`, and `empty_scope.phoebe` compile today. Their executable
 acceptance tests check zero Phoebe cost events and no runtime calls in
 Cranelift IR. The other files use draft syntax and cannot compile yet. The snippets
 below describe the checked IR shape required by the non-pessimization contract.
@@ -15,6 +15,12 @@ entry(x: I64):
 ```
 
 No `cost.*` event, runtime call, retained task frame, or variable-size copy.
+
+## `unit_identity.phoebe`
+
+The `Unit` parameter and result have zero native ABI components. The direct
+Cranelift function has an empty signature and a bare return, with no scalar
+constant, stack slot, runtime call, or cost event.
 
 ## `borrow_length.phoebe`
 

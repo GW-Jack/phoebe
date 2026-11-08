@@ -215,7 +215,7 @@ impl Lowerer<'_> {
                     let signature = self.functions.get(child).cloned().ok_or_else(|| {
                         Diagnostic::new(*span, format!("unknown function {child}"))
                     })?;
-                    if signature.return_type != Type::I64
+                    if !matches!(signature.return_type, Type::I64 | Type::Unit)
                         || signature.params.len() != args.len()
                         || signature
                             .params
@@ -224,7 +224,7 @@ impl Lowerer<'_> {
                     {
                         return Err(Diagnostic::new(
                             *span,
-                            "spawn requires an I64-returning function with owned arguments",
+                            "spawn requires an I64- or Unit-returning function with owned arguments",
                         ));
                     }
                     let mut values = Vec::with_capacity(args.len());

@@ -1,0 +1,22 @@
+data Only { blank: Unit }
+
+fn close_sender(sender: Sender<I64>) -> Unit {
+  sender.close();
+}
+
+fn start() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  spawn close_sender(sender)?;
+  var item = Only(Unit);
+  val done = receiver.receive();
+  receiver.close();
+  item.blank;
+  Result<I64, ResourceError>.Ok(42)
+}
+
+fn main() -> I64 {
+  when (start()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

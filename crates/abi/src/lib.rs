@@ -76,11 +76,13 @@ impl Shapes {
     pub fn parts(&self, ty: Type) -> Result<&[Part], String> {
         const WORD: &[Part] = &[Part::Word];
         const BYTE: &[Part] = &[Part::Byte];
+        const EMPTY: &[Part] = &[];
         const ADDRESS: &[Part] = &[Part::Address];
         const REQUEST: &[Part] = &[Part::Word, Part::Word];
         match ty {
             Type::I64 => Ok(WORD),
             Type::Bool => Ok(BYTE),
+            Type::Unit => Ok(EMPTY),
             Type::Data(id) => self
                 .data
                 .get(id.0)
@@ -121,6 +123,13 @@ mod tests {
             shapes.shape(Type::I64).unwrap(),
             shapes.shape(Type::Bool).unwrap()
         );
+    }
+
+    #[test]
+    fn unit_has_no_transport_parts() {
+        let program = core::lower(&phoebe_syntax::parse("fn main() -> I64 = 0").unwrap()).unwrap();
+        let shapes = Shapes::new(&program).unwrap();
+        assert!(shapes.parts(Type::Unit).unwrap().is_empty());
     }
 
     #[test]

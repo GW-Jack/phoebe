@@ -265,6 +265,7 @@ impl CoreTask {
         Ok(match &instruction.operation {
             Operation::Const(x) => Some(Value::I64(*x)),
             Operation::Bool(x) => Some(Value::Bool(*x)),
+            Operation::Unit => Some(Value::Unit),
             Operation::Move(value) | Operation::Copy(value) => Some(get(*value)),
             Operation::Variant(id, tag, payload) => Some(Value::Data(
                 *id,
@@ -435,7 +436,10 @@ impl CoreTask {
                     if let Some(parent) = self.frames.last_mut() {
                         parent.values[frame.return_to.expect("call has result").0] = Some(result);
                     } else {
-                        return Ok(Poll::Ready(as_i64(result)));
+                        return Ok(Poll::Ready(match result {
+                            Value::Unit => 0,
+                            other => as_i64(other),
+                        }));
                     }
                 }
                 Terminator::Jump(target, args) => {
@@ -759,6 +763,7 @@ fn as_i64(value: Value) -> i64 {
     match value {
         Value::I64(x) => x,
         Value::Bool(_)
+        | Value::Unit
         | Value::Data(_, _, _)
         | Value::Product(_, _)
         | Value::Ref(_)
@@ -777,6 +782,7 @@ fn as_bool(value: Value) -> bool {
     match value {
         Value::Bool(x) => x,
         Value::I64(_)
+        | Value::Unit
         | Value::Data(_, _, _)
         | Value::Product(_, _)
         | Value::Ref(_)
@@ -843,6 +849,7 @@ impl fmt::Display for Program {
                     match &instruction.operation {
                         Operation::Const(x) => write!(f, "const {x}")?,
                         Operation::Bool(x) => write!(f, "bool {x}")?,
+                        Operation::Unit => write!(f, "unit")?,
                         Operation::Move(value) => write!(f, "move v{}", value.0)?,
                         Operation::Copy(value) => write!(f, "copy.value v{}", value.0)?,
                         Operation::Variant(id, tag, payload) => write!(

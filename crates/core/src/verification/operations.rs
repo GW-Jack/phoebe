@@ -12,6 +12,7 @@ pub(super) fn op_type(
         Operation::ScopeEnter(_) => Ok(None),
         Operation::Const(_) => Ok(Some(Type::I64)),
         Operation::Bool(_) => Ok(Some(Type::Bool)),
+        Operation::Unit => Ok(Some(Type::Unit)),
         Operation::Move(value) => {
             if !matches!(ty(*value), Type::Data(_)) {
                 return Err("move requires a nominal value".into());
@@ -211,6 +212,7 @@ pub(super) fn op_type(
         Operation::Load(place) => match function.place_types.get(place.0) {
             Some(Type::I64) => Ok(Some(Type::I64)),
             Some(Type::Bool) => Ok(Some(Type::Bool)),
+            Some(Type::Unit) => Ok(Some(Type::Unit)),
             Some(_) => Err("nominal place requires take or field read".into()),
             None => Err("invalid place ID".into()),
         },
@@ -230,7 +232,9 @@ pub(super) fn op_type(
 /// SSA values read by an operation, used by frame liveness and diagnostics.
 pub fn operands(operation: &Operation) -> Vec<ValueId> {
     match operation {
-        Operation::Const(_) | Operation::Bool(_) | Operation::ScopeEnter(_) => vec![],
+        Operation::Const(_) | Operation::Bool(_) | Operation::Unit | Operation::ScopeEnter(_) => {
+            vec![]
+        }
         Operation::Move(value) | Operation::Copy(value) => vec![*value],
         Operation::Variant(_, _, payload) => payload.iter().copied().collect(),
         Operation::Product(_, fields) => fields.clone(),

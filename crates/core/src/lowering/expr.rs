@@ -369,6 +369,12 @@ impl Lowerer<'_> {
                 return Ok((payload, ok_ty));
             }
             ExprKind::Name(name) => {
+                if name == "Unit" && !locals.contains_key(name) {
+                    return Ok((
+                        self.emit(Operation::Unit, Type::Unit, expr.span),
+                        Type::Unit,
+                    ));
+                }
                 let binding = locals
                     .get(name)
                     .copied()

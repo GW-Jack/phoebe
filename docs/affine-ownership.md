@@ -4,7 +4,7 @@ Status: implemented for nominal values in the current closed-value subset.
 This is a step toward capability ownership, not a memory-safety proof for
 tasks, channels, or references.
 
-`I64` and `Bool` are copyable. Every nominal `Data(id)` value is currently
+`I64`, `Bool`, and `Unit` are copyable. Every nominal `Data(id)` value is currently
 affine, even if its fields are small. The source can read primitive product
 fields without consuming the owner. An owning use transfers the whole value.
 A nested nominal field projection consumes the product owner and returns the

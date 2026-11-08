@@ -13,6 +13,9 @@ types are built in. There is no class inheritance, implicit numeric
 conversion, or general subtyping. `Option<T>` represents absence;
 `Result<T, E>` represents expected failure. Neither is implicitly converted
 to the other.
+`Unit` is the single value for a computation without a useful result. Its
+native ABI shape is empty; a `Unit` function may omit a final expression.
+Scoped task bodies may return `Unit` instead of a dummy integer.
 Concrete `Option<T>` applications are executable for finite primitive and
 nominal payloads. They use `None` and `Some(T)` and require exhaustive `when`;
 generic function definitions remain a separate compiler milestone.

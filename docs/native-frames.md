@@ -89,7 +89,12 @@ generated payload. Each entry parameter has a frame address before first
 execution; a parameter live across a suspension shares its retained value
 slot. Entry parameters that die before the first retry still need an initial
 address, but do not enter the spill set. A root task returns `I64`, so its
-result is word 1.
+result is word 1. A spawned task may return `Unit`, which has zero result
+components. Its frame still reserves word 1 for scheduler completion and
+receive scratch space, but generated code writes no dummy result. A same-task
+call can copy zero result words through the call mailbox. A finite product
+containing only zero-width fields can use the same path; its nominal ownership
+is still checked in Core.
 The compiler's physical layout uses the existing ABI shape widths for each
 live value and place, and rejects a layout beyond fixed address offsets.
 For the source exchange, `exchange` reserves two result words for

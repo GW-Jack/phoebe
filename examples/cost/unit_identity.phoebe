@@ -1,0 +1,2 @@
+fn identity(value: Unit) -> Unit = value
+fn main() -> I64 { identity(Unit); 42 }

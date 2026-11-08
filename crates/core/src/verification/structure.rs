@@ -109,7 +109,7 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
             return Err("duplicate data variant".into());
         }
         if definition.payloads.iter().flatten().any(|ty| match ty {
-            Type::I64 | Type::Bool => false,
+            Type::I64 | Type::Bool | Type::Unit => false,
             Type::Data(id) => id.0 >= index,
             Type::ResourceError => false,
             Type::RefI64
@@ -126,7 +126,7 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
         for (name, ty) in &definition.fields {
             if !fields.insert(name)
                 || match ty {
-                    Type::I64 | Type::Bool => false,
+                    Type::I64 | Type::Bool | Type::Unit => false,
                     Type::Data(id) => id.0 >= index,
                     Type::ResourceError => false,
                     Type::RefI64
@@ -157,7 +157,10 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
                 return Err(format!("{}: invalid data type ID", function.name));
             }
         }
-        if !matches!(function.return_type, Type::I64 | Type::Bool | Type::Data(_)) {
+        if !matches!(
+            function.return_type,
+            Type::I64 | Type::Bool | Type::Unit | Type::Data(_)
+        ) {
             return Err(format!("{}: invalid return type", function.name));
         }
         if function.blocks.is_empty() {
@@ -176,7 +179,7 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
         if function
             .place_types
             .iter()
-            .any(|ty| !matches!(ty, Type::I64 | Type::Bool | Type::Data(_)))
+            .any(|ty| !matches!(ty, Type::I64 | Type::Bool | Type::Unit | Type::Data(_)))
         {
             return Err(format!(
                 "{}: references cannot be stored in places",
@@ -207,6 +210,7 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
                                 expected,
                                 Type::I64
                                     | Type::Bool
+                                    | Type::Unit
                                     | Type::Data(_)
                                     | Type::SenderI64
                                     | Type::ReceiverI64
@@ -784,7 +788,7 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
                         .ok_or_else(|| format!("{}: spawn target has no entry", function.name))?
                         .params
                         .as_slice();
-                    if callee.return_type != Type::I64
+                    if !matches!(callee.return_type, Type::I64 | Type::Unit)
                         || callee
                             .param_modes
                             .iter()

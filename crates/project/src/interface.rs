@@ -42,6 +42,7 @@ impl ModuleInterface {
             match value {
                 TypeName::I64 => bytes.push(0),
                 TypeName::Bool => bytes.push(1),
+                TypeName::Unit => bytes.push(12),
                 TypeName::SenderI64 => bytes.push(2),
                 TypeName::ReceiverI64 => bytes.push(3),
                 TypeName::ReplyToI64 => bytes.push(4),

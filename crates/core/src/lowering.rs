@@ -290,6 +290,7 @@ fn lower_internal(
         match name {
             TypeName::I64 => Ok(Type::I64),
             TypeName::Bool => Ok(Type::Bool),
+            TypeName::Unit => Ok(Type::Unit),
             TypeName::SenderI64 => Ok(Type::SenderI64),
             TypeName::ReceiverI64 => Ok(Type::ReceiverI64),
             TypeName::ReplyToI64 => Ok(Type::ReplyToI64),
@@ -447,13 +448,27 @@ fn lower_internal(
                 ));
             }
         }
-        let (value, ty) = lowerer
-            .body(&function.body, &mut locals)?
-            .expect("parser requires a function tail");
+        let (value, ty) = match lowerer.body(&function.body, &mut locals)? {
+            Some(value) => value,
+            None if function.return_type == TypeName::Unit => (
+                lowerer.emit(Operation::Unit, Type::Unit, function.name_span),
+                Type::Unit,
+            ),
+            None => {
+                return Err(Diagnostic::new(
+                    function.name_span,
+                    "expected a final expression",
+                ));
+            }
+        };
         lowerer.require(
             ty,
             resolve(&function.return_type, function.name_span)?,
-            function.body.tail.as_ref().expect("tail").span,
+            function
+                .body
+                .tail
+                .as_ref()
+                .map_or(function.name_span, |tail| tail.span),
         )?;
         lowerer.terminate(Terminator::Return(value));
         let (function, cleanup) = lowerer.finish(function.name.clone())?;

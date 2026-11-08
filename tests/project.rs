@@ -78,6 +78,40 @@ fn project_build_session_reuses_bodies_and_objects_after_body_edits() {
 }
 
 #[test]
+fn imported_unit_function_keeps_zero_width_call_across_modules() {
+    let path = temp_project();
+    std::fs::write(path.join("math.phoebe"), "pub fn tick() -> Unit { }\n").unwrap();
+    std::fs::write(
+        path.join("app.phoebe"),
+        "import math\nfn main() -> I64 { math.tick(); 42 }\n",
+    )
+    .unwrap();
+    let loaded = project::load(&path).unwrap();
+    let program = core::lower(&loaded.ast).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let executable = path.join("program");
+    native::build_executable(&program, &executable).unwrap();
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"42\n"
+    );
+    let interface = loaded
+        .interfaces
+        .iter()
+        .find(|interface| interface.name == "math")
+        .unwrap();
+    assert_eq!(
+        interface.functions[0].return_type,
+        syntax::syntax::TypeName::Unit
+    );
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
 fn native_build_session_skips_only_intact_matching_link_outputs() {
     let source = "fn main() -> I64 = 42";
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

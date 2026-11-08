@@ -443,6 +443,7 @@ pub(super) fn compile_functions<M: Module>(
                         Operation::Bool(value) => {
                             Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
                         }
+                        Operation::Unit => Some(Vec::new()),
                         Operation::Move(value) | Operation::Copy(value) => Some(get(*value)),
                         Operation::Variant(id, tag, payload) => {
                             let mut components =
@@ -487,13 +488,21 @@ pub(super) fn compile_functions<M: Module>(
                                 .iter()
                                 .map(|(_, ty)| shapes.types(*ty).len())
                                 .sum::<usize>();
-                            let ty = shapes.types(fields[*index].1)[0];
-                            Some(vec![builder.ins().stack_load(
-                                pointer_type,
-                                ty,
-                                places[place.0][offset],
-                                0,
-                            )])
+                            Some(
+                                shapes
+                                    .types(fields[*index].1)
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(part, ty)| {
+                                        builder.ins().stack_load(
+                                            pointer_type,
+                                            ty,
+                                            places[place.0][offset + part],
+                                            0,
+                                        )
+                                    })
+                                    .collect(),
+                            )
                         }
                         Operation::Neg(a) => Some(vec![builder.ins().ineg(one(*a))]),
                         Operation::Not(a) => {
@@ -1183,12 +1192,14 @@ pub(super) fn compile_functions<M: Module>(
             }
             let target = module.declare_func_in_func(ids[child].0, builder.func);
             let call = builder.ins().call(target, &args);
-            let result = builder.inst_results(call)[0];
-            let offset = i32::try_from(layout.result.start * 8)
-                .map_err(|_| "spawn result offset overflow")?;
-            builder
-                .ins()
-                .store(MemFlagsData::new(), result, frame, offset);
+            if function.return_type != Type::Unit {
+                let result = builder.inst_results(call)[0];
+                let offset = i32::try_from(layout.result.start * 8)
+                    .map_err(|_| "spawn result offset overflow")?;
+                builder
+                    .ins()
+                    .store(MemFlagsData::new(), result, frame, offset);
+            }
             let ready = builder.ins().iconst(types::I64, 0);
             builder.ins().return_(&[ready]);
             builder.seal_all_blocks();

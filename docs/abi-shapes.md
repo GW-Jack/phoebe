@@ -17,6 +17,7 @@ and block boundaries. The current shapes are:
 | --- | --- |
 | `I64` | one I64 |
 | `Bool` | one I8 |
+| `Unit` | no components |
 | Nullary sum | one I64 variant tag |
 | Sum with payload variants | I64 tag and enough I64 words for the largest flattened payload |
 | Product of finite fields | concatenated field shapes, in declaration order |
@@ -41,7 +42,8 @@ return to the scheduler before it can use the shims. The retained Cranelift
 path emits these calls for the supported scalar channel subset.
 The retained-frame plan now assigns one `I64` word per flattened component
 using these same shapes. A suspendable function's frame reserves word 0 for
-its program counter, enough words for its return shape, then only its live
+its program counter, at least one word for its return and runtime receive
+scratch area, then only its live
 value and place components. `docs/native-frames.md` records the poll ABI and
 the remaining code-generation work.
 

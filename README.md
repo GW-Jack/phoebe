@@ -27,11 +27,14 @@ one-slot queue, parking and resuming both sides.
 Source `scope { ... }` joins tasks started inside the block, including their
 descendants. Early `?` exits join before returning. A scope that cannot spawn
 is erased from Core; `examples/scoped_spawn.phoebe` shows the source form.
+`Unit` is a zero-component result for functions and scoped tasks that return
+no useful value; `examples/unit_tasks.phoebe` exercises a suspended `Unit`
+call and task across all three execution paths.
 
 ## Current milestone
 
 `docs/version-0.0.1.md` states the release gates and the exact subset that
-currently runs. The Rust workspace parses functions over I64, Bool, nominal sums
+currently runs. The Rust workspace parses functions over I64, Bool, Unit, nominal sums
 and products with primitive or earlier nominal fields.
 It supports arithmetic, conditions, exhaustive `when`, mutable locals, loops,
 concrete `Option<T>` values, call-site scalar borrows, and `?` on concrete
