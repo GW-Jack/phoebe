@@ -155,6 +155,15 @@ impl Program {
         limits: ScopeLimits,
     ) -> Result<i64, String> {
         verify(self)?;
+        self.interpret_verified(name, args, limits)
+    }
+
+    fn interpret_verified(
+        &self,
+        name: &str,
+        args: &[i64],
+        limits: ScopeLimits,
+    ) -> Result<i64, String> {
         let (id, function) = self
             .function(name)
             .ok_or_else(|| format!("unknown function {name}"))?;
@@ -188,6 +197,21 @@ impl Program {
                 Poll::Pending => unreachable!("pure Core cannot suspend"),
             }
         }
+    }
+}
+
+impl CheckedProgram {
+    pub fn interpret(&self, name: &str, args: &[i64]) -> Result<i64, String> {
+        self.interpret_with_limits(name, args, ScopeLimits::default())
+    }
+
+    pub fn interpret_with_limits(
+        &self,
+        name: &str,
+        args: &[i64],
+        limits: ScopeLimits,
+    ) -> Result<i64, String> {
+        self.0.interpret_verified(name, args, limits)
     }
 }
 

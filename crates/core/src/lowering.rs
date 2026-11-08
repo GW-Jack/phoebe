@@ -251,6 +251,12 @@ pub fn lower(ast: &syntax::Program) -> Result<Program, Diagnostic> {
     lower_internal(ast, None).map(|(program, _)| program)
 }
 
+/// Lower and verify once, then retain the verifier guarantee for downstream
+/// compiler phases. The ordinary `lower` API remains useful for IR tooling.
+pub fn lower_checked(ast: &syntax::Program) -> Result<CheckedProgram, Diagnostic> {
+    lower(ast).map(CheckedProgram)
+}
+
 /// Reuse verified function bodies when their ASTs match under a source offset.
 /// The caller supplies reuse hints and span offsets. Core checks those hints,
 /// compatible nominal data layouts, and existing function signatures before
@@ -608,9 +614,9 @@ fn lower_internal(
             };
         }
     }
-    super::scope_verification::verify(&program)
-        .map_err(|message| Diagnostic::new(Span { start: 0, end: 0 }, message))?;
-    verify_capability_edges(&program).map_err(|message| {
+    // Cleanup insertion changes the final CFG. A CheckedProgram must attest
+    // to the complete graph, not only to the earlier pre-cleanup checks.
+    verify(&program).map_err(|message| {
         let span = ast
             .functions
             .iter()

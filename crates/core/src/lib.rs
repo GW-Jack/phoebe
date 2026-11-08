@@ -318,6 +318,45 @@ pub struct Program {
     pub functions: Vec<Function>,
 }
 
+/// An immutable program that has passed every Core verifier. Its fields are
+/// private so callers cannot invalidate the proof before code generation.
+pub struct CheckedProgram(Program);
+
+impl CheckedProgram {
+    pub fn check(program: Program) -> Result<Self, String> {
+        verify(&program)?;
+        Ok(Self(program))
+    }
+
+    pub fn as_program(&self) -> &Program {
+        &self.0
+    }
+
+    pub fn into_program(self) -> Program {
+        self.0
+    }
+
+    pub fn verified(&self) -> VerifiedProgram<'_> {
+        VerifiedProgram(&self.0)
+    }
+}
+
+/// A non-mutable borrow carrying the same verifier guarantee. A raw Program
+/// can enter this boundary only by running the verifier.
+#[derive(Clone, Copy)]
+pub struct VerifiedProgram<'a>(&'a Program);
+
+impl<'a> VerifiedProgram<'a> {
+    pub fn check(program: &'a Program) -> Result<Self, String> {
+        verify(program)?;
+        Ok(Self(program))
+    }
+
+    pub fn as_program(self) -> &'a Program {
+        self.0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CostEvent {
     pub function: String,
@@ -342,9 +381,6 @@ mod lowering;
 mod scope_verification;
 mod verification;
 
-pub use lowering::{lower, lower_reusing};
-use verification::{
-    capability_graph, recursive_call_span, verify_capability_edges, verify_ownership,
-    verify_structure,
-};
+pub use lowering::{lower, lower_checked, lower_reusing};
+use verification::{capability_graph, recursive_call_span, verify_ownership, verify_structure};
 pub use verification::{operands, verify};

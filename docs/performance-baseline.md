@@ -5,8 +5,11 @@ The commands below used an optimized Rust build on macOS ARM64. Each line is
 the median of 30 rounds. The source file was read before timing; each round
 reparsed, lowered and verified, compiled a fresh Cranelift JIT module, then
 invoked its `main` 1,000 times through `JitExecutable::run`.
-`compile_jit` currently verifies the Core IR again, so the JIT column includes
-that repeated verification and module setup as well as code generation.
+At that time `compile_jit` verified the Core IR again, so the JIT column
+includes that repeated verification and module setup as well as code generation.
+This dated table used the raw-`Program` benchmark. The benchmark now follows
+the CLI's checked-program path, so its JIT column excludes repeated Core
+verification. The numbers below remain the historical measurement.
 
 ```sh
 cargo run --release --example bench -- examples/hello.phoebe 30
@@ -25,6 +28,26 @@ and incremental rebuilds are excluded. The two examples do not establish
 scaling, OCaml-like compile times, or native runtime speed for concurrent
 programs. Re-run the command on representative programs and target machines
 as those features land. No benchmark result is used as a correctness check.
+
+## Checked-program handoff
+
+On 2026-11-08, the same macOS ARM64 host compared the earlier `b18ff56`
+benchmark with the checked-program version. Each binary ran three times per
+fixture, with 100 internal rounds per run and alternating binary order. The
+table gives the range of run medians, not a cross-host speed claim.
+
+| Program | Path | Lower + verify | JIT compile |
+| --- | --- | ---: | ---: |
+| `hello.phoebe` | Raw, before change | 0.002–0.003 ms | 0.025–0.039 ms |
+| `hello.phoebe` | Checked handoff | 0.003 ms | 0.024–0.027 ms |
+| `nested_result.phoebe` | Raw, before change | 0.023 ms | 0.166–0.167 ms |
+| `nested_result.phoebe` | Checked handoff | 0.036–0.037 ms | 0.151–0.158 ms |
+
+The checked path shifts verification from the native entry into final Core
+lowering. On these small programs, the combined lower and JIT time is roughly
+unchanged. The architectural gain is that one checked program can feed several
+native children without repeating full-program verification per child; that
+case needs a separate scaling measurement.
 
 ## Warm project session
 

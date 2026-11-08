@@ -280,14 +280,15 @@ fn poll_object_key(
 }
 
 fn emit_cached_poll_object(
-    program: &Program,
+    verified: core::VerifiedProgram<'_>,
     name: &str,
     symbol: &str,
     data_ids: &[core::DataId],
     cache: Option<&mut NativeBuildSession>,
 ) -> Result<(Vec<u8>, usize, bool), String> {
+    let program = verified.as_program();
     let Some(session) = cache else {
-        let (object, words) = poll::emit_poll_object(program, name, symbol)?;
+        let (object, words) = poll::emit_poll_object(verified, name, symbol)?;
         return Ok((object, words, false));
     };
     let (root, _) = program.function(name).ok_or("unknown poll entry")?;
@@ -299,7 +300,7 @@ fn emit_cached_poll_object(
     {
         return Ok((object.clone(), *words, true));
     }
-    let (object, words) = poll::emit_poll_object(program, name, symbol)?;
+    let (object, words) = poll::emit_poll_object(verified, name, symbol)?;
     session
         .poll_objects
         .insert(symbol.into(), (key, object.clone(), words));
@@ -327,7 +328,8 @@ impl NativeBuildSession {
         output: &Path,
     ) -> Result<NativeBuildReport, String> {
         let mut next = self.clone();
-        let (emitted, reused) = emit_object_with_poll_layout(program, true, Some(&mut next))?;
+        let verified = core::VerifiedProgram::check(program)?;
+        let (emitted, reused) = emit_object_with_poll_layout(verified, true, Some(&mut next))?;
         let input_digest = link_input_digest(program, &emitted);
         if let (Some(input_digest), Some(previous)) = (input_digest, &self.linked_output)
             && previous.path == output
@@ -365,11 +367,11 @@ impl NativeBuildSession {
 }
 
 pub(super) fn emit_object_with_poll_layout(
-    program: &Program,
+    verified: core::VerifiedProgram<'_>,
     split_direct: bool,
     mut cache: Option<&mut NativeBuildSession>,
 ) -> Result<(ObjectEmission, usize), String> {
-    core::verify(program)?;
+    let program = verified.as_program();
     let context_functions = program.runtime_context_functions();
     let (main, entry) = program
         .function("main")
@@ -403,7 +405,7 @@ pub(super) fn emit_object_with_poll_layout(
                 .retain(|symbol, _| symbol == "phoebe_main_poll");
         }
         let (object, words, reused) = emit_cached_poll_object(
-            program,
+            verified,
             "main",
             "phoebe_main_poll",
             &data_ids,
@@ -434,7 +436,7 @@ pub(super) fn emit_object_with_poll_layout(
     for child in children {
         let name = &program.functions[child.0].name;
         let (object, _, reused) = emit_cached_poll_object(
-            program,
+            verified,
             name,
             &spawn_poll_symbol(name),
             &data_ids,

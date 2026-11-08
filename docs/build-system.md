@@ -76,8 +76,9 @@ crates concurrently and cache
 their outputs. The configuration currently uses Buck2's bundled prelude and
 system demo toolchains. No remote cache is configured. Build inputs and
 toolchain versions must be pinned before treating cache hits across machines
-as reproducibility evidence. Buck2 ignores Cargo's `target/` tree and Git
-metadata so Cargo checks and commits do not churn its file watcher.
+as reproducibility evidence. Buck2's project ignore rules exclude Cargo's
+`target/` tree and Git metadata from build inputs. Its event log can still
+report raw filesystem notifications for those paths.
 `rust-toolchain.toml` selects Rust 1.95.0. The Linux CI workflow downloads
 Buck2 2026-09-15 and Maude 3.5.1 from fixed release assets and verifies their
 SHA-256 digests. It runs workspace Cargo checks, all Buck2 tests, and the

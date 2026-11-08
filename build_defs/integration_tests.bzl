@@ -1,5 +1,14 @@
 def integration_tests(rust_test):
     rust_test(
+        name = "checked_program_tests",
+        crate_root = "tests/checked_program.rs",
+        srcs = ["tests/checked_program.rs", "examples/hello.phoebe", "examples/channel_exchange.phoebe"],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
         name = "build_session_cli_tests",
         crate_root = "tests/build_session_cli.rs",
         srcs = [

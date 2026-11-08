@@ -34,10 +34,10 @@ fn main() -> Result<(), String> {
         let ast = syntax::parse(&source).map_err(|error| error.render(&source))?;
         parse_times.push(started.elapsed());
         let started = Instant::now();
-        let program = core::lower(&ast).map_err(|error| error.render(&source))?;
+        let program = core::lower_checked(&ast).map_err(|error| error.render(&source))?;
         lower_times.push(started.elapsed());
         let started = Instant::now();
-        let executable = native::compile_jit(&program, "main")?;
+        let executable = native::compile_jit_checked(&program, "main")?;
         jit_times.push(started.elapsed());
         let started = Instant::now();
         let mut value = 0;

@@ -288,16 +288,32 @@ pub fn build_executable_cached(
     output: &Path,
     directory: &Path,
 ) -> Result<CachedBuildReport, String> {
+    build_executable_cached_verified(core::VerifiedProgram::check(program)?, output, directory)
+}
+
+pub fn build_executable_cached_checked(
+    program: &core::CheckedProgram,
+    output: &Path,
+    directory: &Path,
+) -> Result<CachedBuildReport, String> {
+    build_executable_cached_verified(program.verified(), output, directory)
+}
+
+fn build_executable_cached_verified(
+    verified: core::VerifiedProgram<'_>,
+    output: &Path,
+    directory: &Path,
+) -> Result<CachedBuildReport, String> {
+    let program = verified.as_program();
     let key = program_key(program)?;
     if let Some(emitted) = read_cache(directory, &key) {
-        core::verify(program)?;
         link_executable(program, &emitted, output)?;
         return Ok(CachedBuildReport {
             reused: true,
             cache_write_error: None,
         });
     }
-    let (emitted, _) = emit_object_with_poll_layout(program, false, None)?;
+    let (emitted, _) = emit_object_with_poll_layout(verified, false, None)?;
     link_executable(program, &emitted, output)?;
     Ok(CachedBuildReport {
         reused: false,

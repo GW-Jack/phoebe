@@ -111,6 +111,12 @@ explicit place or forwarded-reference roots and a return/unwind end. Core
 checks the region against the call; frame analysis checks that place roots
 survive a suspending call. General reference lifetimes and inferred regions
 remain unimplemented.
+The CLI now carries an immutable `CheckedProgram` from final Core verification
+through interpreter, JIT, object emission, and the optional object cache.
+Native child emission accepts a borrowed verification token rather than
+rechecking the whole program for each poll entry. Public raw-`Program` APIs
+still verify before use. No compile-time speedup has been measured for this
+change.
 `docs/result-try.md` states the current `?` rule and its remaining generic
 function and cleanup work. `examples/result_in_data.phoebe` exercises nested
 `Result` fields and variant payloads through all three execution paths.

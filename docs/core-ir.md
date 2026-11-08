@@ -75,9 +75,13 @@ one dominating initializer per place, and the restricted borrow rules in
 call instruction, place or forwarded-reference roots, and the call
 return/unwind end. The verifier requires exactly one matching record for each
 borrowed call. Frame analysis checks that a place root remains in the parent
-frame when the callee can suspend. Native lowering runs the verifier before
-code generation. This is an engineering check, not a proof that lowering is
-correct. Differential tests compare interpreter and JIT results on supported
+frame when the callee can suspend. Source lowering verifies the final graph
+after cleanup insertion and returns an immutable `CheckedProgram` to the CLI.
+Its borrowed `VerifiedProgram` token carries that guarantee through direct,
+retained, object, and cache paths without rerunning the verifier for each
+native child. Public APIs accepting a mutable, hand-built `Program` verify it
+before code generation. The token is an engineering boundary, not a proof
+that lowering is correct. Differential tests compare interpreter and JIT results on supported
 programs. The Maude models cover different bounded abstract machines; they
 do not model this executable IR.
 

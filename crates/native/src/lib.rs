@@ -32,7 +32,7 @@ mod reachability;
 mod runtime_imports;
 
 pub use build_session::{NativeBuildReport, NativeBuildSession};
-pub use cache::{CachedBuildReport, build_executable_cached};
+pub use cache::{CachedBuildReport, build_executable_cached, build_executable_cached_checked};
 pub use codegen::frame_word_layouts;
 pub use poll::{PollExecutable, PollLeafExecutable, compile_poll_jit, compile_poll_leaf_jit};
 
@@ -74,7 +74,21 @@ pub struct JitExecutable {
 }
 
 pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, String> {
-    core::verify(program)?;
+    compile_jit_verified(core::VerifiedProgram::check(program)?, name)
+}
+
+pub fn compile_jit_checked(
+    program: &core::CheckedProgram,
+    name: &str,
+) -> Result<JitExecutable, String> {
+    compile_jit_verified(program.verified(), name)
+}
+
+fn compile_jit_verified(
+    verified: core::VerifiedProgram<'_>,
+    name: &str,
+) -> Result<JitExecutable, String> {
+    let program = verified.as_program();
     let (entry_id, entry) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
@@ -105,7 +119,8 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
     let mut jit = JITBuilder::with_isa(isa, default_libcall_names());
     let mut poll_children = Vec::new();
     for child in spawned_poll_children(program)? {
-        let executable = compile_poll_jit(program, &program.functions[child.0].name)?;
+        let executable =
+            poll::compile_poll_jit_verified(verified, &program.functions[child.0].name)?;
         jit.symbol(
             spawn_poll_symbol(&program.functions[child.0].name),
             unsafe { executable.entry() } as *const u8,
@@ -286,11 +301,38 @@ pub fn run_with_limits(
     args: &[i64],
     limits: ScopeLimits,
 ) -> Result<i64, String> {
+    run_verified(core::VerifiedProgram::check(program)?, name, args, limits)
+}
+
+pub fn run_checked(
+    program: &core::CheckedProgram,
+    name: &str,
+    args: &[i64],
+) -> Result<i64, String> {
+    run_checked_with_limits(program, name, args, ScopeLimits::default())
+}
+
+pub fn run_checked_with_limits(
+    program: &core::CheckedProgram,
+    name: &str,
+    args: &[i64],
+    limits: ScopeLimits,
+) -> Result<i64, String> {
+    run_verified(program.verified(), name, args, limits)
+}
+
+fn run_verified(
+    verified: core::VerifiedProgram<'_>,
+    name: &str,
+    args: &[i64],
+    limits: ScopeLimits,
+) -> Result<i64, String> {
+    let program = verified.as_program();
     let (id, function) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
     if !frame_layout::suspendable_functions(program)?[id.0] {
-        return compile_jit(program, name)?.run_with_limits(args, limits);
+        return compile_jit_verified(verified, name)?.run_with_limits(args, limits);
     }
     if function.return_type != Type::I64
         || function
@@ -311,7 +353,7 @@ pub fn run_with_limits(
             args.len()
         ));
     }
-    let executable = compile_poll_jit(program, name)?;
+    let executable = poll::compile_poll_jit_verified(verified, name)?;
     // The executable owns the code until the scheduler and all child tasks exit.
     let mut root = unsafe {
         runtime::NativePollTask::new(executable.entry(), executable.layout().total_words)
@@ -325,7 +367,8 @@ pub fn run_with_limits(
 }
 
 pub fn emit_object(program: &Program) -> Result<Vec<u8>, String> {
-    let (emitted, _) = emit_object_with_poll_layout(program, false, None)?;
+    let verified = core::VerifiedProgram::check(program)?;
+    let (emitted, _) = emit_object_with_poll_layout(verified, false, None)?;
     if !emitted.children.is_empty() {
         return Err(
             "mixed direct/poll program emits multiple objects; use build_executable".into(),
@@ -342,11 +385,21 @@ struct ObjectEmission {
 
 /// Print the pre-legalization Cranelift IR that Phoebe submits for each function.
 pub fn clif(program: &Program) -> Result<String, String> {
-    core::verify(program)?;
+    clif_verified(core::VerifiedProgram::check(program)?)
+}
+
+pub fn clif_checked(program: &core::CheckedProgram) -> Result<String, String> {
+    clif_verified(program.verified())
+}
+
+fn clif_verified(verified: core::VerifiedProgram<'_>) -> Result<String, String> {
+    let program = verified.as_program();
     if let Some((main, _)) = program.function("main")
         && frame_layout::suspendable_functions(program)?[main.0]
     {
-        return Ok(compile_poll_jit(program, "main")?.clif().to_owned());
+        return Ok(poll::compile_poll_jit_verified(verified, "main")?
+            .clif()
+            .to_owned());
     }
     let mut flags = settings::builder();
     flags
@@ -369,13 +422,30 @@ pub fn clif(program: &Program) -> Result<String, String> {
         None,
     )?;
     for child in spawned_poll_children(program)? {
-        output.push_str(compile_poll_jit(program, &program.functions[child.0].name)?.clif());
+        output.push_str(
+            poll::compile_poll_jit_verified(verified, &program.functions[child.0].name)?.clif(),
+        );
     }
     Ok(output)
 }
 
 pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> {
-    let (emitted, _) = emit_object_with_poll_layout(program, false, None)?;
+    build_executable_verified(core::VerifiedProgram::check(program)?, output)
+}
+
+pub fn build_executable_checked(
+    program: &core::CheckedProgram,
+    output: &Path,
+) -> Result<(), String> {
+    build_executable_verified(program.verified(), output)
+}
+
+fn build_executable_verified(
+    verified: core::VerifiedProgram<'_>,
+    output: &Path,
+) -> Result<(), String> {
+    let program = verified.as_program();
+    let (emitted, _) = emit_object_with_poll_layout(verified, false, None)?;
     link_executable(program, &emitted, output)
 }
 

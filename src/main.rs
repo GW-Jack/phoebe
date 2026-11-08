@@ -56,43 +56,43 @@ fn command() -> Result<(), String> {
     }
     let program = if Path::new(&path).is_dir() || path.ends_with(".toml") {
         let loaded = project::load(Path::new(&path))?;
-        core::lower(&loaded.ast).map_err(|error| loaded.render(&error))?
+        core::lower_checked(&loaded.ast).map_err(|error| loaded.render(&error))?
     } else {
         let source = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
         let ast = syntax::parse(&source).map_err(|e| format!("{path}:{}", e.render(&source)))?;
-        core::lower(&ast).map_err(|e| format!("{path}:{}", e.render(&source)))?
+        core::lower_checked(&ast).map_err(|e| format!("{path}:{}", e.render(&source)))?
     };
     match action.as_str() {
         "check" => {
             if args.next().is_some() {
                 return Err(usage().into());
             }
-            println!("ok: {} function(s)", program.functions.len());
+            println!("ok: {} function(s)", program.as_program().functions.len());
         }
         "ir" => {
             if args.next().is_some() {
                 return Err(usage().into());
             }
-            print!("{program}");
+            print!("{}", program.as_program());
         }
         "frames" => {
             if args.next().is_some() {
                 return Err(usage().into());
             }
-            print!("{}", frame_layout::format(&program)?);
+            print!("{}", frame_layout::format(program.as_program())?);
         }
         "clif" => {
             if args.next().is_some() {
                 return Err(usage().into());
             }
-            print!("{}", native::clif(&program)?);
+            print!("{}", native::clif_checked(&program)?);
         }
         "cost" => {
             if args.next().is_some() {
                 return Err(usage().into());
             }
             println!("function\tblock\tinstruction\tstart\tend\tkind\ttype\treason");
-            for event in program.cost_events() {
+            for event in program.as_program().cost_events() {
                 println!(
                     "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     event.function,
@@ -127,7 +127,7 @@ fn command() -> Result<(), String> {
             let result = if interpreted {
                 program.interpret(name, &values)?
             } else {
-                native::run(&program, name, &values)?
+                native::run_checked(&program, name, &values)?
             };
             println!("{result}");
         }
@@ -145,14 +145,17 @@ fn command() -> Result<(), String> {
             let output = output.ok_or_else(|| usage().to_owned())?;
             if let Some(directory) = cache_dir {
                 let directory = Path::new(&directory);
-                let report =
-                    native::build_executable_cached(&program, Path::new(&output), directory)?;
+                let report = native::build_executable_cached_checked(
+                    &program,
+                    Path::new(&output),
+                    directory,
+                )?;
                 if let Some(error) = report.cache_write_error {
                     eprintln!("native object cache not saved: {error}");
                 }
                 println!("built {output} (object cache hit: {})", report.reused);
             } else {
-                native::build_executable(&program, Path::new(&output))?;
+                native::build_executable_checked(&program, Path::new(&output))?;
                 println!("built {output}");
             }
         }

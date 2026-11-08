@@ -40,6 +40,13 @@ pub fn compile_poll_leaf_jit(program: &Program, name: &str) -> Result<PollLeafEx
 /// Compile the reachable retained-call graph from an I64 task entry.
 /// Unsupported operations are rejected before any JIT definition is published.
 pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable, String> {
+    compile_poll_jit_verified(core::VerifiedProgram::check(program)?, name)
+}
+
+pub(crate) fn compile_poll_jit_verified(
+    program: core::VerifiedProgram<'_>,
+    name: &str,
+) -> Result<PollExecutable, String> {
     let mut flags = settings::builder();
     flags
         .set("use_colocated_libcalls", "false")
@@ -131,7 +138,7 @@ pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable,
 }
 
 pub(crate) fn emit_poll_object(
-    program: &Program,
+    program: core::VerifiedProgram<'_>,
     name: &str,
     symbol: &str,
 ) -> Result<(Vec<u8>, usize), String> {
@@ -154,11 +161,11 @@ pub(crate) fn emit_poll_object(
 
 fn compile_poll_module<M: Module>(
     module: &mut M,
-    program: &Program,
+    verified: core::VerifiedProgram<'_>,
     name: &str,
     export_symbol: Option<&str>,
 ) -> Result<(FuncId, FrameWords, String), String> {
-    core::verify(program)?;
+    let program = verified.as_program();
     let (root, entry_function) = program
         .function(name)
         .ok_or_else(|| format!("unknown function `{name}`"))?;
