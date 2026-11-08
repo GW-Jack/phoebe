@@ -34,6 +34,12 @@ reused with generation-tagged tokens, so an old token cannot join a later
 scope. The kernel checks live task counts and scope ancestry in its optional
 verifier. Source and native lowering have not yet exposed these operations;
 this is the runtime boundary for that integration.
+The native archive exports `phoebe_rt_v1_scope_enter` and
+`phoebe_rt_v1_scope_join`. Join returns Ready or Pending and is retried after
+the scheduler wakes the task. A synthetic native poll task exercises entry,
+spawn, park, and join through those calls; an unmatched join faults. Scope
+record allocation failure currently faults the task. Generated Core still
+needs balanced scope operations and source spans before using this ABI.
 The versioned `phoebe_rt_v1_main_poll` entry runs a native poll function with
 a stable word-array frame: program counter in word 0, result in word 1, and
 generated payload afterward. Status `0` means Ready, `1` Pending, and `255`

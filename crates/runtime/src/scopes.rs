@@ -198,6 +198,13 @@ impl Context<'_> {
         self.scheduler.free_scope_head = Some(scope.slot);
         Ok(Poll::Ready(()))
     }
+
+    /// Join the innermost scope; used by code whose scope nesting is checked
+    /// statically and therefore does not carry a runtime token in its frame.
+    pub fn scope_join_current(&mut self) -> Result<Poll<()>, String> {
+        let current = self.scheduler.tasks[self.task.0].current_scope;
+        self.scope_join(current)
+    }
 }
 
 #[cfg(test)]

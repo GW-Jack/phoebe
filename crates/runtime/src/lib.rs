@@ -212,6 +212,7 @@ impl std::error::Error for ResourceError {}
 mod native;
 pub use native::*;
 mod native_reply;
+mod native_scope;
 pub use native_reply::*;
 mod native_request;
 pub use native_request::*;
