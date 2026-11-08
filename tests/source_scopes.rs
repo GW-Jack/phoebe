@@ -28,13 +28,30 @@ fn source_scope_joins_spawned_child_in_both_backends() {
     let path = std::env::temp_dir().join(format!("phoebe-source-scope-{}", std::process::id()));
     native::build_executable(&program, &path).unwrap();
     let output = Command::new(&path).output().unwrap();
-    std::fs::remove_file(path).unwrap();
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(output.stdout, b"42\n");
+
+    let cache =
+        std::env::temp_dir().join(format!("phoebe-source-scope-cache-{}", std::process::id()));
+    assert!(
+        !native::build_executable_cached(&program, &path, &cache)
+            .unwrap()
+            .reused
+    );
+    assert!(
+        native::build_executable_cached(&program, &path, &cache)
+            .unwrap()
+            .reused
+    );
+    let cached = Command::new(&path).output().unwrap();
+    assert!(cached.status.success());
+    assert_eq!(cached.stdout, b"42\n");
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir_all(cache).unwrap();
 }
 
 #[test]

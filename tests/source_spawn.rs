@@ -78,8 +78,21 @@ fn direct_parent_spawns_suspending_child_in_jit_and_object() {
     assert_eq!(session.build_executable(&program, &path).unwrap(), 2);
     let shifted = core::lower(&syntax::parse(&format!("\n{source}")).unwrap()).unwrap();
     assert_eq!(session.build_executable(&shifted, &path).unwrap(), 2);
+    let cache =
+        std::env::temp_dir().join(format!("phoebe-mixed-spawn-cache-{}", std::process::id()));
+    assert!(
+        !native::build_executable_cached(&program, &path, &cache)
+            .unwrap()
+            .reused
+    );
+    assert!(
+        native::build_executable_cached(&program, &path, &cache)
+            .unwrap()
+            .reused
+    );
     let output = Command::new(&path).output().unwrap();
     std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir_all(cache).unwrap();
     assert!(
         output.status.success(),
         "{}",

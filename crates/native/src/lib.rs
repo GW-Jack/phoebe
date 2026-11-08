@@ -26,6 +26,7 @@ use phoebe_runtime::{self as runtime, Context, NativeCallContext, Scheduler, Sco
 use phoebe_syntax::syntax::ParamMode;
 
 mod cache;
+pub use cache::{CachedBuildReport, build_executable_cached};
 mod poll;
 mod reachability;
 mod runtime_imports;
@@ -324,7 +325,7 @@ impl NativeBuildSession {
     pub fn build_executable(&mut self, program: &Program, output: &Path) -> Result<usize, String> {
         let mut next = self.clone();
         let (emitted, reused) = emit_object_with_poll_layout(program, true, Some(&mut next))?;
-        link_executable(program, emitted, output)?;
+        link_executable(program, &emitted, output)?;
         *self = next;
         Ok(reused)
     }
@@ -530,12 +531,12 @@ pub fn clif(program: &Program) -> Result<String, String> {
 
 pub fn build_executable(program: &Program, output: &Path) -> Result<(), String> {
     let (emitted, _) = emit_object_with_poll_layout(program, false, None)?;
-    link_executable(program, emitted, output)
+    link_executable(program, &emitted, output)
 }
 
 fn link_executable(
     program: &Program,
-    emitted: ObjectEmission,
+    emitted: &ObjectEmission,
     output: &Path,
 ) -> Result<(), String> {
     let runtime_archive = if emitted.poll_words.is_some()
@@ -548,9 +549,10 @@ fn link_executable(
         None
     };
     let object_path = output.with_extension(format!("phoebe-{}.o", std::process::id()));
-    fs::write(&object_path, emitted.root).map_err(|e| format!("{}: {e}", object_path.display()))?;
+    fs::write(&object_path, &emitted.root)
+        .map_err(|e| format!("{}: {e}", object_path.display()))?;
     let mut child_paths = Vec::new();
-    for (index, child) in emitted.children.into_iter().enumerate() {
+    for (index, child) in emitted.children.iter().enumerate() {
         let path = output.with_extension(format!("phoebe-{}-{index}.o", std::process::id()));
         fs::write(&path, child).map_err(|e| format!("{}: {e}", path.display()))?;
         child_paths.push(path);

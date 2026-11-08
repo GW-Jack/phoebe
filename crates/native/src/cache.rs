@@ -1,40 +1,58 @@
-//! Bounded, versioned direct-object cache for repeated CLI builds.
+//! Exact-program native object cache for repeated command-line builds.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::UNIX_EPOCH;
 
+use phoebe_core::{self as core, Program};
 use sha2::{Digest, Sha256};
 
-use super::NativeBuildSession;
+use super::{ObjectEmission, emit_object_with_poll_layout, link_executable};
 
-const MAGIC: &[u8] = b"PHOEBE-NATIVE-OBJECTS\0\x01";
+const MAGIC: &[u8] = b"PHOEBE-NATIVE-OBJECTS\0\x03";
+const CACHE_FILE: &str = "objects.v3";
 const MAX_CACHE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_KEY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_OBJECT_BYTES: usize = 64 * 1024 * 1024;
-const MAX_OBJECTS: usize = 10_000;
-const CACHE_FILE: &str = "objects.v1";
+const MAX_CHILDREN: usize = 10_000;
 
-fn compiler_digest() -> Result<[u8; 32], String> {
-    static DIGEST: OnceLock<Result<[u8; 32], String>> = OnceLock::new();
-    DIGEST
-        .get_or_init(|| {
-            let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-            let mut file = File::open(executable).map_err(|error| error.to_string())?;
-            let mut hasher = Sha256::new();
-            let mut buffer = [0u8; 64 * 1024];
-            loop {
-                let count = file.read(&mut buffer).map_err(|error| error.to_string())?;
-                if count == 0 {
-                    break;
-                }
-                hasher.update(&buffer[..count]);
-            }
-            Ok(hasher.finalize().into())
-        })
-        .clone()
+/// Local compiler file identity. Build tools replace this file when codegen
+/// changes; a stamp avoids hashing a large debug executable per invocation.
+fn compiler_stamp() -> Result<[u8; 32], String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let executable = fs::canonicalize(executable).map_err(|error| error.to_string())?;
+    let metadata = fs::metadata(&executable).map_err(|error| error.to_string())?;
+    let modified = metadata
+        .modified()
+        .map_err(|error| error.to_string())?
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?;
+    let mut hasher = Sha256::new();
+    hasher.update(executable.as_os_str().as_encoded_bytes());
+    hasher.update(metadata.len().to_le_bytes());
+    hasher.update(modified.as_secs().to_le_bytes());
+    hasher.update(modified.subsec_nanos().to_le_bytes());
+    #[cfg(unix)]
+    {
+        hasher.update(metadata.dev().to_le_bytes());
+        hasher.update(metadata.ino().to_le_bytes());
+    }
+    Ok(hasher.finalize().into())
+}
+
+fn program_key(program: &Program) -> String {
+    let mut normalized = program.clone();
+    for function in &mut normalized.functions {
+        function.for_each_source_span_mut(|span| {
+            span.start = 0;
+            span.end = 0;
+        });
+    }
+    format!("{normalized:?}")
 }
 
 struct Decoder<'a> {
@@ -60,10 +78,17 @@ impl<'a> Decoder<'a> {
         let length = self.length(MAX_KEY_BYTES)?;
         Some(std::str::from_utf8(self.take(length)?).ok()?.to_owned())
     }
+
+    fn object(&mut self) -> Option<Vec<u8>> {
+        let length = self.length(MAX_OBJECT_BYTES)?;
+        let digest = self.take(32)?;
+        let bytes = self.take(length)?;
+        (Sha256::digest(bytes).as_slice() == digest).then(|| bytes.to_vec())
+    }
 }
 
-fn read_cache(directory: &Path) -> Option<NativeBuildSession> {
-    let expected_compiler = compiler_digest().ok()?;
+fn read_cache(directory: &Path, expected_key: &str) -> Option<ObjectEmission> {
+    let expected_compiler = compiler_stamp().ok()?;
     let file = File::open(directory.join(CACHE_FILE)).ok()?;
     let mut bytes = Vec::new();
     file.take(MAX_CACHE_BYTES + 1)
@@ -79,28 +104,26 @@ fn read_cache(directory: &Path) -> Option<NativeBuildSession> {
     if decoder.take(MAGIC.len())? != MAGIC || decoder.take(32)? != expected_compiler {
         return None;
     }
-    let global_key = decoder.string()?;
-    let count = decoder.length(MAX_OBJECTS)?;
-    let mut objects = Vec::with_capacity(count);
-    for _ in 0..count {
-        match decoder.take(1)?[0] {
-            0 => objects.push(None),
-            1 => {
-                let key = decoder.string()?;
-                let length = decoder.length(MAX_OBJECT_BYTES)?;
-                let digest = decoder.take(32)?;
-                let object = decoder.take(length)?;
-                if Sha256::digest(object).as_slice() != digest {
-                    return None;
-                }
-                objects.push(Some((key, object.to_vec())));
-            }
-            _ => return None,
-        }
+    let key = decoder.string()?;
+    if key != expected_key {
+        return None;
     }
-    (decoder.offset == bytes.len()).then_some(NativeBuildSession {
-        global_key: Some(global_key),
-        objects,
+    let raw_words = u64::from_le_bytes(decoder.take(8)?.try_into().ok()?);
+    let poll_words = if raw_words == u64::MAX {
+        None
+    } else {
+        Some(usize::try_from(raw_words).ok()?)
+    };
+    let root = decoder.object()?;
+    let child_count = decoder.length(MAX_CHILDREN)?;
+    let mut children = Vec::with_capacity(child_count);
+    for _ in 0..child_count {
+        children.push(decoder.object()?);
+    }
+    (decoder.offset == bytes.len()).then_some(ObjectEmission {
+        root,
+        poll_words,
+        children,
     })
 }
 
@@ -118,11 +141,15 @@ fn write_string(file: &mut File, value: &str) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-fn write_cache(session: &NativeBuildSession, directory: &Path) -> Result<(), String> {
-    let Some(global_key) = &session.global_key else {
-        return Ok(());
-    };
-    let compiler = compiler_digest()?;
+fn write_object(file: &mut File, bytes: &[u8]) -> Result<(), String> {
+    write_length(file, bytes.len(), MAX_OBJECT_BYTES)?;
+    file.write_all(&Sha256::digest(bytes))
+        .map_err(|error| error.to_string())?;
+    file.write_all(bytes).map_err(|error| error.to_string())
+}
+
+fn write_cache(directory: &Path, key: &str, emitted: &ObjectEmission) -> Result<(), String> {
+    let compiler = compiler_stamp()?;
     fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
     let mut temporary = None;
@@ -150,20 +177,17 @@ fn write_cache(session: &NativeBuildSession, directory: &Path) -> Result<(), Str
         file.write_all(MAGIC).map_err(|error| error.to_string())?;
         file.write_all(&compiler)
             .map_err(|error| error.to_string())?;
-        write_string(&mut file, global_key)?;
-        write_length(&mut file, session.objects.len(), MAX_OBJECTS)?;
-        for object in &session.objects {
-            match object {
-                None => file.write_all(&[0]).map_err(|error| error.to_string())?,
-                Some((key, bytes)) => {
-                    file.write_all(&[1]).map_err(|error| error.to_string())?;
-                    write_string(&mut file, key)?;
-                    write_length(&mut file, bytes.len(), MAX_OBJECT_BYTES)?;
-                    file.write_all(&Sha256::digest(bytes))
-                        .map_err(|error| error.to_string())?;
-                    file.write_all(bytes).map_err(|error| error.to_string())?;
-                }
-            }
+        write_string(&mut file, key)?;
+        let words = emitted
+            .poll_words
+            .map(|value| value as u64)
+            .unwrap_or(u64::MAX);
+        file.write_all(&words.to_le_bytes())
+            .map_err(|error| error.to_string())?;
+        write_object(&mut file, &emitted.root)?;
+        write_length(&mut file, emitted.children.len(), MAX_CHILDREN)?;
+        for child in &emitted.children {
+            write_object(&mut file, child)?;
         }
         if file.metadata().map_err(|error| error.to_string())?.len() > MAX_CACHE_BYTES {
             return Err("native object cache exceeds total size limit".into());
@@ -180,15 +204,31 @@ fn write_cache(session: &NativeBuildSession, directory: &Path) -> Result<(), Str
     result
 }
 
-impl NativeBuildSession {
-    /// Load only a complete cache produced by this exact compiler executable.
-    /// Missing, stale, or malformed cache data is treated as a cold build.
-    pub fn load_cache(directory: &Path) -> Self {
-        read_cache(directory).unwrap_or_default()
-    }
+pub struct CachedBuildReport {
+    pub reused: bool,
+    pub cache_write_error: Option<String>,
+}
 
-    /// Atomically publish direct objects from the last successful build.
-    pub fn save_cache(&self, directory: &Path) -> Result<(), String> {
-        write_cache(self, directory)
+/// Reuse an emitted object set only when the complete span-free Core program
+/// and local compiler file stamp match. Every build still runs the linker.
+pub fn build_executable_cached(
+    program: &Program,
+    output: &Path,
+    directory: &Path,
+) -> Result<CachedBuildReport, String> {
+    let key = program_key(program);
+    if let Some(emitted) = read_cache(directory, &key) {
+        core::verify(program)?;
+        link_executable(program, &emitted, output)?;
+        return Ok(CachedBuildReport {
+            reused: true,
+            cache_write_error: None,
+        });
     }
+    let (emitted, _) = emit_object_with_poll_layout(program, false, None)?;
+    link_executable(program, &emitted, output)?;
+    Ok(CachedBuildReport {
+        reused: false,
+        cache_write_error: write_cache(directory, &key, &emitted).err(),
+    })
 }

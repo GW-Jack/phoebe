@@ -83,14 +83,16 @@ force code emission solely because locations changed.
 
 The current CLI starts a fresh parse and Core session for each command.
 `phoebe build <project> -o <output> --cache-dir <directory>` can persist
-direct function objects across compiler invocations. The cache is versioned,
-bound to the exact compiler executable, checked against exact Core/ABI keys,
-and discarded on truncation or checksum failure. The linker still runs on
+the complete emitted object set across compiler invocations when checked Core
+is unchanged. The cache is versioned and bound to the local compiler
+executable's path, size, modification time, and file identity. It checks an
+exact span-free Core key and discards truncated or corrupt entries. The linker runs on
 every build. The cache is optional and does not persist typed interfaces or
-incremental type checking. Suspendable poll objects are still emitted afresh.
+incremental type checking. A changed Core program recompiles its object set;
+in-process `NativeBuildSession` still reuses direct function objects after
+individual body edits.
 Cached ASTs are cloned and qualified again when an in-process project session
-is loaded. The
-small warm-session baseline in `docs/performance-baseline.md` shows only a
+is loaded. The small warm-session baseline in `docs/performance-baseline.md` shows only a
 marginal difference on a six-function project.
 
 Current limitations are explicit: the root module cannot be imported, and imports

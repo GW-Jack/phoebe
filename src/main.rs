@@ -124,12 +124,12 @@ fn command() -> Result<(), String> {
             let output = output.ok_or_else(|| usage().to_owned())?;
             if let Some(directory) = cache_dir {
                 let directory = Path::new(&directory);
-                let mut session = native::NativeBuildSession::load_cache(directory);
-                let reused = session.build_executable(&program, Path::new(&output))?;
-                if let Err(error) = session.save_cache(directory) {
+                let report =
+                    native::build_executable_cached(&program, Path::new(&output), directory)?;
+                if let Some(error) = report.cache_write_error {
                     eprintln!("native object cache not saved: {error}");
                 }
-                println!("built {output} (reused {reused} native object(s))");
+                println!("built {output} (object cache hit: {})", report.reused);
             } else {
                 native::build_executable(&program, Path::new(&output))?;
                 println!("built {output}");

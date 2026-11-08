@@ -80,41 +80,50 @@ fn temp_package_graph() -> PathBuf {
 }
 
 #[test]
-fn disk_object_cache_reuses_unchanged_direct_functions_and_rejects_corruption() {
+fn disk_object_cache_reuses_exact_program_and_rejects_changes_or_corruption() {
     let path = temp_project();
     let cache = path.join("native-cache");
     let executable = path.join("program");
     let mut compiler = ProjectCompilerSession::new();
     let (first, _) = compiler.compile(&path).unwrap();
-    let mut cold = native::NativeBuildSession::load_cache(&cache);
-    assert_eq!(cold.build_executable(&first, &executable).unwrap(), 0);
-    cold.save_cache(&cache).unwrap();
-
-    let mut warm = native::NativeBuildSession::load_cache(&cache);
-    // `math.value` is unreachable from main and has no emitted object.
-    let emitted = first.functions.len() - 1;
-    assert_eq!(warm.build_executable(&first, &executable).unwrap(), emitted);
+    let cold = native::build_executable_cached(&first, &executable, &cache).unwrap();
+    assert!(!cold.reused);
+    assert!(cold.cache_write_error.is_none());
+    assert!(
+        native::build_executable_cached(&first, &executable, &cache)
+            .unwrap()
+            .reused
+    );
     let math = path.join("math.phoebe");
     let source = std::fs::read_to_string(&math).unwrap();
-    std::fs::write(&math, source.replace("a + b", "a + b + 1")).unwrap();
+    let changed_source = source.replace("a + b", "a + b + 1");
+    std::fs::write(&math, &changed_source).unwrap();
     let (changed, _) = compiler.compile(&path).unwrap();
-    assert_eq!(
-        warm.build_executable(&changed, &executable).unwrap(),
-        emitted - 1
-    );
-    warm.save_cache(&cache).unwrap();
+    let changed_build = native::build_executable_cached(&changed, &executable, &cache).unwrap();
+    assert!(!changed_build.reused);
+    assert!(changed_build.cache_write_error.is_none());
     let output = std::process::Command::new(&executable).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"43\n");
 
-    let cache_file = cache.join("objects.v1");
+    std::fs::write(&math, format!("\n{changed_source}")).unwrap();
+    let (shifted, _) = compiler.compile(&path).unwrap();
+    assert!(
+        native::build_executable_cached(&shifted, &executable, &cache)
+            .unwrap()
+            .reused
+    );
+
+    let cache_file = cache.join("objects.v3");
     let mut bytes = std::fs::read(&cache_file).unwrap();
-    *bytes.last_mut().unwrap() ^= 1;
+    // The final eight bytes are the zero child-object count.
+    let root_last = bytes.len() - 9;
+    bytes[root_last] ^= 1;
     std::fs::write(&cache_file, bytes).unwrap();
-    let mut corrupted = native::NativeBuildSession::load_cache(&cache);
-    assert_eq!(
-        corrupted.build_executable(&changed, &executable).unwrap(),
-        0
+    assert!(
+        !native::build_executable_cached(&shifted, &executable, &cache)
+            .unwrap()
+            .reused
     );
     std::fs::remove_dir_all(path).unwrap();
 }

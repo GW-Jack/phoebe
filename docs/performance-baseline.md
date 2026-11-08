@@ -63,9 +63,28 @@ added about 35 ms in the optimized-hash prototype on this debug build, but
 the many-object link and cache bookkeeping also mattered. The 1,000-function
 chain was generated in a temporary file and is not a representative user
 program. These are local observations, not cross-platform benchmarks. The
-in-process object reuse API remains as an experimental witness; the CLI uses
-the faster one-shot path until an incremental design wins on representative
-edited projects.
+in-process object reuse API remains as an experimental witness. The later
+exact-program CLI cache below avoids the many-object link on a warm hit.
+
+## Exact-program CLI object cache
+
+On 2026-11-07, the macOS ARM64 debug compiler built two inputs through
+separate CLI processes. Each path parsed and verified source and linked the
+executable. The warm cache reused the complete emitted object set when the
+span-free checked Core program matched. Seven runs per path followed one
+cache-fill build; the table reports medians.
+
+| Program | One-shot build | Warm object-cache build |
+| --- | ---: | ---: |
+| Six-function module project | 36.0 ms | 34.4 ms |
+| Generated 120-function direct call chain | 51.7 ms | 36.0 ms |
+
+The compiler stamp uses local executable file metadata, and cached objects
+carry checksums. The chain returned `120` after the cached build. These
+measurements include process startup and the host C linker, and do not time
+an edited-program rebuild. The six-function difference is small; neither
+result establishes a cross-platform speedup or a persistent typed-interface
+cache.
 
 ## Reachable native emission
 
