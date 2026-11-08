@@ -442,6 +442,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "phoebe-generic-core"
+version = "0.0.1"
+dependencies = [
+ "phoebe-capability",
+]
+
+[[package]]
 name = "phoebe-native"
 version = "0.0.1"
 dependencies = [

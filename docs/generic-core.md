@@ -1,8 +1,9 @@
 # Parametric Core and shape-shared generic bodies
 
-Status: implementation contract. Generic function definitions are not yet
-accepted by the executable compiler. This document sets the representation
-and verification obligations before adding syntax or native emission.
+Status: implementation contract with an executable first verifier slice in
+`crates/generic-core`. It checks opaque owners, moves, branch arguments, and
+returns without choosing a concrete type or ABI shape. Generic source
+definitions, dictionary operations, and native emission are not yet accepted.
 
 ## The sharing rule
 

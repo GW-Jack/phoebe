@@ -83,7 +83,10 @@ not a proof for every input.
 `phoebe clif <file>` prints the pre-legalization Cranelift IR.
 `phoebe shapes <file|project>` prints checked transport signatures for
 inspecting prospective generic shape classes; generic definitions and
-dictionaries remain open under `docs/generic-core.md`. The scalar
+dictionaries remain open under `docs/generic-core.md`. An isolated
+parametric Core verifier checks opaque affine moves, block arguments, and
+returns once per definition without a concrete ABI shape. It is not yet
+connected to source or native emission. The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures
 remain design sketches. `docs/performance-baseline.md` records a

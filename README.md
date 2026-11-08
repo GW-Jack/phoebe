@@ -58,6 +58,8 @@ native poll ABI work.
 `phoebe shapes <file|project>` prints checked parameter and result transport
 shapes. `docs/generic-core.md` explains the additional proof and ABI work
 needed before generic functions can share native bodies by shape.
+The isolated `phoebe-generic-core` crate now verifies a first opaque-owner
+IR slice; generic source functions are still unimplemented.
 
 Build and run the compiler with Buck2:
 

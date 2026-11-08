@@ -1,11 +1,12 @@
 # Build graph
 
-Phoebe has nine library crates and a root facade/CLI. Dependencies point in
+Phoebe has ten library crates and a root facade/CLI. Dependencies point in
 one direction:
 
 `package` and `syntax` feed `project`. `syntax`, `capability`, and `runtime`
 feed `core`; `core` feeds `abi` and `frame`; `abi`, `core`, `frame`, `runtime`,
-and `syntax` feed `native`. The root facade and CLI sit atop this graph.
+and `syntax` feed `native`. `capability` also feeds the isolated
+`generic-core` verifier. The root facade and CLI sit atop this graph.
 
 - `phoebe-syntax`: spans, diagnostics, lexer, parser, and source AST.
 - `phoebe-package`: content-pinned local dependency graph and lockfile.
@@ -13,6 +14,7 @@ and `syntax` feed `native`. The root facade and CLI sit atop this graph.
 - `phoebe-capability`: independent capability-flow facts and verifier.
 - `phoebe-runtime`: scheduler, channels, reply rights, and native ABI.
 - `phoebe-core`: checked IR, lowering, verification, and interpreter.
+- `phoebe-generic-core`: experimental parametric IR and opaque-owner verifier.
 - `phoebe-abi`: backend independent flattened transport shapes.
 - `phoebe-frame`: suspension liveness and physical frame layout.
 - `phoebe-native`: Cranelift JIT, object emission, direct and retained codegen.
@@ -49,6 +51,7 @@ buck2 run //:phoebe -- build examples/multi_module -o /tmp/phoebe-app --cache-di
 buck2 run //:phoebe -- build-session examples/multi_module -o /tmp/phoebe-app
 buck2 run //:phoebe -- build examples/package_graph/app -o /tmp/phoebe-app
 buck2 build //crates/core:phoebe_core
+buck2 test //crates/generic-core:unit_tests
 buck2 test //crates/core:unit_tests //crates/runtime:unit_tests //crates/native:unit_tests
 buck2 test //:compiler_tests
 buck2 test //:source_traffic_tests
