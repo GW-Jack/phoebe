@@ -97,6 +97,8 @@ pub struct TaskId(usize);
 
 mod scopes;
 pub use scopes::ScopeId;
+mod typed_queue;
+use typed_queue::TypedQueue;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Token(usize);
@@ -286,6 +288,20 @@ pub enum ReceiveResult {
     End,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TypedSendResult {
+    Sent,
+    Pending,
+    Closed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TypedReceiveResult {
+    Value,
+    Pending,
+    End,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RuntimeStats {
     pub tasks_created: usize,
@@ -335,6 +351,7 @@ enum HandleKind {
 enum ChannelKind {
     Scalar,
     Request,
+    Typed,
 }
 
 #[derive(Debug)]
@@ -371,6 +388,7 @@ struct Handle {
 
 struct Channel {
     queue: VecDeque<Message>,
+    typed: Option<TypedQueue>,
     kind: ChannelKind,
     capacity: usize,
     senders: usize,
@@ -564,11 +582,23 @@ impl Scheduler {
             }
         }
         for (index, channel) in self.channels.iter().enumerate() {
+            let typed_len = channel.typed.as_ref().map_or(0, TypedQueue::len);
+            let typed_ok = match (channel.kind, channel.typed.as_ref()) {
+                (ChannelKind::Typed, Some(typed)) => {
+                    typed.verify()
+                        && typed.capacity() == channel.capacity
+                        && channel.queue.is_empty()
+                }
+                (ChannelKind::Scalar | ChannelKind::Request, None) => true,
+                _ => false,
+            };
             if channel.capacity == 0
                 || channel.queue.len() > channel.capacity
+                || typed_len > channel.capacity
+                || !typed_ok
                 || channel.senders != senders[index]
                 || channel.receivers != receivers[index]
-                || (channel.receivers == 0 && !channel.queue.is_empty())
+                || (channel.receivers == 0 && (!channel.queue.is_empty() || typed_len != 0))
             {
                 return Err(format!("channel {index} violates bounded ownership"));
             }
@@ -825,6 +855,9 @@ impl Scheduler {
                                 ReplyOwner::Queue(channel),
                             )?;
                         }
+                    }
+                    if let Some(typed) = &mut self.channels[channel].typed {
+                        self.stats.discarded_messages += typed.discard();
                     }
                     self.wake_all(channel, true);
                 }
@@ -1267,20 +1300,34 @@ impl Context<'_> {
     }
 
     pub fn channel_typed(&mut self, capacity: usize) -> Result<(Sender, Receiver), ResourceError> {
-        self.create_channel(capacity, ChannelKind::Scalar)
+        self.create_channel(capacity, ChannelKind::Scalar, None)
     }
 
     pub fn request_channel_typed(
         &mut self,
         capacity: usize,
     ) -> Result<(Sender, Receiver), ResourceError> {
-        self.create_channel(capacity, ChannelKind::Request)
+        self.create_channel(capacity, ChannelKind::Request, None)
+    }
+
+    /// Create a channel for a concrete, capability-free flattened type. The
+    /// type identity is checked on every operation, independently of width.
+    /// Capability-bearing layouts use the existing concrete request channel
+    /// until typed right transfer and discard are implemented.
+    pub fn typed_words_channel(
+        &mut self,
+        capacity: usize,
+        type_id: u64,
+        width: usize,
+    ) -> Result<(Sender, Receiver), ResourceError> {
+        self.create_channel(capacity, ChannelKind::Typed, Some((type_id, width)))
     }
 
     fn create_channel(
         &mut self,
         capacity: usize,
         kind: ChannelKind,
+        typed_layout: Option<(u64, usize)>,
     ) -> Result<(Sender, Receiver), ResourceError> {
         if capacity == 0 {
             return Err(ResourceError::InvalidChannelCapacity);
@@ -1297,10 +1344,19 @@ impl Context<'_> {
         {
             return Err(ResourceError::HandleLimit);
         }
+        let typed = match typed_layout {
+            Some((type_id, width)) if kind == ChannelKind::Typed => {
+                Some(TypedQueue::new(type_id, width, capacity)?)
+            }
+            None if kind != ChannelKind::Typed => None,
+            _ => return Err(ResourceError::InvalidChannelCapacity),
+        };
         let mut queue = VecDeque::new();
-        queue
-            .try_reserve_exact(capacity)
-            .map_err(|_| ResourceError::Allocation)?;
+        if typed.is_none() {
+            queue
+                .try_reserve_exact(capacity)
+                .map_err(|_| ResourceError::Allocation)?;
+        }
         self.scheduler
             .channels
             .try_reserve(1)
@@ -1312,6 +1368,7 @@ impl Context<'_> {
         let channel = self.scheduler.channels.len();
         self.scheduler.channels.push(Channel {
             queue,
+            typed,
             kind,
             capacity,
             senders: 1,
@@ -1562,6 +1619,89 @@ impl Context<'_> {
             .max(self.scheduler.channels[channel].queue.len());
         self.scheduler.wake_one(channel, false);
         Ok(SendResult::Sent)
+    }
+
+    /// Send one capability-free concrete message. `words` remains owned by
+    /// the caller on Pending, Closed, and every error; an available slot is
+    /// filled without allocating. The caller retains its sender right.
+    pub fn send_typed_words(
+        &mut self,
+        sender: &Sender,
+        type_id: u64,
+        words: &[u64],
+    ) -> Result<TypedSendResult, String> {
+        let channel = self
+            .scheduler
+            .check_handle(self.task, sender.token, HandleKind::Sender)?;
+        let typed = self.scheduler.channels[channel]
+            .typed
+            .as_ref()
+            .ok_or("typed send requires a typed channel")?;
+        if !typed.matches(type_id, words.len()) {
+            return Err("typed message identity or width mismatch".into());
+        }
+        if self.scheduler.channels[channel].receivers == 0 {
+            return Ok(TypedSendResult::Closed);
+        }
+        if typed.is_full() {
+            if self.wait.is_some() {
+                return Err("task already registered a wait in this poll".into());
+            }
+            self.scheduler.channels[channel]
+                .send_waiters
+                .try_reserve(1)
+                .map_err(|error| error.to_string())?;
+            self.scheduler.channels[channel]
+                .send_waiters
+                .push_back(self.task);
+            self.wait = Some(Wait::Send(channel));
+            return Ok(TypedSendResult::Pending);
+        }
+        let typed = self.scheduler.channels[channel]
+            .typed
+            .as_mut()
+            .expect("checked typed channel");
+        typed.push(words);
+        self.scheduler.stats.max_queued = self.scheduler.stats.max_queued.max(typed.len());
+        self.scheduler.wake_one(channel, false);
+        Ok(TypedSendResult::Sent)
+    }
+
+    pub fn receive_typed_words(
+        &mut self,
+        receiver: &Receiver,
+        type_id: u64,
+        output: &mut [u64],
+    ) -> Result<TypedReceiveResult, String> {
+        let channel =
+            self.scheduler
+                .check_handle(self.task, receiver.token, HandleKind::Receiver)?;
+        let typed = self.scheduler.channels[channel]
+            .typed
+            .as_mut()
+            .ok_or("typed receive requires a typed channel")?;
+        if !typed.matches(type_id, output.len()) {
+            return Err("typed message identity or width mismatch".into());
+        }
+        if typed.pop(output) {
+            self.scheduler.wake_one(channel, true);
+            return Ok(TypedReceiveResult::Value);
+        }
+        if self.scheduler.channels[channel].senders == 0 {
+            return Ok(TypedReceiveResult::End);
+        }
+        if self.wait.is_some() {
+            return Err("task already registered a wait in this poll".into());
+        }
+        self.scheduler.channels[channel]
+            .receive_waiters
+            .try_reserve(1)
+            .map_err(|error| error.to_string())?;
+        self.scheduler.channels[channel]
+            .receive_waiters
+            .push_back(self.task);
+        self.wait = Some(Wait::Receive(channel));
+        Ok(TypedReceiveResult::Pending)
     }
 
     pub fn receive(&mut self, receiver: &Receiver) -> Result<ReceiveResult, String> {

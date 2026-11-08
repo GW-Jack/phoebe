@@ -1,7 +1,8 @@
 # Typed message transfer contract
 
 Status: design obligation for general `channel<T>` messages. The executable
-kernel currently has separate `I64` and `Request<I64>` queues. This document
+kernel has separate `I64` and `Request<I64>` queues and a preallocated
+fixed-width queue for capability-free concrete messages. This document
 defines the bridge from checked Core values to a general bounded queue; it
 does not claim that bridge is implemented or proved.
 
@@ -84,10 +85,13 @@ occupancy so boundedness is preserved.
    products, `Request<I64>`, tagged sums, references, and recursive layout
    rejection. The runtime descriptor must preserve its type identity and
    active-leaf selection.
-2. Add runtime-owned, preallocated typed slots and an atomic transfer API.
-   Keep the existing scalar/request API as adapters while validating the new
-   protocol. Test full, closed, dequeue, discard, and injected precommit
-   allocation failure with multiple rights and active/inactive sum arms.
+2. Extend the runtime's preallocated typed slots with an atomic capability
+   transfer API. The current closed-word path checks type identity and width,
+   handles full/closed/dequeue/discard, sends into available slots without
+   allocation, and leaves caller words intact on rejected sends. The
+   remaining tests must
+   exercise injected precommit failure, multiple rights, and active/inactive
+   sum arms.
 3. Add one checked Core typed send/receive family and lower source
    `channel<T>` through it. The native ABI passes descriptor identity and
    flattened words; it never treats a matching word count as type identity.
