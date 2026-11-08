@@ -604,6 +604,9 @@ pub(super) fn compile_functions<M: Module>(
                                 register_results,
                             )?)
                         }
+                        Operation::GenericCall { .. } => {
+                            return Err("linked generic call requires native dispatch".into());
+                        }
                         Operation::LoadRef(reference) => Some(vec![builder.ins().load(
                             types::I64,
                             MemFlagsData::new(),

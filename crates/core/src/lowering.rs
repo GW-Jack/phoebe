@@ -498,7 +498,7 @@ fn lower_internal(
         data,
         functions: lowered,
     };
-    verify_structure(&program).map_err(|message| {
+    verify_structure(&program, None).map_err(|message| {
         let span = if message == "recursive call cycle is not yet supported" {
             recursive_call_span(&program).unwrap_or(Span { start: 0, end: 0 })
         } else {

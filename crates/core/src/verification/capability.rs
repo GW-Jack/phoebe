@@ -191,6 +191,22 @@ pub(crate) fn capability_graph(
                         );
                     }
                 }
+                Operation::GenericCall { args, .. } => {
+                    for value in args {
+                        actions.extend(
+                            slots[value.0]
+                                .clone()
+                                .map(|slot| CapAction::Transfer(capability_flow::Slot(slot))),
+                        );
+                    }
+                    if let Some(result) = instruction.result {
+                        actions.extend(
+                            slots[result.0]
+                                .clone()
+                                .map(|slot| CapAction::Create(capability_flow::Slot(slot))),
+                        );
+                    }
+                }
                 _ => {}
             }
         }

@@ -99,6 +99,11 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                             }
                         }
                     }
+                    Operation::GenericCall { args, .. } => {
+                        for value in args {
+                            value_use(&mut state, *value, true, span)?;
+                        }
+                    }
                     Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                         value_use(&mut state, *value, true, span)?;
                         if matches!(function.place_types[place.0], Type::Data(_)) {
@@ -260,7 +265,14 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
 }
 
 pub fn verify(program: &Program) -> Result<(), String> {
-    verify_structure(program)?;
+    verify_structure(program, None)?;
+    super::scope_verification::verify(program)?;
+    verify_ownership(program).map_err(|error| error.message)?;
+    verify_capability_edges(program)
+}
+
+pub fn verify_linked(program: &Program, generics: &CheckedModule) -> Result<(), String> {
+    verify_structure(program, Some(generics))?;
     super::scope_verification::verify(program)?;
     verify_ownership(program).map_err(|error| error.message)?;
     verify_capability_edges(program)

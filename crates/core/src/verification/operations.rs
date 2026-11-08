@@ -7,6 +7,7 @@ pub(super) fn op_type(
     function: &Function,
     operation: &Operation,
     layout: &capability_layout::Layout,
+    generics: Option<&CheckedModule>,
 ) -> Result<Option<Type>, String> {
     let ty = |id: ValueId| function.value_types[id.0];
     match operation {
@@ -167,6 +168,22 @@ pub(super) fn op_type(
             }
             Ok(Some(callee.return_type))
         }
+        Operation::GenericCall {
+            callee,
+            type_args,
+            args,
+        } => {
+            let module = generics.ok_or("unlinked generic call")?;
+            if type_args
+                .iter()
+                .any(|ty| matches!(ty, Type::Data(id) if id.0 >= program.data.len()))
+            {
+                return Err("invalid generic type argument".into());
+            }
+            let actual = args.iter().map(|value| ty(*value)).collect::<Vec<_>>();
+            let resolved = crate::generic_calls::instantiate(module, *callee, type_args, &actual)?;
+            Ok(Some(resolved.result))
+        }
         Operation::LoadRef(reference) => {
             if !matches!(ty(*reference), Type::RefI64 | Type::RefMutI64) {
                 return Err("load requires a reference".into());
@@ -287,6 +304,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
                 CallArg::Borrow(_, _) => None,
             })
             .collect(),
+        Operation::GenericCall { args, .. } => args.clone(),
     }
 }
 
@@ -316,7 +334,13 @@ mod tests {
         };
         let layout = capability_layout::Layout::new(&program.data);
         assert_eq!(
-            op_type(&program, &function, &Operation::Copy(ValueId(0)), &layout),
+            op_type(
+                &program,
+                &function,
+                &Operation::Copy(ValueId(0)),
+                &layout,
+                None
+            ),
             Err("copy cannot duplicate communication capabilities".into())
         );
         assert_eq!(
@@ -324,7 +348,8 @@ mod tests {
                 &program,
                 &function,
                 &Operation::Field(ValueId(0), 1),
-                &layout
+                &layout,
+                None
             ),
             Err("capability product requires whole-product unpack".into())
         );

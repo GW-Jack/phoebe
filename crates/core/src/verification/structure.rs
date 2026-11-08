@@ -88,7 +88,10 @@ fn verify_loan_regions(function: &Function) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
+pub(crate) fn verify_structure(
+    program: &Program,
+    generics: Option<&CheckedModule>,
+) -> Result<(), String> {
     if program.functions.is_empty() {
         return Err("empty Core IR program".into());
     }
@@ -464,6 +467,7 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
                     function,
                     &instruction.operation,
                     &capability_layout,
+                    generics,
                 )?;
                 if instruction
                     .result

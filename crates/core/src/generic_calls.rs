@@ -1,6 +1,7 @@
 //! Concrete type substitution for a verified parametric call signature.
 //! This performs work proportional to the call signature, never the callee
-//! body. It does not emit a Core call instruction or execute the callee.
+//! body. The linked Core verifier uses it to check a generic call instruction;
+//! execution remains a separate backend step.
 
 use phoebe_generic_core::{CheckedModule, Type as GenericType};
 
@@ -86,7 +87,7 @@ pub fn infer(module: &CheckedModule, name: &str, actual: &[Type]) -> Result<Reso
 }
 
 /// Validate an already chosen substitution against the verified definition.
-/// This is the cross-IR check a future concrete Core call instruction needs.
+/// This is the cross-IR check for a concrete Core generic call instruction.
 pub fn instantiate(
     module: &CheckedModule,
     callee: usize,
@@ -128,7 +129,10 @@ mod tests {
     use phoebe_generic_core as generic_core;
 
     use super::*;
-    use crate::DataId;
+    use crate::{
+        Block, DataDef, DataId, Function, Instruction, Operation, ParamMode, Program, Span,
+        Terminator, ValueId,
+    };
 
     fn module(source: &str) -> CheckedModule {
         generic_core::lower_program_checked(&phoebe_syntax::parse(source).unwrap()).unwrap()
@@ -185,5 +189,81 @@ mod tests {
                     .contains("borrowed")
             );
         }
+    }
+
+    fn linked_call_program(ty: Type, data: Vec<DataDef>, return_input: bool) -> Program {
+        Program {
+            data,
+            functions: vec![Function {
+                name: "entry".into(),
+                param_modes: vec![ParamMode::Own],
+                return_type: ty,
+                blocks: vec![Block {
+                    params: vec![ValueId(0)],
+                    instructions: vec![Instruction {
+                        result: Some(ValueId(1)),
+                        operation: Operation::GenericCall {
+                            callee: 0,
+                            type_args: vec![ty],
+                            args: vec![ValueId(0)],
+                        },
+                        span: Span { start: 1, end: 2 },
+                    }],
+                    terminator: Terminator::Return(if return_input {
+                        ValueId(0)
+                    } else {
+                        ValueId(1)
+                    }),
+                }],
+                value_types: vec![ty, ty],
+                place_types: vec![],
+                loan_regions: vec![],
+            }],
+        }
+    }
+
+    #[test]
+    fn linked_core_call_checks_signature_without_weakening_plain_core() {
+        let generics = module("fn identity<T>(x: T) -> T = x");
+        let program = linked_call_program(Type::I64, vec![], false);
+        assert!(
+            crate::verify(&program)
+                .unwrap_err()
+                .contains("unlinked generic call")
+        );
+        crate::CheckedLinkedProgram::check(program.clone(), generics.clone()).unwrap();
+        let mut wrong = program;
+        let Operation::GenericCall { type_args, .. } =
+            &mut wrong.functions[0].blocks[0].instructions[0].operation
+        else {
+            unreachable!()
+        };
+        *type_args = vec![Type::Bool];
+        assert!(
+            crate::CheckedLinkedProgram::check(wrong, generics)
+                .err()
+                .unwrap()
+                .contains("argument type mismatch")
+        );
+    }
+
+    #[test]
+    fn linked_call_transfers_every_capability_leaf_and_rejects_reuse() {
+        let generics = module("fn identity<T>(x: T) -> T = x");
+        let data = vec![DataDef {
+            name: "Envelope".into(),
+            variants: vec![],
+            payloads: vec![],
+            fields: vec![("sender".into(), Type::SenderI64)],
+        }];
+        let good = linked_call_program(Type::Data(DataId(0)), data.clone(), false);
+        crate::CheckedLinkedProgram::check(good, generics.clone()).unwrap();
+        let reused = linked_call_program(Type::Data(DataId(0)), data, true);
+        assert!(
+            crate::CheckedLinkedProgram::check(reused, generics)
+                .err()
+                .unwrap()
+                .contains("use after move")
+        );
     }
 }

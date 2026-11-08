@@ -98,6 +98,9 @@ Concrete signature resolution against an already checked generic module now
 infers owning type arguments for scalar, nominal, and communication-right
 values without checking the generic body again; it has not yet been wired into
 the source expression lowerer or runtime dispatch.
+Checked linked Core validates concrete generic call substitutions and
+capability transfer. Ordinary Core rejects calls without a checked generic
+module; both execution backends still require dispatch integration.
 The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures

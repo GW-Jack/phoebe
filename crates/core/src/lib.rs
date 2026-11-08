@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::task::Poll;
 
 use phoebe_capability::{self as capability_flow, Action as CapAction, Target as CapTarget};
+use phoebe_generic_core::CheckedModule;
 use phoebe_runtime::{
     self as runtime, Context, ReplyReceiverToken, ReplyToken, ResourceError, Scheduler,
     ScopeLimits, Task, Token,
@@ -140,6 +141,11 @@ pub enum Operation {
     Gt(ValueId, ValueId),
     Ge(ValueId, ValueId),
     Call(FunctionId, Vec<CallArg>),
+    GenericCall {
+        callee: usize,
+        type_args: Vec<Type>,
+        args: Vec<ValueId>,
+    },
     LoadRef(ValueId),
     StoreRef(ValueId, ValueId),
     PlaceInit(PlaceId, ValueId),
@@ -149,7 +155,10 @@ pub enum Operation {
     Store(PlaceId, ValueId),
     CloseHandle(ValueId),
     CloseReply(ValueId),
-    PackRequest { value: ValueId, right: ValueId },
+    PackRequest {
+        value: ValueId,
+        right: ValueId,
+    },
     CloseRequest(ValueId),
     CloseCaps(ValueId),
     ScopeEnter(TaskScopeId),
@@ -327,6 +336,28 @@ pub struct Program {
 /// An immutable program that has passed every Core verifier. Its fields are
 /// private so callers cannot invalidate the proof before code generation.
 pub struct CheckedProgram(Program);
+
+/// A concrete program and a separately verified parametric module whose
+/// generic call signatures have been checked together.
+pub struct CheckedLinkedProgram {
+    program: Program,
+    generics: CheckedModule,
+}
+
+impl CheckedLinkedProgram {
+    pub fn check(program: Program, generics: CheckedModule) -> Result<Self, String> {
+        verification::verify_linked(&program, &generics)?;
+        Ok(Self { program, generics })
+    }
+
+    pub fn program(&self) -> &Program {
+        &self.program
+    }
+
+    pub fn generics(&self) -> &CheckedModule {
+        &self.generics
+    }
+}
 
 impl CheckedProgram {
     pub fn check(program: Program) -> Result<Self, String> {

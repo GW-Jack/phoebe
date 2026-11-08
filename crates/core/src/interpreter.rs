@@ -383,6 +383,9 @@ impl CoreTask {
             Operation::Gt(a, b) => Some(Value::Bool(as_i64(get(*a)) > as_i64(get(*b)))),
             Operation::Ge(a, b) => Some(Value::Bool(as_i64(get(*a)) >= as_i64(get(*b)))),
             Operation::Call(_, _) => unreachable!("calls push a retained frame"),
+            Operation::GenericCall { .. } => {
+                return Err("linked generic call requires generic interpreter dispatch".into());
+            }
             Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                 let value = get(*value);
                 self.stores[base + place.0] = Some(value);
@@ -980,6 +983,20 @@ impl fmt::Display for Program {
                                     CallArg::Ref(value, false) => write!(f, "&v{}", value.0)?,
                                     CallArg::Ref(value, true) => write!(f, "&mut v{}", value.0)?,
                                 }
+                            }
+                            write!(f, ")")?;
+                        }
+                        Operation::GenericCall {
+                            callee,
+                            type_args,
+                            args,
+                        } => {
+                            write!(f, "call.generic f{callee}<{type_args:?}>(")?;
+                            for (index, value) in args.iter().enumerate() {
+                                if index > 0 {
+                                    write!(f, ", ")?;
+                                }
+                                write!(f, "v{}", value.0)?;
                             }
                             write!(f, ")")?;
                         }
