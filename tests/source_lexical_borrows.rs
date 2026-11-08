@@ -320,8 +320,10 @@ fn exchange() -> Result<I64, ResourceError> {
   val (sender, receiver) = channel<I64>(capacity = 1)?;
   var x = 41;
   with r = &mut x {
-    val result = wait(&mut r, receiver);
-    r = result;
+    with inner = &mut r {
+      val result = wait(&mut inner, receiver);
+      inner = result;
+    };
   };
   sender.close();
   Result<I64, ResourceError>.Ok(x)
@@ -346,6 +348,20 @@ fn main() -> I64 {
             .unwrap_err()
             .contains("scope deadlocked")
     );
+    let executable = native::compile_poll_jit(&program, "main").unwrap();
+    let root = unsafe { NativePollTask::new(executable.entry(), executable.layout().total_words) }
+        .unwrap();
+    let mut scheduler = Scheduler::new(root, 1, 1, 0).unwrap();
+    assert_eq!(scheduler.run().unwrap_err(), "scope deadlocked");
+    assert_eq!(scheduler.open_handles(), 0);
+    scheduler.verify().unwrap();
+
+    let path = std::env::temp_dir().join(format!("phoebe-lexical-deadlock-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(!output.status.success());
+    assert_eq!(output.stderr, b"phoebe runtime failed: scope deadlocked\n");
 }
 
 #[test]
@@ -371,8 +387,10 @@ fn wait(value: &mut I64) -> Result<I64, ResourceError> {
 fn start() -> Result<I64, ResourceError> {
   var x = 41;
   with borrowed = &mut x {
-    val updated = wait(&mut borrowed)?;
-    borrowed = updated + 1;
+    with inner = &mut borrowed {
+      val updated = wait(&mut inner)?;
+      inner = updated + 1;
+    };
   };
   Result<I64, ResourceError>.Ok(x)
 }
@@ -396,6 +414,14 @@ fn main() -> I64 {
     assert!(interpreted.contains("scope"), "{interpreted}");
     let native_error = native::run_with_limits(&program, "main", &[], limits).unwrap_err();
     assert!(native_error.contains("task 1 failed"), "{native_error}");
+
+    let executable = native::compile_poll_jit(&program, "main").unwrap();
+    let root = unsafe { NativePollTask::new(executable.entry(), executable.layout().total_words) }
+        .unwrap();
+    let mut scheduler = Scheduler::with_limits(root, limits).unwrap();
+    assert_eq!(scheduler.run().unwrap_err(), native_error);
+    assert_eq!(scheduler.open_handles(), 0);
+    scheduler.verify().unwrap();
 }
 
 #[test]

@@ -65,8 +65,11 @@ retains its reference value.
 
 Ordinary ownership and capability-flow verification remain separate passes over the same explicit
 Core edges. The scheduler now drops descendant task frames before ancestor
-frames on failure and deadlock. A source regression cancels a pending borrowed
-call after a child faults. Broader failure unwind coverage remains open. These checks should
+frames on failure and deadlock. Source regressions keep nested lexical
+reborrows live through a deadlocked call and through cancellation of a
+pending call after a child faults. The JIT scheduler reaches a terminal state
+with no open handles in both cases; the deadlock also has a standalone
+executable check. Broader failure unwind coverage remains open. These checks should
 remain linear in Core size apart from the existing CFG fixed point, with no
 optimization search during compilation.
 
