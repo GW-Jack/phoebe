@@ -505,8 +505,26 @@ pub(super) fn compile_functions<M: Module>(
                         Operation::Eq(a, b) => {
                             Some(vec![builder.ins().icmp(IntCC::Equal, one(*a), one(*b))])
                         }
+                        Operation::Ne(a, b) => {
+                            Some(vec![builder.ins().icmp(IntCC::NotEqual, one(*a), one(*b))])
+                        }
                         Operation::Lt(a, b) => Some(vec![builder.ins().icmp(
                             IntCC::SignedLessThan,
+                            one(*a),
+                            one(*b),
+                        )]),
+                        Operation::Le(a, b) => Some(vec![builder.ins().icmp(
+                            IntCC::SignedLessThanOrEqual,
+                            one(*a),
+                            one(*b),
+                        )]),
+                        Operation::Gt(a, b) => Some(vec![builder.ins().icmp(
+                            IntCC::SignedGreaterThan,
+                            one(*a),
+                            one(*b),
+                        )]),
+                        Operation::Ge(a, b) => Some(vec![builder.ins().icmp(
+                            IntCC::SignedGreaterThanOrEqual,
                             one(*a),
                             one(*b),
                         )]),

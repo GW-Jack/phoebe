@@ -863,13 +863,22 @@ fn compile_poll_module<M: Module>(
                             let b = get(*b, &mut builder)[0];
                             Some(vec![builder.ins().imul(a, b)])
                         }
-                        Operation::Eq(a, b) | Operation::Lt(a, b) => {
+                        Operation::Eq(a, b)
+                        | Operation::Ne(a, b)
+                        | Operation::Lt(a, b)
+                        | Operation::Le(a, b)
+                        | Operation::Gt(a, b)
+                        | Operation::Ge(a, b) => {
                             let a = get(*a, &mut builder)[0];
                             let b = get(*b, &mut builder)[0];
-                            let cc = if matches!(instruction.operation, Operation::Eq(_, _)) {
-                                IntCC::Equal
-                            } else {
-                                IntCC::SignedLessThan
+                            let cc = match instruction.operation {
+                                Operation::Eq(_, _) => IntCC::Equal,
+                                Operation::Ne(_, _) => IntCC::NotEqual,
+                                Operation::Lt(_, _) => IntCC::SignedLessThan,
+                                Operation::Le(_, _) => IntCC::SignedLessThanOrEqual,
+                                Operation::Gt(_, _) => IntCC::SignedGreaterThan,
+                                Operation::Ge(_, _) => IntCC::SignedGreaterThanOrEqual,
+                                _ => unreachable!(),
                             };
                             Some(vec![builder.ins().icmp(cc, a, b)])
                         }
@@ -1669,7 +1678,11 @@ fn validate_poll_function(
                     | Operation::Sub(_, _)
                     | Operation::Mul(_, _)
                     | Operation::Eq(_, _)
+                    | Operation::Ne(_, _)
                     | Operation::Lt(_, _)
+                    | Operation::Le(_, _)
+                    | Operation::Gt(_, _)
+                    | Operation::Ge(_, _)
                     | Operation::LoadRef(_)
                     | Operation::StoreRef(_, _)
                     | Operation::CloseHandle(_)

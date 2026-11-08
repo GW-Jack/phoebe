@@ -644,7 +644,11 @@ fn rewrite_expr(
         | ExprKind::Sub(a, b)
         | ExprKind::Mul(a, b)
         | ExprKind::Eq(a, b)
+        | ExprKind::Ne(a, b)
         | ExprKind::Lt(a, b)
+        | ExprKind::Le(a, b)
+        | ExprKind::Gt(a, b)
+        | ExprKind::Ge(a, b)
         | ExprKind::And(a, b)
         | ExprKind::Or(a, b) => {
             nested(a)?;
@@ -887,7 +891,11 @@ fn shift_expr(expr: &mut Expr, offset: usize) {
         | ExprKind::Sub(a, b)
         | ExprKind::Mul(a, b)
         | ExprKind::Eq(a, b)
+        | ExprKind::Ne(a, b)
         | ExprKind::Lt(a, b)
+        | ExprKind::Le(a, b)
+        | ExprKind::Gt(a, b)
+        | ExprKind::Ge(a, b)
         | ExprKind::And(a, b)
         | ExprKind::Or(a, b) => {
             shift_expr(a, offset);

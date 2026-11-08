@@ -86,6 +86,9 @@ method and any required copy or move in diagnostics and IR dumps. An operator
 cannot hide a parking operation; fallible operations should use named methods
 returning `Result` initially. Index syntax is deferred until its bounds,
 borrow, and failure behavior are specified.
+The current executable subset has `==` and `!=` for I64, Bool, and payload-free
+sum types, plus `<`, `<=`, `>`, and `>=` for I64. These comparisons preserve
+left-to-right evaluation and lower to direct Core and Cranelift comparisons.
 `!`, `&&`, and `||` are built-in Bool operators, not overloadable trait
 calls. The binary operators evaluate the right operand only when needed;
 `?` in that operand

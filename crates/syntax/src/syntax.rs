@@ -34,8 +34,11 @@ enum TokenKind {
     Arrow,
     Equal,
     EqualEqual,
+    BangEqual,
     Less,
+    LessEqual,
     Greater,
+    GreaterEqual,
     Plus,
     Minus,
     Star,
@@ -148,9 +151,21 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 i += 1;
                 TokenKind::Equal
             }
+            b'!' if bytes.get(i + 1) == Some(&b'=') => {
+                i += 2;
+                TokenKind::BangEqual
+            }
+            b'<' if bytes.get(i + 1) == Some(&b'=') => {
+                i += 2;
+                TokenKind::LessEqual
+            }
             b'<' => {
                 i += 1;
                 TokenKind::Less
+            }
+            b'>' if bytes.get(i + 1) == Some(&b'=') => {
+                i += 2;
+                TokenKind::GreaterEqual
             }
             b'>' => {
                 i += 1;
@@ -395,7 +410,11 @@ pub enum ExprKind {
     Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
     Eq(Box<Expr>, Box<Expr>),
+    Ne(Box<Expr>, Box<Expr>),
     Lt(Box<Expr>, Box<Expr>),
+    Le(Box<Expr>, Box<Expr>),
+    Gt(Box<Expr>, Box<Expr>),
+    Ge(Box<Expr>, Box<Expr>),
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Body>, Box<Body>),
@@ -1236,7 +1255,12 @@ impl Parser {
             let (left_bp, right_bp) = match self.current().kind {
                 TokenKind::OrOr => (1, 2),
                 TokenKind::AndAnd => (3, 4),
-                TokenKind::EqualEqual | TokenKind::Less => (5, 6),
+                TokenKind::EqualEqual
+                | TokenKind::BangEqual
+                | TokenKind::Less
+                | TokenKind::LessEqual
+                | TokenKind::Greater
+                | TokenKind::GreaterEqual => (5, 6),
                 TokenKind::Plus | TokenKind::Minus => (7, 8),
                 TokenKind::Star => (9, 10),
                 _ => break,
@@ -1260,7 +1284,11 @@ impl Parser {
                 TokenKind::Minus => ExprKind::Sub(Box::new(lhs), Box::new(rhs)),
                 TokenKind::Star => ExprKind::Mul(Box::new(lhs), Box::new(rhs)),
                 TokenKind::EqualEqual => ExprKind::Eq(Box::new(lhs), Box::new(rhs)),
+                TokenKind::BangEqual => ExprKind::Ne(Box::new(lhs), Box::new(rhs)),
                 TokenKind::Less => ExprKind::Lt(Box::new(lhs), Box::new(rhs)),
+                TokenKind::LessEqual => ExprKind::Le(Box::new(lhs), Box::new(rhs)),
+                TokenKind::Greater => ExprKind::Gt(Box::new(lhs), Box::new(rhs)),
+                TokenKind::GreaterEqual => ExprKind::Ge(Box::new(lhs), Box::new(rhs)),
                 TokenKind::AndAnd => ExprKind::And(Box::new(lhs), Box::new(rhs)),
                 TokenKind::OrOr => ExprKind::Or(Box::new(lhs), Box::new(rhs)),
                 _ => unreachable!(),

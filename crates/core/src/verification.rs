@@ -94,7 +94,7 @@ fn op_type(
             }
             Ok(Some(Type::I64))
         }
-        Operation::Eq(a, b) => {
+        Operation::Eq(a, b) | Operation::Ne(a, b) => {
             if ty(*a) != ty(*b) || !matches!(ty(*a), Type::I64 | Type::Bool | Type::Data(_)) {
                 return Err("equality type mismatch".into());
             }
@@ -106,9 +106,9 @@ fn op_type(
             }
             Ok(Some(Type::Bool))
         }
-        Operation::Lt(a, b) => {
+        Operation::Lt(a, b) | Operation::Le(a, b) | Operation::Gt(a, b) | Operation::Ge(a, b) => {
             if ty(*a) != Type::I64 || ty(*b) != Type::I64 {
-                return Err("less-than expects I64".into());
+                return Err("ordering comparison expects I64".into());
             }
             Ok(Some(Type::Bool))
         }
@@ -251,7 +251,11 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::Sub(a, b)
         | Operation::Mul(a, b)
         | Operation::Eq(a, b)
-        | Operation::Lt(a, b) => vec![*a, *b],
+        | Operation::Ne(a, b)
+        | Operation::Lt(a, b)
+        | Operation::Le(a, b)
+        | Operation::Gt(a, b)
+        | Operation::Ge(a, b) => vec![*a, *b],
         Operation::Call(_, args) => args
             .iter()
             .filter_map(|arg| match arg {

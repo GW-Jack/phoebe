@@ -32,6 +32,74 @@ fn arithmetic_wraps_identically() {
 }
 
 #[test]
+fn comparison_family_preserves_types_and_native_results() {
+    let source = r#"
+data Choice { A, B }
+fn direct() -> I64 = if (
+  -1 < 0 && 0 > -1 && -1 <= -1 && 0 >= 0 &&
+  41 != 42 && true != false && Choice.A != Choice.B &&
+  42 > 42 == false && 41 >= 42 == false
+) { 42 } else { 0 }
+fn main() -> I64 { yield; direct() }
+"#;
+    let program = compile(source);
+    for (name, op) in [
+        ("ne", "ne v"),
+        ("le", "le v"),
+        ("gt", "gt v"),
+        ("ge", "ge v"),
+    ] {
+        assert!(program.to_string().contains(op), "missing {name} in Core");
+    }
+    assert!(
+        program.functions[0..2]
+            .iter()
+            .flat_map(|function| &function.blocks)
+            .flat_map(|block| &block.instructions)
+            .all(|instruction| !matches!(instruction.operation, core::Operation::Not(_)))
+    );
+    for name in ["direct", "main"] {
+        assert_eq!(program.interpret(name, &[]).unwrap(), 42);
+        assert_eq!(native::run(&program, name, &[]).unwrap(), 42);
+    }
+    let path = std::env::temp_dir().join(format!("phoebe-comparisons-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+
+    for source in [
+        "fn main() -> I64 = if (true < false) { 1 } else { 0 }",
+        "fn main() -> I64 = if (1 != false) { 1 } else { 0 }",
+    ] {
+        assert!(core::lower(&syntax::parse(source).unwrap()).is_err());
+    }
+}
+
+#[test]
+fn ordered_comparison_evaluates_left_before_right() {
+    let source = r#"
+data Problem { Left, Right }
+fn left() -> Result<I64, Problem> = Result<I64, Problem>.Err(Problem.Left)
+fn right() -> Result<I64, Problem> = Result<I64, Problem>.Err(Problem.Right)
+fn compare() -> Result<I64, Problem> = Result<I64, Problem>.Ok(
+  if (left()? <= right()?) { 1 } else { 0 }
+)
+fn main() -> I64 = when (compare()) {
+  Result<I64, Problem>.Ok(value) -> { 0 },
+  Result<I64, Problem>.Err(error) -> { when (error) {
+    Problem.Left -> { 42 },
+    Problem.Right -> { 0 },
+  } },
+}
+"#;
+    let program = compile(source);
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
 fn identity_has_no_core_instructions_or_copy() {
     let program = compile("fn identity(x: I64) -> I64 = x");
     assert!(program.functions[0].blocks[0].instructions.is_empty());

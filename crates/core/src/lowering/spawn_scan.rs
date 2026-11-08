@@ -96,7 +96,11 @@ pub(super) fn body_can_spawn(body: &Body, effects: &HashMap<String, bool>) -> bo
             | ExprKind::Sub(a, b)
             | ExprKind::Mul(a, b)
             | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
             | ExprKind::Lt(a, b)
+            | ExprKind::Le(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Ge(a, b)
             | ExprKind::And(a, b)
             | ExprKind::Or(a, b) => expr(a, effects) || expr(b, effects),
             ExprKind::VariantCall(_, _, value) => expr(value, effects),
@@ -212,7 +216,11 @@ impl Scan<'_> {
             | ExprKind::Sub(a, b)
             | ExprKind::Mul(a, b)
             | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
             | ExprKind::Lt(a, b)
+            | ExprKind::Le(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Ge(a, b)
             | ExprKind::And(a, b)
             | ExprKind::Or(a, b) => {
                 self.expr(a);

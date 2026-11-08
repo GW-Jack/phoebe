@@ -442,7 +442,7 @@ impl Lowerer<'_> {
                 self.require(tb, Type::I64, rhs.span)?;
                 (Operation::Mul(a, b), Type::I64)
             }
-            ExprKind::Eq(lhs, rhs) => {
+            ExprKind::Eq(lhs, rhs) | ExprKind::Ne(lhs, rhs) => {
                 let ((a, ta), (b, tb)) = self.pair(lhs, rhs, locals)?;
                 if ta != tb {
                     return Err(Diagnostic::new(
@@ -459,13 +459,32 @@ impl Lowerer<'_> {
                         "product equality and payload sum equality are not implemented",
                     ));
                 }
-                (Operation::Eq(a, b), Type::Bool)
+                (
+                    if matches!(expr.kind, ExprKind::Eq(_, _)) {
+                        Operation::Eq(a, b)
+                    } else {
+                        Operation::Ne(a, b)
+                    },
+                    Type::Bool,
+                )
             }
-            ExprKind::Lt(lhs, rhs) => {
+            ExprKind::Lt(lhs, rhs)
+            | ExprKind::Le(lhs, rhs)
+            | ExprKind::Gt(lhs, rhs)
+            | ExprKind::Ge(lhs, rhs) => {
                 let ((a, ta), (b, tb)) = self.pair(lhs, rhs, locals)?;
                 self.require(ta, Type::I64, lhs.span)?;
                 self.require(tb, Type::I64, rhs.span)?;
-                (Operation::Lt(a, b), Type::Bool)
+                (
+                    match expr.kind {
+                        ExprKind::Lt(_, _) => Operation::Lt(a, b),
+                        ExprKind::Le(_, _) => Operation::Le(a, b),
+                        ExprKind::Gt(_, _) => Operation::Gt(a, b),
+                        ExprKind::Ge(_, _) => Operation::Ge(a, b),
+                        _ => unreachable!(),
+                    },
+                    Type::Bool,
+                )
             }
             ExprKind::Call(name, args) => {
                 if name == "request" {

@@ -25,7 +25,11 @@ pub(crate) fn expr_height(expr: &Expr) -> usize {
         | ExprKind::Sub(a, b)
         | ExprKind::Mul(a, b)
         | ExprKind::Eq(a, b)
+        | ExprKind::Ne(a, b)
         | ExprKind::Lt(a, b)
+        | ExprKind::Le(a, b)
+        | ExprKind::Gt(a, b)
+        | ExprKind::Ge(a, b)
         | ExprKind::And(a, b)
         | ExprKind::Or(a, b) => expr_height(a).max(expr_height(b)),
         ExprKind::VariantCall(_, _, value) => expr_height(value),

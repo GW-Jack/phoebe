@@ -293,7 +293,11 @@ impl CoreTask {
             Operation::Sub(a, b) => Some(Value::I64(as_i64(get(*a)).wrapping_sub(as_i64(get(*b))))),
             Operation::Mul(a, b) => Some(Value::I64(as_i64(get(*a)).wrapping_mul(as_i64(get(*b))))),
             Operation::Eq(a, b) => Some(Value::Bool(get(*a) == get(*b))),
+            Operation::Ne(a, b) => Some(Value::Bool(get(*a) != get(*b))),
             Operation::Lt(a, b) => Some(Value::Bool(as_i64(get(*a)) < as_i64(get(*b)))),
+            Operation::Le(a, b) => Some(Value::Bool(as_i64(get(*a)) <= as_i64(get(*b)))),
+            Operation::Gt(a, b) => Some(Value::Bool(as_i64(get(*a)) > as_i64(get(*b)))),
+            Operation::Ge(a, b) => Some(Value::Bool(as_i64(get(*a)) >= as_i64(get(*b)))),
             Operation::Call(_, _) => unreachable!("calls push a retained frame"),
             Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                 let value = get(*value);
@@ -872,7 +876,11 @@ impl fmt::Display for Program {
                         Operation::Sub(a, b) => write!(f, "sub v{}, v{}", a.0, b.0)?,
                         Operation::Mul(a, b) => write!(f, "mul v{}, v{}", a.0, b.0)?,
                         Operation::Eq(a, b) => write!(f, "eq v{}, v{}", a.0, b.0)?,
+                        Operation::Ne(a, b) => write!(f, "ne v{}, v{}", a.0, b.0)?,
                         Operation::Lt(a, b) => write!(f, "lt v{}, v{}", a.0, b.0)?,
+                        Operation::Le(a, b) => write!(f, "le v{}, v{}", a.0, b.0)?,
+                        Operation::Gt(a, b) => write!(f, "gt v{}, v{}", a.0, b.0)?,
+                        Operation::Ge(a, b) => write!(f, "ge v{}, v{}", a.0, b.0)?,
                         Operation::Call(target, args) => {
                             write!(f, "call {}(", self.functions[target.0].name)?;
                             for (index, arg) in args.iter().enumerate() {

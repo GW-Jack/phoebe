@@ -190,7 +190,11 @@ fn expr(a: &Expr, b: &Expr, delta: isize) -> bool {
         | (ExprKind::Sub(a1, a2), ExprKind::Sub(b1, b2))
         | (ExprKind::Mul(a1, a2), ExprKind::Mul(b1, b2))
         | (ExprKind::Eq(a1, a2), ExprKind::Eq(b1, b2))
+        | (ExprKind::Ne(a1, a2), ExprKind::Ne(b1, b2))
         | (ExprKind::Lt(a1, a2), ExprKind::Lt(b1, b2))
+        | (ExprKind::Le(a1, a2), ExprKind::Le(b1, b2))
+        | (ExprKind::Gt(a1, a2), ExprKind::Gt(b1, b2))
+        | (ExprKind::Ge(a1, a2), ExprKind::Ge(b1, b2))
         | (ExprKind::And(a1, a2), ExprKind::And(b1, b2))
         | (ExprKind::Or(a1, a2), ExprKind::Or(b1, b2)) => {
             expr(a1, b1, delta) && expr(a2, b2, delta)
