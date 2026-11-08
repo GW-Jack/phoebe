@@ -317,6 +317,7 @@ fn analyze_verified(program: &Program, suspendable: &[bool]) -> Result<Vec<Funct
         if !suspendable[function_id] {
             continue;
         }
+        let lexical_roots = core::lexical_roots(function)?;
         let mut incoming = vec![Live::empty(function); function.blocks.len()];
         loop {
             let mut changed = false;
@@ -348,8 +349,10 @@ fn analyze_verified(program: &Program, suspendable: &[bool]) -> Result<Vec<Funct
                     | Terminator::Yield { .. }
                     | Terminator::ScopeJoin { .. }
             ) {
-                all.union(&live);
-                points.push(point(BlockId(block_id), None, &live));
+                let mut retained = live.clone();
+                retain_lexical_roots(&mut retained, &lexical_roots);
+                all.union(&retained);
+                points.push(point(BlockId(block_id), None, &retained));
             }
             for (instruction_id, instruction) in block.instructions.iter().enumerate().rev() {
                 if let Operation::Call(target, args) = &instruction.operation
@@ -364,6 +367,7 @@ fn analyze_verified(program: &Program, suspendable: &[bool]) -> Result<Vec<Funct
                             retained.places[place.0] = true;
                         }
                     }
+                    retain_lexical_roots(&mut retained, &lexical_roots);
                     all.union(&retained);
                     points.push(point(BlockId(block_id), Some(instruction_id), &retained));
                 }
@@ -407,6 +411,16 @@ fn analyze_verified(program: &Program, suspendable: &[bool]) -> Result<Vec<Funct
         });
     }
     Ok(frames)
+}
+
+fn retain_lexical_roots(live: &mut Live, roots: &[Option<PlaceId>]) {
+    for (id, root) in roots.iter().enumerate() {
+        if live.values[id]
+            && let Some(root) = root
+        {
+            live.places[root.0] = true;
+        }
+    }
 }
 
 /// Stable textual view of the planned frame payload and resume points.

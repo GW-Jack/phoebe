@@ -87,6 +87,35 @@ fn roots(loans: &[Option<Loan>]) -> Option<Vec<Option<PlaceId>>> {
     Some(roots)
 }
 
+/// Resolve every lexical reference to the place that owns its storage.
+/// The returned roots are useful to frame analysis after Core verification.
+pub fn lexical_roots(function: &Function) -> Result<Vec<Option<PlaceId>>, String> {
+    let mut loans = vec![None; function.value_types.len()];
+    for block in &function.blocks {
+        for instruction in &block.instructions {
+            let loan = match instruction.operation {
+                Operation::BorrowBegin(place, exclusive) => Some(Loan {
+                    origin: LoanOrigin::Root(place),
+                    exclusive,
+                }),
+                Operation::BorrowReborrow(parent, exclusive) => Some(Loan {
+                    origin: LoanOrigin::Parent(parent),
+                    exclusive,
+                }),
+                _ => None,
+            };
+            if let Some(loan) = loan {
+                let result = instruction
+                    .result
+                    .ok_or("borrow operation lacks a result")?;
+                let slot = loans.get_mut(result.0).ok_or("invalid lexical result")?;
+                *slot = Some(loan);
+            }
+        }
+    }
+    roots(&loans).ok_or_else(|| format!("{}: reborrow has no lexical root", function.name))
+}
+
 fn conflict(
     active: &[bool],
     loans: &[Option<Loan>],
@@ -245,7 +274,6 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                 && matches!(
                     block.terminator,
                     Terminator::Return(_)
-                        | Terminator::Yield { .. }
                         | Terminator::ScopeJoin { .. }
                         | Terminator::ChannelSend { .. }
                         | Terminator::ChannelReceive { .. }

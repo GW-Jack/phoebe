@@ -1,4 +1,4 @@
-use phoebe::{core, native, syntax};
+use phoebe::{core, frame_layout, native, syntax};
 use std::process::Command;
 
 fn lexical_write() -> core::Program {
@@ -406,4 +406,77 @@ fn exclusive_parent_can_grant_shared_child_then_regain_write_access() {
     core::verify(&program).unwrap();
     assert_eq!(program.interpret("main", &[]).unwrap(), 41);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 41);
+}
+
+#[test]
+fn live_reborrow_crosses_yield_with_stable_root_and_reference() {
+    let mut program =
+        core::lower(&syntax::parse("fn main() -> I64 { var x = 41; yield; x }").unwrap()).unwrap();
+    let function = &mut program.functions[0];
+    let parent = core::ValueId(function.value_types.len());
+    let child = core::ValueId(parent.0 + 1);
+    let value = core::ValueId(parent.0 + 2);
+    let read = core::ValueId(parent.0 + 3);
+    function.value_types.extend([
+        core::Type::RefMutI64,
+        core::Type::RefMutI64,
+        core::Type::I64,
+        core::Type::I64,
+    ]);
+    let span = function.blocks[0].instructions[0].span;
+    function.blocks[0].instructions.push(core::Instruction {
+        result: Some(parent),
+        operation: core::Operation::BorrowBegin(core::PlaceId(0), true),
+        span,
+    });
+    function.blocks[1].instructions[0].operation = core::Operation::Const(0);
+    function.blocks[1].instructions.splice(
+        0..0,
+        [
+            core::Instruction {
+                result: Some(child),
+                operation: core::Operation::BorrowReborrow(parent, true),
+                span,
+            },
+            core::Instruction {
+                result: Some(value),
+                operation: core::Operation::Const(42),
+                span,
+            },
+            core::Instruction {
+                result: None,
+                operation: core::Operation::StoreRef(child, value),
+                span,
+            },
+            core::Instruction {
+                result: Some(read),
+                operation: core::Operation::LoadRef(child),
+                span,
+            },
+            core::Instruction {
+                result: None,
+                operation: core::Operation::BorrowEnd(child),
+                span,
+            },
+            core::Instruction {
+                result: None,
+                operation: core::Operation::BorrowEnd(parent),
+                span,
+            },
+        ],
+    );
+    function.blocks[1].terminator = core::Terminator::Return(read);
+    core::verify(&program).unwrap();
+    let frames = frame_layout::analyze(&program).unwrap();
+    assert!(frames[0].points[0].values.contains(&parent));
+    assert!(frames[0].points[0].places.contains(&core::PlaceId(0)));
+    assert!(frames[0].place_slots.contains(&core::PlaceId(0)));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-live-loan-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
 }

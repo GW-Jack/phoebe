@@ -450,4 +450,4 @@ pub use lowering::{
     lower, lower_checked, lower_linked_checked, lower_linked_reusing, lower_reusing,
 };
 use verification::{capability_graph, recursive_call_span, verify_ownership, verify_structure};
-pub use verification::{operands, verify};
+pub use verification::{lexical_roots, operands, verify};
