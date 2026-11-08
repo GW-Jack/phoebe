@@ -353,6 +353,12 @@ impl CheckedProgram {
         &self.0
     }
 
+    /// Build the immutable descriptor catalog once for all concrete channel
+    /// types in this checked program.
+    pub fn message_catalog(&self) -> Result<phoebe_message::MessageCatalog, String> {
+        phoebe_message::MessageCatalog::new(&self.0)
+    }
+
     pub fn into_program(self) -> Program {
         self.0
     }
@@ -406,3 +412,21 @@ pub use lowering::{
 };
 use verification::{capability_graph, recursive_call_span, verify_ownership, verify_structure};
 pub use verification::{lexical_roots, operands, verify};
+
+#[cfg(test)]
+mod message_catalog_tests {
+    use super::*;
+
+    #[test]
+    fn checked_core_exposes_one_catalog_for_nominal_message_descriptors() {
+        let source = "data Payload { value: I64, reply: ReplyTo<I64> }\nfn main() -> I64 = 0\n";
+        let checked = lower_checked(&phoebe_syntax::parse(source).unwrap()).unwrap();
+        let catalog = checked.message_catalog().unwrap();
+        let descriptor = catalog.descriptor(Type::Data(DataId(0))).unwrap();
+        assert_eq!(descriptor.width, 2);
+        assert_eq!(
+            descriptor.rights,
+            runtime::TypedRightPlan::ReplyTo { part: 1 }
+        );
+    }
+}

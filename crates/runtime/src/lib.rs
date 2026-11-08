@@ -121,6 +121,14 @@ impl ReplyToken {
     pub fn native_word(self) -> Result<i64, String> {
         i64::try_from(self.0).map_err(|_| "reply token exceeds native ABI word".into())
     }
+
+    /// Decode a flattened token. Use still requires the scheduler's owner
+    /// check; decoding grants no capability by itself.
+    pub fn from_native_word(word: i64) -> Result<Self, String> {
+        usize::try_from(word)
+            .map(Self)
+            .map_err(|_| "invalid reply token word".into())
+    }
 }
 
 #[derive(Debug)]
@@ -213,6 +221,53 @@ pub enum ResourceError {
     ReplyLimit,
     TaskLimit,
     Allocation,
+}
+
+impl ResourceError {
+    pub fn native_word(self) -> i64 {
+        match self {
+            Self::InvalidChannelCapacity => 1,
+            Self::ChannelLimit => 2,
+            Self::ReplyLimit => 3,
+            Self::Allocation => 4,
+            Self::TaskLimit => 5,
+            Self::HandleLimit => 6,
+        }
+    }
+
+    pub fn from_native_word(word: i64) -> Result<Self, String> {
+        match word {
+            1 => Ok(Self::InvalidChannelCapacity),
+            2 => Ok(Self::ChannelLimit),
+            3 => Ok(Self::ReplyLimit),
+            4 => Ok(Self::Allocation),
+            5 => Ok(Self::TaskLimit),
+            6 => Ok(Self::HandleLimit),
+            _ => Err("invalid resource error word".into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod resource_word_tests {
+    use super::ResourceError;
+
+    #[test]
+    fn resource_codes_preserve_the_native_abi_and_reject_unknown_words() {
+        for (error, code) in [
+            (ResourceError::InvalidChannelCapacity, 1),
+            (ResourceError::ChannelLimit, 2),
+            (ResourceError::ReplyLimit, 3),
+            (ResourceError::Allocation, 4),
+            (ResourceError::TaskLimit, 5),
+            (ResourceError::HandleLimit, 6),
+        ] {
+            assert_eq!(error.native_word(), code);
+            assert_eq!(ResourceError::from_native_word(code), Ok(error));
+        }
+        assert!(ResourceError::from_native_word(0).is_err());
+        assert!(ResourceError::from_native_word(7).is_err());
+    }
 }
 
 impl fmt::Display for ResourceError {

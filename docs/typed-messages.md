@@ -38,11 +38,15 @@ layout for eligible messages. `MessageLayout::visit_active_rights` walks the
 selected leaves without allocating on success, validates the ABI word count,
 and rejects an out-of-range active tag. The runtime has an independent
 `TypedRightPlan` for `ReplyTo<I64>` leaves, nested sequences, and tagged arms.
-`phoebe_native::runtime_message_descriptor` translates the checked ABI plan
+`phoebe_message::MessageCatalog` builds one shape table for a checked program;
+its `runtime_message_descriptor` translates the checked ABI plan
 to that runtime plan, preserving flattened offsets and structural close order.
 Its type ID is unique within one linked program and must not be reused across
-independently linked programs. Checked Core channel operations, generated
-native calls, and transfer of other right kinds remain open.
+independently linked programs. The interpreter's concrete `Request<I64>`
+channel now creates its runtime queue from this catalog and encodes and
+decodes its two words through the same layout table. General checked Core
+channel operations, generated native descriptor calls, and transfer of other
+right kinds remain open.
 
 ## Ownership equations
 
@@ -88,12 +92,13 @@ occupancy so boundedness is preserved.
 
 1. Keep the backend-independent `MessageLayout` in `phoebe_layout` as the source
    for runtime descriptor generation. Core and `phoebe_abi` can both use this
-   crate without a dependency cycle. Its current tests cover nested
-   products, `Request<I64>`, tagged sums, references, and recursive layout
-   rejection. The native adapter now creates the runtime descriptor and tests
+   crate without a dependency cycle. `phoebe_message` owns conversion to the
+   runtime descriptor and is usable by both Core and native code. The layout
+   tests cover nested products, `Request<I64>`, tagged sums, references, and
+   recursive layout rejection. Native integration tests cover
    equal-width type distinction, active-arm offsets, and a tagged runtime
-   transfer. Core and code generation still need to request this descriptor
-   at checked channel creation sites.
+   transfer. The interpreter's concrete request channel requests it at
+   creation; general Core and native creation sites remain open.
 2. Extend the runtime's preallocated typed slots beyond `ReplyTo<I64>` rights.
    The current path checks type identity and width, validates all active reply
    rights before changing any owner, transfers multiple rights on enqueue and

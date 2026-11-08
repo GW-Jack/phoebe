@@ -9,14 +9,7 @@ pub struct NativeCallContext {
 }
 
 pub(super) fn resource_code(error: ResourceError) -> i64 {
-    match error {
-        ResourceError::InvalidChannelCapacity => 1,
-        ResourceError::ChannelLimit => 2,
-        ResourceError::HandleLimit => 6,
-        ResourceError::ReplyLimit => 3,
-        ResourceError::Allocation => 4,
-        ResourceError::TaskLimit => 5,
-    }
+    error.native_word()
 }
 
 /// Returns 0 and writes both handles on success, or a nonzero resource code

@@ -342,6 +342,8 @@ The runtime also has native ABI shims for this concrete request layout.
 Native poll tests cover atomic creation, enqueue/dequeue transfer, closed-send
 retention, and pending receive wakeup. Cranelift lowering uses these shims for
 the concrete two-word request layout.
+The interpreter creates its request queue from the checked message catalog
+and encodes and decodes the two words using the same flattened layout table.
 Runtime task failure now cancels remaining scope tasks immediately after
 closing the failing task's rights. A host regression catches the case where
 the parent retained another sender and would otherwise report a deadlock

@@ -10,6 +10,7 @@ phoebe-abi = { path = "../abi" }
 phoebe-core = { path = "../core" }
 phoebe-frame = { path = "../frame" }
 phoebe-generic-core = { path = "../generic-core" }
+phoebe-message = { path = "../message" }
 phoebe-runtime = { path = "../runtime" }
 phoebe-syntax = { path = "../syntax" }
 cranelift-codegen = "=0.135.2"

@@ -1,84 +1,13 @@
-//! Translate checked, backend-independent message layouts to the current
-//! runtime's typed queue descriptor. No descriptor is built at send time.
-
-use phoebe_abi::{ClosePlan, MessageLayout};
-use phoebe_core::{DataId, Type};
-use phoebe_runtime::{REQUEST_I64_MESSAGE_TYPE_ID, TypedRightPlan};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RuntimeMessageDescriptor {
-    pub type_id: u64,
-    pub width: usize,
-    pub rights: TypedRightPlan,
-}
-
-/// Type IDs are unique within one checked linked Program. The high bit is
-/// reserved for its dense nominal DataId space; low values name built-ins.
-/// A descriptor must never be reused across independently linked programs.
-fn type_id(ty: Type) -> Result<u64, String> {
-    match ty {
-        Type::I64 => Ok(1),
-        Type::Bool => Ok(2),
-        Type::Unit => Ok(3),
-        Type::RequestI64 => Ok(REQUEST_I64_MESSAGE_TYPE_ID),
-        Type::ReplyToI64 => Ok(5),
-        Type::ResourceError => Ok(6),
-        Type::Data(DataId(id)) => {
-            let id = u64::try_from(id).map_err(|_| "message data ID exceeds runtime type ID")?;
-            if id >= (1u64 << 63) {
-                return Err("message data ID exceeds runtime type ID".into());
-            }
-            Ok((1u64 << 63) | id)
-        }
-        _ => Err("message type is not supported by the typed runtime".into()),
-    }
-}
-
-fn rights(plan: &ClosePlan, depth: usize) -> Result<TypedRightPlan, String> {
-    if depth >= 64 {
-        return Err("message ownership plan exceeds runtime depth limit".into());
-    }
-    match plan {
-        ClosePlan::Empty => Ok(TypedRightPlan::Empty),
-        ClosePlan::Leaf {
-            part,
-            kind: Type::ReplyToI64,
-        } => Ok(TypedRightPlan::ReplyTo { part: *part }),
-        ClosePlan::Leaf { .. } => {
-            Err("message contains a right unsupported by the typed runtime".into())
-        }
-        ClosePlan::Sequence(plans) => Ok(TypedRightPlan::Sequence(
-            plans
-                .iter()
-                .map(|plan| rights(plan, depth + 1))
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-        ClosePlan::Tagged { tag_part, arms } => Ok(TypedRightPlan::Tagged {
-            tag_part: *tag_part,
-            arms: arms
-                .iter()
-                .map(|arm| rights(arm, depth + 1))
-                .collect::<Result<Vec<_>, _>>()?,
-        }),
-    }
-}
-
-pub fn runtime_message_descriptor(
-    layout: &MessageLayout,
-) -> Result<RuntimeMessageDescriptor, String> {
-    Ok(RuntimeMessageDescriptor {
-        type_id: type_id(layout.ty())?,
-        width: layout.shape().parts().len(),
-        rights: rights(layout.close_plan(), 0)?,
-    })
-}
+pub use phoebe_message::{RuntimeMessageDescriptor, runtime_message_descriptor};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use phoebe_abi::Shapes;
-    use phoebe_core::{DataDef, Program};
-    use phoebe_runtime::{Context, Scheduler, Task, TypedReceiveResult, TypedSendResult};
+    use phoebe_core::{DataDef, DataId, Program, Type};
+    use phoebe_runtime::{
+        Context, Scheduler, Task, TypedReceiveResult, TypedRightPlan, TypedSendResult,
+    };
     use std::task::Poll;
 
     #[test]

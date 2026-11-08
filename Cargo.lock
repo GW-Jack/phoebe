@@ -435,6 +435,7 @@ dependencies = [
  "phoebe-capability",
  "phoebe-generic-core",
  "phoebe-layout",
+ "phoebe-message",
  "phoebe-runtime",
  "phoebe-syntax",
 ]
@@ -462,6 +463,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phoebe-message"
+version = "0.0.1"
+dependencies = [
+ "phoebe-layout",
+ "phoebe-runtime",
+]
+
+[[package]]
 name = "phoebe-native"
 version = "0.0.1"
 dependencies = [
@@ -475,6 +484,7 @@ dependencies = [
  "phoebe-core",
  "phoebe-frame",
  "phoebe-generic-core",
+ "phoebe-message",
  "phoebe-runtime",
  "phoebe-syntax",
  "sha2",

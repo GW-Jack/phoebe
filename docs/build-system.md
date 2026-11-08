@@ -1,15 +1,15 @@
 # Build graph
 
-Phoebe has eleven library crates and a root facade/CLI. Dependencies point in
+Phoebe has twelve library crates and a root facade/CLI. Dependencies point in
 one direction:
 
-`package` and `syntax` feed `project`. `syntax`, `capability`, `runtime`, and
-`generic-core`, and `layout` feed `core`; `core` feeds `abi` and `frame`;
-`generic-core` and `layout` also feed `abi`;
-`abi`, `core`, `frame`, `runtime`,
-and `syntax` feed `native`. `capability` and `syntax` feed the isolated
-`generic-core` verifier and source subset lowerer. The root facade and CLI
-sit atop this graph.
+`package` and `syntax` feed `project`. `syntax` feeds `layout`, which joins
+`runtime` beneath `message`. `syntax`, `capability`, `runtime`, `generic-core`,
+`layout`, and `message` feed `core`; `core` feeds `abi` and `frame`.
+`generic-core` and `layout` also feed `abi`. `abi`, `core`, `frame`,
+`message`, `runtime`, and `syntax` feed `native`. `capability` and `syntax`
+feed the isolated `generic-core` verifier and source subset lowerer. The
+root facade and CLI sit atop this graph.
 
 - `phoebe-syntax`: spans, diagnostics, lexer, parser, and source AST.
 - `phoebe-package`: content-pinned local dependency graph and lockfile.
@@ -18,6 +18,9 @@ sit atop this graph.
 - `phoebe-runtime`: scheduler, channels, reply rights, and native ABI.
 - `phoebe-layout`: concrete types, data declarations, flattened transport
   shapes, and structural capability close plans shared by Core and native code.
+- `phoebe-message`: one checked shape table and the runtime descriptor
+  conversion shared by Core and native code. The interpreter caches its
+  concrete request descriptor per task.
 - `phoebe-core`: checked IR, lowering, verification, interpreter, and
   linked call verification and interpreted dispatch against checked generic modules.
 - `phoebe-generic-core`: experimental parametric IR and opaque-owner verifier.

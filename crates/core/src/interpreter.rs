@@ -1,5 +1,8 @@
 use super::*;
 use phoebe_generic_core as generic_core;
+use std::sync::OnceLock;
+
+mod message;
 
 fn eval_generic(
     module: &CheckedModule,
@@ -365,6 +368,8 @@ impl CheckedLinkedProgram {
 struct CoreTask {
     program: Arc<Program>,
     generics: Option<Arc<CheckedModule>>,
+    message_catalog: OnceLock<phoebe_message::MessageCatalog>,
+    request_descriptor: OnceLock<phoebe_message::RuntimeMessageDescriptor>,
     frames: Vec<InterpreterFrame>,
     stores: Vec<Option<Value>>,
 }
@@ -388,11 +393,28 @@ impl CoreTask {
         let mut task = Self {
             program,
             generics,
+            message_catalog: OnceLock::new(),
+            request_descriptor: OnceLock::new(),
             frames: Vec::new(),
             stores: Vec::new(),
         };
         task.push_frame(entry, args, None);
         task
+    }
+
+    fn message_catalog(&self) -> &phoebe_message::MessageCatalog {
+        self.message_catalog.get_or_init(|| {
+            phoebe_message::MessageCatalog::new(self.program.as_ref())
+                .expect("verified Core has finite message layouts")
+        })
+    }
+
+    fn request_descriptor(&self) -> &phoebe_message::RuntimeMessageDescriptor {
+        self.request_descriptor.get_or_init(|| {
+            self.message_catalog()
+                .descriptor(Type::RequestI64)
+                .expect("verified request has a runtime message descriptor")
+        })
     }
 
     fn push_frame(&mut self, function: FunctionId, args: Vec<Value>, return_to: Option<ValueId>) {
@@ -709,13 +731,19 @@ impl CoreTask {
                     success,
                     failure,
                 } => {
+                    let descriptor = self.request_descriptor();
                     let result = usize::try_from(as_i64(self.value(capacity)))
                         .map_err(|_| ResourceError::InvalidChannelCapacity)
                         .and_then(|capacity| {
                             context
                                 .as_deref_mut()
                                 .expect("runtime context")
-                                .request_channel_typed(capacity)
+                                .typed_right_channel(
+                                    capacity,
+                                    descriptor.type_id,
+                                    descriptor.width,
+                                    descriptor.rights.clone(),
+                                )
                         });
                     match result {
                         Ok((sender, receiver)) => self.enter(
@@ -749,28 +777,29 @@ impl CoreTask {
                     let Value::Sender(sender_token) = self.value(sender) else {
                         unreachable!("verified sender")
                     };
-                    let Value::Request(value, right_token) = self.value(request) else {
-                        unreachable!("verified request")
-                    };
-                    let request_value = runtime::Request {
-                        value,
-                        reply: runtime::ReplyTo::from_token(right_token),
-                    };
+                    let descriptor = self.request_descriptor();
+                    let request_value = self.value(request);
+                    let mut words = [0; 2];
+                    message::encode_into(
+                        &self.program.data,
+                        self.message_catalog().shapes(),
+                        Type::RequestI64,
+                        &request_value,
+                        &mut words,
+                    )?;
                     match context
                         .as_deref_mut()
                         .expect("runtime context")
-                        .send_request_owned(
+                        .send_typed_words(
                             &runtime::Sender::from_token(sender_token),
-                            request_value,
-                        )
-                        .map_err(|error| error.message)?
-                    {
-                        runtime::RequestSendResult::Sent => self.enter(sent, Vec::new()),
-                        runtime::RequestSendResult::Closed(request) => self.enter(
-                            closed,
-                            vec![Value::Request(request.value, request.reply.token())],
-                        ),
-                        runtime::RequestSendResult::Pending(_) => return Ok(Poll::Pending),
+                            descriptor.type_id,
+                            &words,
+                        )? {
+                        runtime::TypedSendResult::Sent => self.enter(sent, Vec::new()),
+                        runtime::TypedSendResult::Closed => {
+                            self.enter(closed, vec![request_value]);
+                        }
+                        runtime::TypedSendResult::Pending => return Ok(Poll::Pending),
                     }
                 }
                 Terminator::RequestReceive {
@@ -781,17 +810,27 @@ impl CoreTask {
                     let Value::Receiver(token) = self.value(receiver) else {
                         unreachable!("verified receiver")
                     };
+                    let descriptor = self.request_descriptor();
+                    let mut words = [0; 2];
                     match context
                         .as_deref_mut()
                         .expect("runtime context")
-                        .receive_request(&runtime::Receiver::from_token(token))?
-                    {
-                        runtime::RequestReceiveResult::Value(request) => self.enter(
+                        .receive_typed_words(
+                            &runtime::Receiver::from_token(token),
+                            descriptor.type_id,
+                            &mut words,
+                        )? {
+                        runtime::TypedReceiveResult::Value => self.enter(
                             value,
-                            vec![Value::Request(request.value, request.reply.token())],
+                            vec![message::decode(
+                                &self.program.data,
+                                self.message_catalog().shapes(),
+                                Type::RequestI64,
+                                &words,
+                            )?],
                         ),
-                        runtime::RequestReceiveResult::End => self.enter(end, Vec::new()),
-                        runtime::RequestReceiveResult::Pending => return Ok(Poll::Pending),
+                        runtime::TypedReceiveResult::End => self.enter(end, Vec::new()),
+                        runtime::TypedReceiveResult::Pending => return Ok(Poll::Pending),
                     }
                 }
                 Terminator::Fork {
