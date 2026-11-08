@@ -272,7 +272,9 @@ fn suspendable_functions_verified(program: &Program) -> Vec<bool> {
             if matches!(
                 block.terminator,
                 Terminator::ChannelSend { .. }
+                    | Terminator::TypedSend { .. }
                     | Terminator::ChannelReceive { .. }
+                    | Terminator::TypedReceive { .. }
                     | Terminator::RequestSend { .. }
                     | Terminator::RequestReceive { .. }
                     | Terminator::ReplyReceive { .. }
@@ -343,7 +345,9 @@ fn analyze_verified(program: &Program, suspendable: &[bool]) -> Result<Vec<Funct
             if matches!(
                 block.terminator,
                 Terminator::ChannelSend { .. }
+                    | Terminator::TypedSend { .. }
                     | Terminator::ChannelReceive { .. }
+                    | Terminator::TypedReceive { .. }
                     | Terminator::RequestSend { .. }
                     | Terminator::RequestReceive { .. }
                     | Terminator::ReplyReceive { .. }
@@ -567,6 +571,12 @@ fn terminator_live(function: &Function, block_id: usize, incoming: &[Live]) -> L
             capacity,
             success,
             failure,
+        }
+        | Terminator::TypedChannelNew {
+            capacity,
+            success,
+            failure,
+            ..
         } => {
             edge(*success, None);
             edge(*failure, None);
@@ -627,6 +637,12 @@ fn terminator_live(function: &Function, block_id: usize, incoming: &[Live]) -> L
             message,
             sent,
             closed,
+        }
+        | Terminator::TypedSend {
+            sender,
+            message,
+            sent,
+            closed,
         } => {
             edge(*sent, None);
             edge(*closed, None);
@@ -634,6 +650,11 @@ fn terminator_live(function: &Function, block_id: usize, incoming: &[Live]) -> L
             live.values[message.0] = true;
         }
         Terminator::ChannelReceive {
+            receiver,
+            value,
+            end,
+        }
+        | Terminator::TypedReceive {
             receiver,
             value,
             end,

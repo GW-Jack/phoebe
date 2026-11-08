@@ -195,6 +195,9 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                 }
                 Terminator::ChannelNew {
                     success, failure, ..
+                }
+                | Terminator::TypedChannelNew {
+                    success, failure, ..
                 } => vec![success.0, failure.0],
                 Terminator::ReplyNew { success, failure } => vec![success.0, failure.0],
                 Terminator::RequestChannelNew {
@@ -209,7 +212,17 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                     vec![next.0]
                 }
                 Terminator::RequestSend { sent, closed, .. } => vec![sent.0, closed.0],
-                Terminator::RequestReceive { value, end, .. } => vec![value.0, end.0],
+                Terminator::TypedSend {
+                    message,
+                    sent,
+                    closed,
+                    ..
+                } => {
+                    value_use(&mut state, *message, true, span)?;
+                    vec![sent.0, closed.0]
+                }
+                Terminator::RequestReceive { value, end, .. }
+                | Terminator::TypedReceive { value, end, .. } => vec![value.0, end.0],
                 Terminator::Fork {
                     success, failure, ..
                 } => vec![success.0, failure.0],

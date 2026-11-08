@@ -67,6 +67,9 @@ fn verify_function(function: &Function) -> Result<(), String> {
             Terminator::ChannelNew {
                 success, failure, ..
             }
+            | Terminator::TypedChannelNew {
+                success, failure, ..
+            }
             | Terminator::RequestChannelNew {
                 success, failure, ..
             }
@@ -81,8 +84,10 @@ fn verify_function(function: &Function) -> Result<(), String> {
                 vec![next.0]
             }
             Terminator::RequestSend { sent, closed, .. }
+            | Terminator::TypedSend { sent, closed, .. }
             | Terminator::ChannelSend { sent, closed, .. } => vec![sent.0, closed.0],
             Terminator::RequestReceive { value, end, .. }
+            | Terminator::TypedReceive { value, end, .. }
             | Terminator::ChannelReceive { value, end, .. }
             | Terminator::ReplyReceive { value, end, .. } => vec![value.0, end.0],
             Terminator::ReplyComplete {

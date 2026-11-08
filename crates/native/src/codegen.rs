@@ -1,4 +1,5 @@
 use super::*;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::runtime_imports::{declare_reply_imports, declare_request_imports};
@@ -80,7 +81,7 @@ impl AbiShapes {
             .collect()
     }
 
-    pub(super) fn capability_parts(&self, ty: Type) -> &[phoebe_abi::CapabilityPart] {
+    pub(super) fn capability_parts(&self, ty: Type) -> Cow<'_, [phoebe_abi::CapabilityPart]> {
         self.shapes
             .capability_parts(ty)
             .expect("checked Core type has an ABI capability layout")
@@ -100,12 +101,14 @@ impl AbiShapes {
         out: &mut Vec<(i64, T)>,
         mut part: impl FnMut(usize) -> T,
     ) {
-        for leaf in self.capability_parts(ty) {
+        for leaf in self.capability_parts(ty).iter() {
             let kind = match leaf.kind {
                 Type::SenderI64
                 | Type::ReceiverI64
                 | Type::RequestSenderI64
-                | Type::RequestReceiverI64 => 0,
+                | Type::RequestReceiverI64
+                | Type::TypedSender(_)
+                | Type::TypedReceiver(_) => 0,
                 Type::ReplyToI64 => 1,
                 Type::ReplyReceiverI64 => 2,
                 _ => unreachable!("capability ABI leaf"),
@@ -462,6 +465,9 @@ pub(super) fn compile_functions<M: Module>(
                     Terminator::Match { arms, .. } => arms.iter().map(|arm| arm.target.0).collect(),
                     Terminator::ChannelNew {
                         success, failure, ..
+                    }
+                    | Terminator::TypedChannelNew {
+                        success, failure, ..
                     } => vec![success.0, failure.0],
                     Terminator::ReplyNew { success, failure } => vec![success.0, failure.0],
                     Terminator::RequestChannelNew {
@@ -474,8 +480,10 @@ pub(super) fn compile_functions<M: Module>(
                     Terminator::Fork {
                         success, failure, ..
                     } => vec![success.0, failure.0],
-                    Terminator::ChannelSend { sent, closed, .. } => vec![sent.0, closed.0],
-                    Terminator::ChannelReceive { value, end, .. } => vec![value.0, end.0],
+                    Terminator::ChannelSend { sent, closed, .. }
+                    | Terminator::TypedSend { sent, closed, .. } => vec![sent.0, closed.0],
+                    Terminator::ChannelReceive { value, end, .. }
+                    | Terminator::TypedReceive { value, end, .. } => vec![value.0, end.0],
                     Terminator::ReplyComplete {
                         delivered, closed, ..
                     } => {
@@ -681,8 +689,12 @@ pub(super) fn compile_functions<M: Module>(
                                 runtime_imports.expect("channel runtime imports");
                             let callee = module.declare_func_in_func(close, builder.func);
                             let kind = match function.value_types[value.0] {
-                                Type::SenderI64 | Type::RequestSenderI64 => 0,
-                                Type::ReceiverI64 | Type::RequestReceiverI64 => 1,
+                                Type::SenderI64 | Type::RequestSenderI64 | Type::TypedSender(_) => {
+                                    0
+                                }
+                                Type::ReceiverI64
+                                | Type::RequestReceiverI64
+                                | Type::TypedReceiver(_) => 1,
                                 _ => unreachable!("verified handle kind"),
                             };
                             let kind = builder.ins().iconst(types::I64, kind);
@@ -697,8 +709,12 @@ pub(super) fn compile_functions<M: Module>(
                             let plan = shapes.close_plan(function.value_types[value.0]);
                             close::emit(&mut builder, &plan, &parts, &mut |builder, ty, token| {
                                 let kind = match ty {
-                                    Type::SenderI64 | Type::RequestSenderI64 => 0,
-                                    Type::ReceiverI64 | Type::RequestReceiverI64 => 1,
+                                    Type::SenderI64
+                                    | Type::RequestSenderI64
+                                    | Type::TypedSender(_) => 0,
+                                    Type::ReceiverI64
+                                    | Type::RequestReceiverI64
+                                    | Type::TypedReceiver(_) => 1,
                                     Type::ReplyToI64 => 0,
                                     Type::ReplyReceiverI64 => 1,
                                     _ => return Err("unsupported structural close leaf".into()),
@@ -708,7 +724,9 @@ pub(super) fn compile_functions<M: Module>(
                                     Type::SenderI64
                                     | Type::ReceiverI64
                                     | Type::RequestSenderI64
-                                    | Type::RequestReceiverI64 => {
+                                    | Type::RequestReceiverI64
+                                    | Type::TypedSender(_)
+                                    | Type::TypedReceiver(_) => {
                                         runtime_imports.expect("channel runtime imports").1
                                     }
                                     _ => reply_imports.expect("reply runtime imports").close,
@@ -777,6 +795,11 @@ pub(super) fn compile_functions<M: Module>(
                 let get =
                     |id: core::ValueId| values[id.0].clone().expect("verified value is defined");
                 match &block.terminator {
+                    Terminator::TypedChannelNew { .. }
+                    | Terminator::TypedSend { .. }
+                    | Terminator::TypedReceive { .. } => {
+                        return Err("native typed channel lowering is not implemented".into());
+                    }
                     Terminator::Yield { .. } => {
                         return Err("native yield requires retained task frames".into());
                     }
@@ -985,7 +1008,12 @@ pub(super) fn compile_functions<M: Module>(
                         let out = builder.ins().stack_addr(pointer_type, out_slot, 0);
                         let kind = builder.ins().iconst(
                             types::I64,
-                            i64::from(function.value_types[source.0] == Type::ReceiverI64),
+                            i64::from(matches!(
+                                function.value_types[source.0],
+                                Type::ReceiverI64
+                                    | Type::RequestReceiverI64
+                                    | Type::TypedReceiver(_)
+                            )),
                         );
                         let call = builder.ins().call(
                             callee,

@@ -51,6 +51,12 @@ An executable aggregate witness now encodes a tagged product with an active
 reply right, transfers it through the runtime queue, decodes it, and closes
 the returned right. This exercises the bridge below source `channel<T>`;
 it does not establish the general source or native path.
+Checked Core now has `TypedChannelNew`, `TypedSend`, and `TypedReceive` for
+concrete message identities. The verifier checks exact endpoint and message
+types and derives capability actions for success, closed, retry, and value
+edges. Hand-built Core programs interpret nominal messages, including a
+product that owns a reply right. Native lowering reports an explicit
+unsupported operation until it can pass descriptors and flattened words.
 
 ## Ownership equations
 
@@ -101,8 +107,8 @@ occupancy so boundedness is preserved.
    tests cover nested products, `Request<I64>`, tagged sums, references, and
    recursive layout rejection. Native integration tests cover
    equal-width type distinction, active-arm offsets, and a tagged runtime
-   transfer. The interpreter's concrete request channel requests it at
-   creation; general Core and native creation sites remain open.
+   transfer. The interpreter's concrete request and checked typed channel
+   creation paths request it; native creation remains open.
 2. Extend the runtime's preallocated typed slots beyond `ReplyTo<I64>` rights.
    The current path checks type identity and width, validates all active reply
    rights before changing any owner, transfers multiple rights on enqueue and
@@ -110,10 +116,11 @@ occupancy so boundedness is preserved.
    closed sends. Tests exercise active and inactive tagged arms, duplicate or
    invalid rights, and a two-task full queue. Injected precommit allocation
    failure and transfer of channel handles remain open.
-3. Add one checked Core typed send/receive family and lower source
-   `channel<T>` through it. The existing concrete `Request<I64>` Core and
-   native operations now run through the typed queue via their runtime
-   adapters; general `channel<T>` is still absent. Its native ABI must pass
+3. Lower source `channel<T>` through the checked typed Core family. The
+   interpreter path now handles nominal and reply-right aggregate messages;
+   source lowering and native code generation remain open. The existing
+   concrete `Request<I64>` native operations run through typed runtime adapters.
+   The general native ABI must pass
    descriptor identity and flattened words, never treating a matching word
    count as type identity.
 4. Extend the bounded Maude model to cover a two-message queue containing

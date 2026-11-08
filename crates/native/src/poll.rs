@@ -949,8 +949,12 @@ fn compile_poll_module<M: Module>(
                         Operation::CloseHandle(value) => {
                             let token = get(*value, &mut builder)[0];
                             let kind = match function.value_types[value.0] {
-                                Type::SenderI64 | Type::RequestSenderI64 => 0,
-                                Type::ReceiverI64 | Type::RequestReceiverI64 => 1,
+                                Type::SenderI64 | Type::RequestSenderI64 | Type::TypedSender(_) => {
+                                    0
+                                }
+                                Type::ReceiverI64
+                                | Type::RequestReceiverI64
+                                | Type::TypedReceiver(_) => 1,
                                 _ => unreachable!(),
                             };
                             let kind = builder.ins().iconst(types::I64, kind);
@@ -962,11 +966,13 @@ fn compile_poll_module<M: Module>(
                             let plan = shapes.close_plan(function.value_types[value.0]);
                             close::emit(&mut builder, &plan, &parts, &mut |builder, ty, token| {
                                 let kind = match ty {
-                                    Type::SenderI64 | Type::RequestSenderI64 | Type::ReplyToI64 => {
-                                        0
-                                    }
+                                    Type::SenderI64
+                                    | Type::RequestSenderI64
+                                    | Type::TypedSender(_)
+                                    | Type::ReplyToI64 => 0,
                                     Type::ReceiverI64
                                     | Type::RequestReceiverI64
+                                    | Type::TypedReceiver(_)
                                     | Type::ReplyReceiverI64 => 1,
                                     _ => return Err("unsupported structural close leaf".into()),
                                 };
@@ -975,7 +981,9 @@ fn compile_poll_module<M: Module>(
                                     Type::SenderI64
                                     | Type::ReceiverI64
                                     | Type::RequestSenderI64
-                                    | Type::RequestReceiverI64 => {
+                                    | Type::RequestReceiverI64
+                                    | Type::TypedSender(_)
+                                    | Type::TypedReceiver(_) => {
                                         builder.ins().call(close_ref, &[bridge, token, kind]);
                                     }
                                     _ => {
@@ -1033,6 +1041,11 @@ fn compile_poll_module<M: Module>(
                     }
                 }
                 match &block.terminator {
+                    Terminator::TypedChannelNew { .. }
+                    | Terminator::TypedSend { .. }
+                    | Terminator::TypedReceive { .. } => {
+                        return Err("native typed channel lowering is not implemented".into());
+                    }
                     Terminator::Return(value) => {
                         for (part, (var, ty)) in variables[value.0]
                             .iter()
@@ -1256,7 +1269,12 @@ fn compile_poll_module<M: Module>(
                         let token = builder.use_var(variables[source.0][0]);
                         let kind = builder.ins().iconst(
                             types::I64,
-                            i64::from(function.value_types[source.0] == Type::ReceiverI64),
+                            i64::from(matches!(
+                                function.value_types[source.0],
+                                Type::ReceiverI64
+                                    | Type::RequestReceiverI64
+                                    | Type::TypedReceiver(_)
+                            )),
                         );
                         let call = builder.ins().call(fork_ref, &[bridge, token, kind, out]);
                         let status = builder.inst_results(call)[0];

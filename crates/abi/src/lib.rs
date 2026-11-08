@@ -7,7 +7,7 @@ pub mod generic;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phoebe_core::{self as core, DataId, Type};
+    use phoebe_core::{self as core, DataId, MessageType, Type};
 
     #[test]
     fn distinct_nominal_products_share_transport_shape() {
@@ -89,8 +89,8 @@ mod tests {
         let shapes = Shapes::new(&program).unwrap();
         assert_eq!(shapes.parts(Type::Data(DataId(1))).unwrap().len(), 5);
         assert_eq!(
-            shapes.capability_parts(Type::Data(DataId(1))).unwrap(),
-            [
+            shapes.capability_parts(Type::Data(DataId(1))).unwrap().as_ref(),
+            &[
                 CapabilityPart {
                     part: 1,
                     kind: Type::SenderI64
@@ -104,6 +104,57 @@ mod tests {
                     kind: Type::ReceiverI64
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn typed_endpoint_rights_survive_nested_product_layout() {
+        let sender = Type::TypedSender(MessageType::Bool);
+        let receiver = Type::TypedReceiver(MessageType::Data(DataId(0)));
+        let program = core::Program {
+            data: vec![
+                core::DataDef {
+                    name: "Payload".into(),
+                    variants: vec![],
+                    payloads: vec![],
+                    fields: vec![("value".into(), Type::I64)],
+                },
+                core::DataDef {
+                    name: "Bundle".into(),
+                    variants: vec![],
+                    payloads: vec![],
+                    fields: vec![
+                        ("number".into(), Type::I64),
+                        ("sender".into(), sender),
+                        ("receiver".into(), receiver),
+                    ],
+                },
+            ],
+            functions: vec![],
+        };
+        let shapes = Shapes::new(&program).unwrap();
+        assert_eq!(
+            shapes
+                .capability_parts(Type::Data(DataId(1)))
+                .unwrap()
+                .as_ref(),
+            &[
+                CapabilityPart {
+                    part: 1,
+                    kind: sender
+                },
+                CapabilityPart {
+                    part: 2,
+                    kind: receiver
+                },
+            ]
+        );
+        assert_eq!(
+            shapes.capability_parts(sender).unwrap().as_ref(),
+            &[CapabilityPart {
+                part: 0,
+                kind: sender
+            }]
         );
     }
 

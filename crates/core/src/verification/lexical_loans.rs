@@ -19,6 +19,9 @@ fn successors(terminator: &Terminator) -> Vec<BlockId> {
         Terminator::ChannelNew {
             success, failure, ..
         }
+        | Terminator::TypedChannelNew {
+            success, failure, ..
+        }
         | Terminator::ReplyNew { success, failure }
         | Terminator::RequestChannelNew {
             success, failure, ..
@@ -30,8 +33,10 @@ fn successors(terminator: &Terminator) -> Vec<BlockId> {
             success, failure, ..
         } => vec![*success, *failure],
         Terminator::RequestSend { sent, closed, .. }
+        | Terminator::TypedSend { sent, closed, .. }
         | Terminator::ChannelSend { sent, closed, .. } => vec![*sent, *closed],
         Terminator::RequestReceive { value, end, .. }
+        | Terminator::TypedReceive { value, end, .. }
         | Terminator::ChannelReceive { value, end, .. }
         | Terminator::ReplyReceive { value, end, .. } => vec![*value, *end],
         Terminator::ReplyComplete {

@@ -21,7 +21,18 @@ pub(super) fn rebase_function(function: &mut Function, delta: isize) -> Result<(
 fn remap_type(ty: Type, data_ids: &[Option<DataId>]) -> Option<Type> {
     match ty {
         Type::Data(id) => data_ids.get(id.0).copied().flatten().map(Type::Data),
+        Type::TypedSender(message) => remap_message_type(message, data_ids).map(Type::TypedSender),
+        Type::TypedReceiver(message) => {
+            remap_message_type(message, data_ids).map(Type::TypedReceiver)
+        }
         _ => Some(ty),
+    }
+}
+
+fn remap_message_type(message: MessageType, data_ids: &[Option<DataId>]) -> Option<MessageType> {
+    match message {
+        MessageType::Data(id) => data_ids.get(id.0).copied().flatten().map(MessageType::Data),
+        _ => Some(message),
     }
 }
 
@@ -114,6 +125,12 @@ pub(super) fn remap_function_data(function: &mut Function, data_ids: &[Option<Da
         *ty = mapped;
     }
     for block in &mut function.blocks {
+        if let Terminator::TypedChannelNew { message, .. } = &mut block.terminator {
+            let Some(mapped) = remap_message_type(*message, data_ids) else {
+                return false;
+            };
+            *message = mapped;
+        }
         for instruction in &mut block.instructions {
             if let Operation::GenericCall { type_args, .. } = &mut instruction.operation {
                 for ty in type_args {
@@ -173,6 +190,39 @@ pub(super) fn remap_function_targets(
 #[cfg(test)]
 mod data_reuse_tests {
     use super::*;
+
+    #[test]
+    fn typed_endpoint_and_creation_identity_follow_nominal_id_remap() {
+        let old = MessageType::Data(DataId(0));
+        let new = MessageType::Data(DataId(2));
+        let mut function = Function {
+            name: "create".into(),
+            blocks: vec![Block {
+                params: vec![],
+                instructions: vec![],
+                terminator: Terminator::TypedChannelNew {
+                    message: old,
+                    capacity: ValueId(0),
+                    success: BlockId(0),
+                    failure: BlockId(0),
+                },
+            }],
+            value_types: vec![Type::TypedSender(old), Type::TypedReceiver(old)],
+            place_types: vec![],
+            loan_regions: vec![],
+            param_modes: vec![],
+            return_type: Type::I64,
+        };
+        assert!(remap_function_data(&mut function, &[Some(DataId(2))]));
+        assert_eq!(
+            function.value_types,
+            vec![Type::TypedSender(new), Type::TypedReceiver(new)]
+        );
+        assert!(
+            matches!(function.blocks[0].terminator, Terminator::TypedChannelNew { message, .. } if message == new)
+        );
+        assert!(!remap_function_data(&mut function, &[None, None, None]));
+    }
 
     #[test]
     fn nested_layout_change_invalidates_containing_type() {

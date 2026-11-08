@@ -3,6 +3,8 @@ use phoebe_generic_core as generic_core;
 use std::sync::OnceLock;
 
 mod message;
+#[cfg(test)]
+mod typed_channels;
 
 fn eval_generic(
     module: &CheckedModule,
@@ -230,6 +232,7 @@ impl Program {
                     && (matches!(
                         block.terminator,
                         Terminator::ChannelNew { .. }
+                            | Terminator::TypedChannelNew { .. }
                             | Terminator::ReplyNew { .. }
                             | Terminator::RequestChannelNew { .. }
                             | Terminator::RequestSend { .. }
@@ -238,7 +241,9 @@ impl Program {
                             | Terminator::Yield { .. }
                             | Terminator::ScopeJoin { .. }
                             | Terminator::ChannelSend { .. }
+                            | Terminator::TypedSend { .. }
                             | Terminator::ChannelReceive { .. }
+                            | Terminator::TypedReceive { .. }
                             | Terminator::ReplyComplete { .. }
                             | Terminator::ReplyReceive { .. }
                             | Terminator::Spawn { .. }
@@ -370,6 +375,7 @@ struct CoreTask {
     generics: Option<Arc<CheckedModule>>,
     message_catalog: OnceLock<phoebe_message::MessageCatalog>,
     request_descriptor: OnceLock<phoebe_message::RuntimeMessageDescriptor>,
+    typed_descriptors: HashMap<MessageType, phoebe_message::RuntimeMessageDescriptor>,
     frames: Vec<InterpreterFrame>,
     stores: Vec<Option<Value>>,
 }
@@ -395,6 +401,7 @@ impl CoreTask {
             generics,
             message_catalog: OnceLock::new(),
             request_descriptor: OnceLock::new(),
+            typed_descriptors: HashMap::new(),
             frames: Vec::new(),
             stores: Vec::new(),
         };
@@ -415,6 +422,20 @@ impl CoreTask {
                 .descriptor(Type::RequestI64)
                 .expect("verified request has a runtime message descriptor")
         })
+    }
+
+    fn typed_descriptor(
+        &mut self,
+        message: MessageType,
+    ) -> Result<&phoebe_message::RuntimeMessageDescriptor, String> {
+        if !self.typed_descriptors.contains_key(&message) {
+            let descriptor = self.message_catalog().descriptor(message.value_type())?;
+            self.typed_descriptors.insert(message, descriptor);
+        }
+        Ok(self
+            .typed_descriptors
+            .get(&message)
+            .expect("inserted typed descriptor"))
     }
 
     fn push_frame(&mut self, function: FunctionId, args: Vec<Value>, return_to: Option<ValueId>) {
@@ -710,6 +731,38 @@ impl CoreTask {
                         Err(error) => self.enter(failure, vec![Value::ResourceError(error)]),
                     }
                 }
+                Terminator::TypedChannelNew {
+                    message,
+                    capacity,
+                    success,
+                    failure,
+                } => {
+                    let capacity_value = as_i64(self.value(capacity));
+                    let descriptor = self.typed_descriptor(message)?;
+                    let result = usize::try_from(capacity_value)
+                        .map_err(|_| ResourceError::InvalidChannelCapacity)
+                        .and_then(|capacity| {
+                            context
+                                .as_deref_mut()
+                                .expect("runtime context")
+                                .typed_right_channel(
+                                    capacity,
+                                    descriptor.type_id,
+                                    descriptor.width,
+                                    descriptor.rights.clone(),
+                                )
+                        });
+                    match result {
+                        Ok((sender, receiver)) => self.enter(
+                            success,
+                            vec![
+                                Value::Sender(sender.token()),
+                                Value::Receiver(receiver.token()),
+                            ],
+                        ),
+                        Err(error) => self.enter(failure, vec![Value::ResourceError(error)]),
+                    }
+                }
                 Terminator::ReplyNew { success, failure } => {
                     match context
                         .as_deref_mut()
@@ -802,6 +855,39 @@ impl CoreTask {
                         runtime::TypedSendResult::Pending => return Ok(Poll::Pending),
                     }
                 }
+                Terminator::TypedSend {
+                    sender,
+                    message,
+                    sent,
+                    closed,
+                } => {
+                    let Value::Sender(token) = self.value(sender) else {
+                        unreachable!("verified typed sender")
+                    };
+                    let function = self.frames.last().expect("active frame").function;
+                    let Type::TypedSender(message_type) =
+                        self.program.functions[function.0].value_types[sender.0]
+                    else {
+                        unreachable!("verified typed sender type")
+                    };
+                    let value = self.value(message);
+                    let words = message::encode(
+                        &self.program.data,
+                        self.message_catalog().shapes(),
+                        message_type.value_type(),
+                        &value,
+                    )?;
+                    let type_id = self.typed_descriptor(message_type)?.type_id;
+                    match context
+                        .as_deref_mut()
+                        .expect("runtime context")
+                        .send_typed_words(&runtime::Sender::from_token(token), type_id, &words)?
+                    {
+                        runtime::TypedSendResult::Sent => self.enter(sent, Vec::new()),
+                        runtime::TypedSendResult::Closed => self.enter(closed, vec![value]),
+                        runtime::TypedSendResult::Pending => return Ok(Poll::Pending),
+                    }
+                }
                 Terminator::RequestReceive {
                     receiver,
                     value,
@@ -826,6 +912,43 @@ impl CoreTask {
                                 &self.program.data,
                                 self.message_catalog().shapes(),
                                 Type::RequestI64,
+                                &words,
+                            )?],
+                        ),
+                        runtime::TypedReceiveResult::End => self.enter(end, Vec::new()),
+                        runtime::TypedReceiveResult::Pending => return Ok(Poll::Pending),
+                    }
+                }
+                Terminator::TypedReceive {
+                    receiver,
+                    value,
+                    end,
+                } => {
+                    let Value::Receiver(token) = self.value(receiver) else {
+                        unreachable!("verified typed receiver")
+                    };
+                    let function = self.frames.last().expect("active frame").function;
+                    let Type::TypedReceiver(message_type) =
+                        self.program.functions[function.0].value_types[receiver.0]
+                    else {
+                        unreachable!("verified typed receiver type")
+                    };
+                    let descriptor = self.typed_descriptor(message_type)?;
+                    let mut words = vec![0; descriptor.width];
+                    match context
+                        .as_deref_mut()
+                        .expect("runtime context")
+                        .receive_typed_words(
+                            &runtime::Receiver::from_token(token),
+                            descriptor.type_id,
+                            &mut words,
+                        )? {
+                        runtime::TypedReceiveResult::Value => self.enter(
+                            value,
+                            vec![message::decode(
+                                &self.program.data,
+                                self.message_catalog().shapes(),
+                                message_type.value_type(),
                                 &words,
                             )?],
                         ),
@@ -1232,6 +1355,16 @@ impl fmt::Display for Program {
                         "    channel.new.i64 v{} success block{} failure block{}",
                         capacity.0, success.0, failure.0
                     )?,
+                    Terminator::TypedChannelNew {
+                        message,
+                        capacity,
+                        success,
+                        failure,
+                    } => writeln!(
+                        f,
+                        "    channel.new.typed {message:?} v{} success block{} failure block{}",
+                        capacity.0, success.0, failure.0
+                    )?,
                     Terminator::ReplyNew { success, failure } => writeln!(
                         f,
                         "    reply.new.i64 success block{} failure block{}",
@@ -1290,6 +1423,16 @@ impl fmt::Display for Program {
                         "    channel.send.i64 v{}, v{} sent block{} closed block{} pending retry",
                         sender.0, message.0, sent.0, closed.0
                     )?,
+                    Terminator::TypedSend {
+                        sender,
+                        message,
+                        sent,
+                        closed,
+                    } => writeln!(
+                        f,
+                        "    channel.send.typed v{}, v{} sent block{} closed block{} pending retry",
+                        sender.0, message.0, sent.0, closed.0
+                    )?,
                     Terminator::ChannelReceive {
                         receiver,
                         value,
@@ -1297,6 +1440,15 @@ impl fmt::Display for Program {
                     } => writeln!(
                         f,
                         "    channel.receive.i64 v{} value block{} end block{} pending retry",
+                        receiver.0, value.0, end.0
+                    )?,
+                    Terminator::TypedReceive {
+                        receiver,
+                        value,
+                        end,
+                    } => writeln!(
+                        f,
+                        "    channel.receive.typed v{} value block{} end block{} pending retry",
                         receiver.0, value.0, end.0
                     )?,
                     Terminator::ReplyComplete {

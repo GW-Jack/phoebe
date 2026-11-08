@@ -13,9 +13,12 @@ use super::codegen::AbiShapes;
 
 fn kind(ty: Type) -> Result<i64, String> {
     match ty {
-        Type::SenderI64 | Type::ReceiverI64 | Type::RequestSenderI64 | Type::RequestReceiverI64 => {
-            Ok(0)
-        }
+        Type::SenderI64
+        | Type::ReceiverI64
+        | Type::RequestSenderI64
+        | Type::RequestReceiverI64
+        | Type::TypedSender(_)
+        | Type::TypedReceiver(_) => Ok(0),
         Type::ReplyToI64 => Ok(1),
         Type::ReplyReceiverI64 => Ok(2),
         _ => Err("invalid spawn transfer plan leaf".into()),

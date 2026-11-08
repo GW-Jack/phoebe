@@ -80,6 +80,8 @@ impl Layout {
                 | Type::RequestI64
                 | Type::RequestSenderI64
                 | Type::RequestReceiverI64
+                | Type::TypedSender(_)
+                | Type::TypedReceiver(_)
         )
     }
 

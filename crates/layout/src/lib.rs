@@ -2,9 +2,35 @@
 //! Core and native code use this one definition of transport and cleanup.
 
 use phoebe_syntax::syntax::ParamMode;
+use std::borrow::Cow;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DataId(pub usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MessageType {
+    I64,
+    Bool,
+    Unit,
+    Data(DataId),
+    RequestI64,
+    ReplyToI64,
+    ResourceError,
+}
+
+impl MessageType {
+    pub fn value_type(self) -> Type {
+        match self {
+            Self::I64 => Type::I64,
+            Self::Bool => Type::Bool,
+            Self::Unit => Type::Unit,
+            Self::Data(id) => Type::Data(id),
+            Self::RequestI64 => Type::RequestI64,
+            Self::ReplyToI64 => Type::ReplyToI64,
+            Self::ResourceError => Type::ResourceError,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
@@ -23,6 +49,8 @@ pub enum Type {
     RequestI64,
     RequestSenderI64,
     RequestReceiverI64,
+    TypedSender(MessageType),
+    TypedReceiver(MessageType),
     ResourceError,
 }
 
@@ -240,7 +268,7 @@ impl Shapes {
                     if !close.is_empty() {
                         close_fields.push(close);
                     }
-                    for leaf in shapes.capability_parts(*ty)? {
+                    for leaf in shapes.capability_parts(*ty)?.iter() {
                         capability_parts.push(CapabilityPart {
                             part: parts.len() + leaf.part,
                             kind: leaf.kind,
@@ -337,7 +365,9 @@ impl Shapes {
             | Type::ReplyToI64
             | Type::ReplyReceiverI64
             | Type::RequestSenderI64
-            | Type::RequestReceiverI64 => Ok(ClosePlan::Leaf { part: 0, kind: ty }),
+            | Type::RequestReceiverI64
+            | Type::TypedSender(_)
+            | Type::TypedReceiver(_) => Ok(ClosePlan::Leaf { part: 0, kind: ty }),
             Type::RequestI64 => Ok(ClosePlan::Leaf {
                 part: 1,
                 kind: Type::ReplyToI64,
@@ -368,6 +398,8 @@ impl Shapes {
             | Type::ReplyReceiverI64
             | Type::RequestSenderI64
             | Type::RequestReceiverI64
+            | Type::TypedSender(_)
+            | Type::TypedReceiver(_)
             | Type::ResourceError => Ok(WORD),
             Type::RequestI64 => Ok(REQUEST),
         }
@@ -375,42 +407,45 @@ impl Shapes {
 
     /// Declaration-order capability leaves with offsets in the flattened
     /// transport shape. Reverse iteration gives structural close order.
-    pub fn capability_parts(&self, ty: Type) -> Result<&[CapabilityPart], String> {
+    pub fn capability_parts(&self, ty: Type) -> Result<Cow<'_, [CapabilityPart]>, String> {
         match ty {
             Type::Data(id) => self
                 .capabilities
                 .get(id.0)
-                .map(Vec::as_slice)
+                .map(|parts| Cow::Borrowed(parts.as_slice()))
                 .ok_or("unknown ABI data type".into()),
-            Type::SenderI64 => Ok(&[CapabilityPart {
+            Type::SenderI64 => Ok(Cow::Borrowed(&[CapabilityPart {
                 part: 0,
                 kind: Type::SenderI64,
-            }]),
-            Type::ReceiverI64 => Ok(&[CapabilityPart {
+            }])),
+            Type::ReceiverI64 => Ok(Cow::Borrowed(&[CapabilityPart {
                 part: 0,
                 kind: Type::ReceiverI64,
-            }]),
-            Type::ReplyToI64 => Ok(&[CapabilityPart {
+            }])),
+            Type::ReplyToI64 => Ok(Cow::Borrowed(&[CapabilityPart {
                 part: 0,
                 kind: Type::ReplyToI64,
-            }]),
-            Type::ReplyReceiverI64 => Ok(&[CapabilityPart {
+            }])),
+            Type::ReplyReceiverI64 => Ok(Cow::Borrowed(&[CapabilityPart {
                 part: 0,
                 kind: Type::ReplyReceiverI64,
-            }]),
-            Type::RequestSenderI64 => Ok(&[CapabilityPart {
+            }])),
+            Type::RequestSenderI64 => Ok(Cow::Borrowed(&[CapabilityPart {
                 part: 0,
                 kind: Type::RequestSenderI64,
-            }]),
-            Type::RequestReceiverI64 => Ok(&[CapabilityPart {
+            }])),
+            Type::RequestReceiverI64 => Ok(Cow::Borrowed(&[CapabilityPart {
                 part: 0,
                 kind: Type::RequestReceiverI64,
-            }]),
-            Type::RequestI64 => Ok(&[CapabilityPart {
+            }])),
+            Type::TypedSender(_) | Type::TypedReceiver(_) => {
+                Ok(Cow::Owned(vec![CapabilityPart { part: 0, kind: ty }]))
+            }
+            Type::RequestI64 => Ok(Cow::Borrowed(&[CapabilityPart {
                 part: 1,
                 kind: Type::ReplyToI64,
-            }]),
-            _ => Ok(&[]),
+            }])),
+            _ => Ok(Cow::Borrowed(&[])),
         }
     }
 }

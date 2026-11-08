@@ -251,6 +251,8 @@ pub(super) fn op_type(
                     | Type::ReceiverI64
                     | Type::RequestSenderI64
                     | Type::RequestReceiverI64
+                    | Type::TypedSender(_)
+                    | Type::TypedReceiver(_)
             ) {
                 return Err("close.handle requires a channel endpoint".into());
             }

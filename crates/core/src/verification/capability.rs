@@ -288,6 +288,9 @@ pub(crate) fn capability_graph(
                 .collect(),
             Terminator::ChannelNew {
                 success, failure, ..
+            }
+            | Terminator::TypedChannelNew {
+                success, failure, ..
             } => {
                 let params = &function.blocks[success.0].params;
                 vec![
@@ -394,6 +397,32 @@ pub(crate) fn capability_graph(
                     ),
                 ]
             }
+            Terminator::TypedSend {
+                sender,
+                message,
+                sent,
+                closed,
+            } => {
+                let returned = function.blocks[closed.0].params[0];
+                let message_rights = slots[message.0]
+                    .clone()
+                    .map(capability_flow::Slot)
+                    .collect::<Vec<_>>();
+                let mut sent_actions = vec![CapAction::Require(slot(*sender))];
+                sent_actions.extend(message_rights.iter().copied().map(CapAction::Transfer));
+                let mut retry_actions = vec![CapAction::Require(slot(*sender))];
+                retry_actions.extend(message_rights.iter().copied().map(CapAction::Require));
+                let mut closed_actions = vec![CapAction::Require(slot(*sender))];
+                let moves = moves_between(*message, returned);
+                if !moves.is_empty() {
+                    closed_actions.push(CapAction::MoveGroup(moves));
+                }
+                vec![
+                    edge(CapTarget::Block(sent.0), sent_actions),
+                    edge(CapTarget::Block(closed.0), closed_actions),
+                    edge(CapTarget::Retry, retry_actions),
+                ]
+            }
             Terminator::RequestReceive {
                 receiver,
                 value,
@@ -413,6 +442,25 @@ pub(crate) fn capability_graph(
                         vec![CapAction::Require(slot(*receiver))],
                     ),
                     edge(CapTarget::Retry, vec![CapAction::Require(slot(*receiver))]),
+                ]
+            }
+            Terminator::TypedReceive {
+                receiver,
+                value,
+                end,
+            } => {
+                let received = function.blocks[value.0].params[0];
+                let mut value_actions = vec![CapAction::Require(slot(*receiver))];
+                value_actions.extend(
+                    slots[received.0]
+                        .clone()
+                        .map(|slot| CapAction::Create(capability_flow::Slot(slot))),
+                );
+                let require = vec![CapAction::Require(slot(*receiver))];
+                vec![
+                    edge(CapTarget::Block(value.0), value_actions),
+                    edge(CapTarget::Block(end.0), require.clone()),
+                    edge(CapTarget::Retry, require),
                 ]
             }
             Terminator::Fork {

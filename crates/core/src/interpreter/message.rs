@@ -5,7 +5,6 @@
 use super::*;
 use phoebe_layout::Shapes;
 
-#[cfg(test)]
 pub(super) fn encode(
     data: &[DataDef],
     shapes: &Shapes,

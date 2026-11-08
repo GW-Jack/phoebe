@@ -5,7 +5,7 @@ use std::task::Poll;
 
 use phoebe_capability::{self as capability_flow, Action as CapAction, Target as CapTarget};
 use phoebe_generic_core::CheckedModule;
-pub use phoebe_layout::{DataDef, DataId, Type};
+pub use phoebe_layout::{DataDef, DataId, MessageType, Type};
 use phoebe_runtime::{
     self as runtime, Context, ReplyReceiverToken, ReplyToken, ResourceError, Scheduler,
     ScopeLimits, Task, Token,
@@ -195,6 +195,12 @@ pub enum Terminator {
         success: BlockId,
         failure: BlockId,
     },
+    TypedChannelNew {
+        message: MessageType,
+        capacity: ValueId,
+        success: BlockId,
+        failure: BlockId,
+    },
     ReplyNew {
         success: BlockId,
         failure: BlockId,
@@ -234,7 +240,18 @@ pub enum Terminator {
         sent: BlockId,
         closed: BlockId,
     },
+    TypedSend {
+        sender: ValueId,
+        message: ValueId,
+        sent: BlockId,
+        closed: BlockId,
+    },
     ChannelReceive {
+        receiver: ValueId,
+        value: BlockId,
+        end: BlockId,
+    },
+    TypedReceive {
         receiver: ValueId,
         value: BlockId,
         end: BlockId,
@@ -294,6 +311,7 @@ impl Function {
                 | Terminator::Branch { .. }
                 | Terminator::Match { .. }
                 | Terminator::ChannelNew { .. }
+                | Terminator::TypedChannelNew { .. }
                 | Terminator::ReplyNew { .. }
                 | Terminator::RequestChannelNew { .. }
                 | Terminator::RequestUnpack { .. }
@@ -302,7 +320,9 @@ impl Function {
                 | Terminator::RequestReceive { .. }
                 | Terminator::Fork { .. }
                 | Terminator::ChannelSend { .. }
+                | Terminator::TypedSend { .. }
                 | Terminator::ChannelReceive { .. }
+                | Terminator::TypedReceive { .. }
                 | Terminator::ReplyComplete { .. }
                 | Terminator::ReplyReceive { .. } => {}
             }

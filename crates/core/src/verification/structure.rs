@@ -122,6 +122,9 @@ pub(crate) fn verify_structure(
                 false
             }
             Type::RequestI64 | Type::RequestSenderI64 | Type::RequestReceiverI64 => false,
+            Type::TypedSender(message) | Type::TypedReceiver(message) => {
+                matches!(message, MessageType::Data(id) if id.0 >= index)
+            }
         }) {
             return Err("invalid variant payload type".into());
         }
@@ -140,12 +143,17 @@ pub(crate) fn verify_structure(
                     | Type::RequestI64
                     | Type::RequestSenderI64
                     | Type::RequestReceiverI64 => false,
+                    Type::TypedSender(message) | Type::TypedReceiver(message) => {
+                        matches!(message, MessageType::Data(id) if id.0 >= index)
+                    }
                 }
             {
                 return Err("invalid product field".into());
             }
         }
     }
+    let mut checked_messages = std::collections::HashSet::new();
+    let mut message_catalog = None;
     for function in &program.functions {
         for ty in function
             .value_types
@@ -157,6 +165,21 @@ pub(crate) fn verify_structure(
                 && id.0 >= program.data.len()
             {
                 return Err(format!("{}: invalid data type ID", function.name));
+            }
+            if let Type::TypedSender(message) | Type::TypedReceiver(message) = ty {
+                if matches!(message, MessageType::Data(id) if id.0 >= program.data.len()) {
+                    return Err(format!("{}: invalid typed message ID", function.name));
+                }
+                if checked_messages.insert(*message) {
+                    if message_catalog.is_none() {
+                        message_catalog = Some(phoebe_message::MessageCatalog::new(program)?);
+                    }
+                    message_catalog
+                        .as_ref()
+                        .expect("initialized message catalog")
+                        .descriptor(message.value_type())
+                        .map_err(|error| format!("{}: {error}", function.name))?;
+                }
             }
         }
         if !matches!(
@@ -214,6 +237,8 @@ pub(crate) fn verify_structure(
                                 | Type::RequestI64
                                 | Type::RequestSenderI64
                                 | Type::RequestReceiverI64
+                                | Type::TypedSender(_)
+                                | Type::TypedReceiver(_)
                                 | Type::ResourceError
                         ),
                         ParamMode::Shared => matches!(actual, Type::RefI64 | Type::RefBool),
@@ -285,6 +310,17 @@ pub(crate) fn verify_structure(
                     }
                     vec![*success, *failure]
                 }
+                Terminator::TypedChannelNew {
+                    success, failure, ..
+                } => {
+                    if success == failure {
+                        return Err(format!(
+                            "{}: typed creation edges must be distinct",
+                            function.name
+                        ));
+                    }
+                    vec![*success, *failure]
+                }
                 Terminator::ReplyNew { success, failure } => {
                     if success == failure {
                         return Err(format!(
@@ -317,10 +353,28 @@ pub(crate) fn verify_structure(
                     }
                     vec![*sent, *closed]
                 }
+                Terminator::TypedSend { sent, closed, .. } => {
+                    if sent == closed {
+                        return Err(format!(
+                            "{}: typed send edges must be distinct",
+                            function.name
+                        ));
+                    }
+                    vec![*sent, *closed]
+                }
                 Terminator::RequestReceive { value, end, .. } => {
                     if value == end {
                         return Err(format!(
                             "{}: request receive edges must be distinct",
+                            function.name
+                        ));
+                    }
+                    vec![*value, *end]
+                }
+                Terminator::TypedReceive { value, end, .. } => {
+                    if value == end {
+                        return Err(format!(
+                            "{}: typed receive edges must be distinct",
                             function.name
                         ));
                     }
@@ -582,6 +636,28 @@ pub(crate) fn verify_structure(
                         ));
                     }
                 }
+                Terminator::TypedChannelNew {
+                    message,
+                    capacity,
+                    success,
+                    failure,
+                } => {
+                    check_use(*capacity, block_id, end)?;
+                    let outputs = &function.blocks[success.0].params;
+                    let errors = &function.blocks[failure.0].params;
+                    if function.value_types[capacity.0] != Type::I64
+                        || outputs.len() != 2
+                        || function.value_types[outputs[0].0] != Type::TypedSender(*message)
+                        || function.value_types[outputs[1].0] != Type::TypedReceiver(*message)
+                        || errors.len() != 1
+                        || function.value_types[errors[0].0] != Type::ResourceError
+                    {
+                        return Err(format!(
+                            "{}: typed channel creation edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
                 Terminator::ReplyNew { success, failure } => {
                     let success_params = &function.blocks[success.0].params;
                     let failure_params = &function.blocks[failure.0].params;
@@ -676,6 +752,32 @@ pub(crate) fn verify_structure(
                         ));
                     }
                 }
+                Terminator::TypedSend {
+                    sender,
+                    message,
+                    sent,
+                    closed,
+                } => {
+                    check_use(*sender, block_id, end)?;
+                    check_use(*message, block_id, end)?;
+                    let Type::TypedSender(message_type) = function.value_types[sender.0] else {
+                        return Err(format!(
+                            "{}: typed send requires a typed sender",
+                            function.name
+                        ));
+                    };
+                    let returned = &function.blocks[closed.0].params;
+                    if function.value_types[message.0] != message_type.value_type()
+                        || !function.blocks[sent.0].params.is_empty()
+                        || returned.len() != 1
+                        || function.value_types[returned[0].0] != message_type.value_type()
+                    {
+                        return Err(format!(
+                            "{}: typed send edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
                 Terminator::RequestReceive {
                     receiver,
                     value,
@@ -694,6 +796,29 @@ pub(crate) fn verify_structure(
                         ));
                     }
                 }
+                Terminator::TypedReceive {
+                    receiver,
+                    value,
+                    end: end_block,
+                } => {
+                    check_use(*receiver, block_id, end)?;
+                    let Type::TypedReceiver(message_type) = function.value_types[receiver.0] else {
+                        return Err(format!(
+                            "{}: typed receive requires a typed receiver",
+                            function.name
+                        ));
+                    };
+                    let params = &function.blocks[value.0].params;
+                    if params.len() != 1
+                        || function.value_types[params[0].0] != message_type.value_type()
+                        || !function.blocks[end_block.0].params.is_empty()
+                    {
+                        return Err(format!(
+                            "{}: typed receive edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
                 Terminator::Fork {
                     source,
                     success,
@@ -707,6 +832,8 @@ pub(crate) fn verify_structure(
                             | Type::ReceiverI64
                             | Type::RequestSenderI64
                             | Type::RequestReceiverI64
+                            | Type::TypedSender(_)
+                            | Type::TypedReceiver(_)
                     ) || function.blocks[success.0].params.len() != 1
                         || function.value_types[function.blocks[success.0].params[0].0] != ty
                         || function.blocks[failure.0].params.len() != 1

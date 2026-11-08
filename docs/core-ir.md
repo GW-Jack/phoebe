@@ -207,3 +207,13 @@ implicit loss. Source now exposes the concrete request through structural
 layout does not establish the general nested aggregate
 capability rule. The control-flow source surface is in
 `docs/request-source-design.md`.
+
+The typed channel family carries a concrete `MessageType` in endpoint types.
+`channel.new.typed` creates a matched pair only on its success edge;
+`channel.send.typed` transfers every active message right on `Sent`, returns the
+intact value on `Closed`, and retains it on retry. `channel.receive.typed` creates the
+message's affine leaves on `Value`. The verifier checks the exact message
+type at each edge, including nominal identity rather than ABI width alone.
+Hand-built checked Core programs exercise a closed nominal product and a
+product containing `ReplyToI64` in the interpreter. Source lowering and
+native code generation for this family remain open.
