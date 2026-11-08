@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
-use phoebe_core::{self as core, Function, Operation, Program, Terminator};
+use phoebe_core::{self as core, Operation, Program, Terminator};
 use sha2::{Digest, Sha256};
 
 use super::{ObjectEmission, emit_object_linked, emit_object_with_poll_layout, link_executable};
@@ -44,32 +44,6 @@ fn compiler_stamp() -> Result<[u8; 32], String> {
     Ok(hasher.finalize().into())
 }
 
-/// A dead leaf with no runtime operation cannot contribute an object or
-/// change the native call graph. Keep its signature in the key because the
-/// module still declares every function, but discard its unobserved body.
-fn dead_pure_leaf(function: &Function) -> bool {
-    function.blocks.iter().all(|block| {
-        block.instructions.iter().all(|instruction| {
-            !matches!(
-                instruction.operation,
-                Operation::Call(_, _)
-                    | Operation::CloseHandle(_)
-                    | Operation::CloseReply(_)
-                    | Operation::PackRequest { .. }
-                    | Operation::CloseRequest(_)
-                    | Operation::CloseCaps(_)
-                    | Operation::ScopeEnter(_)
-            )
-        }) && matches!(
-            block.terminator,
-            Terminator::Return(_)
-                | Terminator::Jump(_, _)
-                | Terminator::Branch { .. }
-                | Terminator::Match { .. }
-        )
-    })
-}
-
 fn reachable_concrete(program: &Program) -> Result<Vec<bool>, String> {
     let (main, _) = program
         .function("main")
@@ -102,7 +76,10 @@ fn program_key(program: &Program) -> Result<String, String> {
     let reachable = reachable_concrete(program)?;
     let mut normalized = program.clone();
     for (index, function) in normalized.functions.iter_mut().enumerate() {
-        if !reachable[index] && dead_pure_leaf(function) {
+        // Standalone emission defines only the direct and retained closure
+        // reachable from main. Verification has already checked every body;
+        // preserve declarations but omit bodies that cannot enter that closure.
+        if !reachable[index] {
             let entry = function
                 .blocks
                 .first()

@@ -308,6 +308,41 @@ fn linked_disk_cache_rejects_changed_and_corrupt_inputs() {
 }
 
 #[test]
+fn linked_disk_cache_ignores_unreachable_concrete_calls() {
+    let path = temp_generic_project();
+    let executable = path.join("dead-call");
+    let cache = path.join("dead-call-cache");
+    let compile = |body: &str| {
+        let source = format!(
+            "fn identity<T>(value: T) -> T = value\n\
+             fn main() -> I64 = identity(42)\n\
+             fn dead(value: I64) -> I64 = {body}"
+        );
+        core::lower_linked_checked(&syntax::parse(&source).unwrap()).unwrap()
+    };
+    let first = compile("value + 1");
+    assert!(
+        !native::build_executable_cached_linked(&first, &executable, &cache)
+            .unwrap()
+            .reused
+    );
+    let changed = compile("main() + value");
+    assert!(
+        native::build_executable_cached_linked(&changed, &executable, &cache)
+            .unwrap()
+            .reused
+    );
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"42\n"
+    );
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
 fn retained_generic_call_runs_in_jit_and_standalone() {
     let ast = syntax::parse(
         "fn identity<T>(value: T) -> T = value\nfn main() -> I64 { yield; identity(42) }",

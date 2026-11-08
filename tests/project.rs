@@ -381,7 +381,7 @@ fn disk_object_cache_reuses_exact_program_and_rejects_changes_or_corruption() {
 }
 
 #[test]
-fn disk_object_cache_ignores_only_valid_unreachable_pure_leaf_bodies() {
+fn disk_object_cache_ignores_verified_unreachable_bodies() {
     let path = std::env::temp_dir().join(format!(
         "phoebe-dead-cache-test-{}-{}",
         std::process::id(),
@@ -417,19 +417,57 @@ fn disk_object_cache_ignores_only_valid_unreachable_pure_leaf_bodies() {
     invalid.functions[dead.0].blocks[0].terminator = core::Terminator::Return(core::ValueId(9999));
     assert!(native::build_executable_cached(&invalid, &executable, &cache).is_err());
 
-    // A new call or a signature change can affect declaration and analysis
-    // inputs, so both force an emitted-object rebuild.
+    // A call in a dead function does not enter the emitted closure. Its
+    // declaration is unchanged, so the cached object remains valid.
     let with_call = compile("fn main() -> I64 = 42\nfn dead(x: I64) -> I64 = main() + x\n");
     assert!(
-        !native::build_executable_cached(&with_call, &executable, &cache)
+        native::build_executable_cached(&with_call, &executable, &cache)
             .unwrap()
             .reused
     );
+    // Declaration and reachable-body changes still invalidate the object.
     let new_signature = compile("fn main() -> I64 = 42\nfn dead(x: Bool) -> I64 = 3\n");
     assert!(
         !native::build_executable_cached(&new_signature, &executable, &cache)
             .unwrap()
             .reused
+    );
+    let changed_main = compile("fn main() -> I64 = 43\nfn dead(x: Bool) -> I64 = 3\n");
+    assert!(
+        !native::build_executable_cached(&changed_main, &executable, &cache)
+            .unwrap()
+            .reused
+    );
+
+    // A dead spawn graph may contain retained code and runtime operations;
+    // neither its direct helper nor its child contributes to the executable.
+    let spawn_cache = path.join("spawn-cache");
+    let dead_spawn = compile(
+        "fn child() -> I64 { yield; 7 }\n\
+         fn dead() -> Result<I64, ResourceError> { spawn child()?; Result<I64, ResourceError>.Ok(8) }\n\
+         fn main() -> I64 = 42",
+    );
+    assert!(
+        !native::build_executable_cached(&dead_spawn, &executable, &spawn_cache)
+            .unwrap()
+            .reused
+    );
+    let changed_spawn = compile(
+        "fn child() -> I64 { yield; 9 }\n\
+         fn dead() -> Result<I64, ResourceError> { spawn child()?; Result<I64, ResourceError>.Ok(10) }\n\
+         fn main() -> I64 = 42",
+    );
+    assert!(
+        native::build_executable_cached(&changed_spawn, &executable, &spawn_cache)
+            .unwrap()
+            .reused
+    );
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"42\n"
     );
     std::fs::remove_dir_all(path).unwrap();
 }

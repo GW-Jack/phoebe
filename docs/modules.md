@@ -126,8 +126,9 @@ cold build.
 `phoebe build <project> -o <output> --cache-dir <directory>` can persist
 the complete emitted object set across compiler invocations when its codegen
 inputs are unchanged. The cache key excludes source spans and the bodies of
-unreachable pure leaf functions; it retains their signatures and all other
-checked Core. Every hit still verifies the full Core program. The cache is
+functions unreachable from `main`, including dead call and spawn graphs; it
+retains their declarations and all reachable checked Core. Every hit still
+verifies the full Core program. The cache is
 versioned and bound to the local compiler
 executable's path, size, modification time, and file identity. It checks an
 exact codegen key and discards truncated or corrupt entries. The one-shot

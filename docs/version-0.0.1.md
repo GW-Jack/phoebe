@@ -194,7 +194,7 @@ the linker when its emitted objects and runtime archive file stamp match the las
 successful link and the output file is intact. The optional CLI `--cache-dir`
 persists a complete
 emitted object set for unchanged codegen inputs, ignoring source spans and
-unreachable pure leaf bodies, but still parses, verifies Core,
+all unreachable function bodies, but still parses, verifies Core,
 lowers, and links each invocation. A changed program recompiles that set;
 the in-process build session retains finer direct-function reuse. Registry
 dependencies and cached typed interfaces remain open. Core reuse now rebases source spans on `spawn` and
