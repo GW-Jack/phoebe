@@ -287,6 +287,16 @@ pub struct NativePollTask {
     children: Vec<NativeCallRequest>,
 }
 
+impl Drop for NativePollTask {
+    fn drop(&mut self) {
+        // A callee may retain an address into its caller's frame. Release
+        // pending calls from the leaf inward before the root frame is freed.
+        while let Some(child) = self.children.pop() {
+            drop(child);
+        }
+    }
+}
+
 struct NativeCallRequest {
     entry: NativePollEntry,
     frame: Vec<i64>,

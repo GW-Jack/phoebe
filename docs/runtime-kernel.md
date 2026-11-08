@@ -97,6 +97,10 @@ and suspendable children. Generated native same-task calls retain their
 callee frames across waits. Borrowed caller places remain in the parent
 frame until the callee returns; a deadlocked borrowed call is tested against
 the scheduler's cleanup and ownership verifier.
+Pending native same-task callees are released from the leaf inward when their
+task frame is dropped, before the parent frame. A deeper borrowed-call
+deadlock regression checks interpreter, JIT, standalone, and terminal table
+cleanup across this unwind path.
 
 `reply()` creates a one-shot right and receiver. A `Request` holds an `I64`
 value and that right. `send_request` on a full or closed queue returns the

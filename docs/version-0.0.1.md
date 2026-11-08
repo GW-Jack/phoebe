@@ -343,6 +343,10 @@ frames. Runtime tests inspect drop order for three generations, and a source
 test faults a child while its parent has a pending borrowed call. These are
 bounded checks of the current single-threaded runtime, not a proof of general
 failure unwind.
+Native retained same-task calls now drop pending callee frames from the leaf
+inward before the caller frame. A nested borrowed-call deadlock regression
+compares interpreter, JIT, and standalone failure and checks terminal runtime
+ownership; generated pointer safety remains unproved.
 Typed resource creation errors now distinguish invalid capacity, table
 limits, and allocation failure without publishing partial endpoint pairs.
 Task body boxing now fails before spawn transfers commit; an injected

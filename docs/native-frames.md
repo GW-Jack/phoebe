@@ -86,6 +86,11 @@ in its stable frame until the callee returns; the callee frame retains the
 reference value during the wait.
 A deadlocked borrowed call is also tested through the native scheduler:
 scope cleanup releases its handles and the runtime ownership verifier passes.
+On task cancellation, `NativePollTask` drops pending same-task callee frames
+from the leaf inward before freeing the caller frame. A nested borrowed-call
+deadlock test exercises three forwarded callees in the interpreter, JIT, and
+standalone executable and checks the native scheduler's terminal ownership
+state. This tests the unwind path; it does not prove generated pointer safety.
 `formal/retained_borrow.maude` separately explores a bounded nested-call
 model, including ordered unwind after a parked failure. It does not prove
 the generated frame code.

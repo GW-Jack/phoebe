@@ -266,6 +266,64 @@ fn main() -> I64 {
 }
 
 #[test]
+fn deadlocked_nested_borrowed_calls_release_all_native_frames() {
+    let source = r#"
+fn inner(value: &mut I64, receiver: Receiver<I64>) -> I64 {
+  val item = receiver.receive();
+  receiver.close();
+  value
+}
+
+fn middle(value: &mut I64, receiver: Receiver<I64>) -> I64 {
+  inner(&mut value, receiver)
+}
+
+fn outer(value: &mut I64, receiver: Receiver<I64>) -> I64 {
+  middle(&mut value, receiver)
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  var x = 42;
+  with borrowed = &mut x {
+    val answer = outer(&mut borrowed, receiver);
+    borrowed = answer;
+  };
+  sender.close();
+  Result<I64, ResourceError>.Ok(x)
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert!(
+        program
+            .interpret("main", &[])
+            .unwrap_err()
+            .contains("scope deadlocked")
+    );
+    let executable = native::compile_poll_jit(&program, "main").unwrap();
+    let root = unsafe { NativePollTask::new(executable.entry(), executable.layout().total_words) }
+        .unwrap();
+    let mut scheduler = Scheduler::new(root, 1, 1, 0).unwrap();
+    assert_eq!(scheduler.run().unwrap_err(), "scope deadlocked");
+    assert_eq!(scheduler.open_handles(), 0);
+    scheduler.verify().unwrap();
+
+    let path = std::env::temp_dir().join(format!("phoebe-nested-deadlock-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(!output.status.success());
+    assert_eq!(output.stderr, b"phoebe runtime failed: scope deadlocked\n");
+}
+
+#[test]
 fn retained_parent_calls_direct_helper_with_wide_result() {
     let source = include_str!("../examples/wide_after_wait.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
