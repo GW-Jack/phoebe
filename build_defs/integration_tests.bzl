@@ -7,6 +7,7 @@ def integration_tests(rust_test):
             "examples/lexical_borrow.phoebe",
             "examples/lexical_channel.phoebe",
             "examples/lexical_call.phoebe",
+            "examples/lexical_parameter.phoebe",
         ],
         edition = "2024",
         deps = [":phoebe_lib"],

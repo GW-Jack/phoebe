@@ -46,7 +46,11 @@ use `with r = &x { ... }` or `with r = &mut x { ... }` and explicit Core begin/e
 operations. Ordinary calls can now run inside a live lexical loan. A lexical
 alias may be forwarded to a callee, including one that suspends; Core checks
 the direct and lexical argument roots and the frame retains local roots.
-Generic calls under a live loan and lexical reborrows of incoming borrowed
-parameters remain unsupported.
+An incoming borrowed scalar parameter can also be reborrowed in a shorter
+lexical `with` region. Core treats that parameter as an external storage root,
+freezes an exclusive parent while its child is live, and checks aliases when
+the child is forwarded to another call. The caller retains the owned place
+across suspension; the callee retains the reference value. Generic calls
+under a live loan remain unsupported.
 Field or element borrows, region inference, and cross-task references remain
 unsupported. See `docs/lexical-regions.md` for that boundary.

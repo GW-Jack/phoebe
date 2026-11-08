@@ -3,20 +3,22 @@
 Status: executable scalar source and Core slice plus remaining design
 obligations. Source supports call-scoped loans and scoped `with` bindings for
 I64 and Bool places. Checked Core supports explicit `borrow.begin`,
-`borrow.reborrow`, and `borrow.end` for task-local scalar places.
+`borrow.reborrow`, and `borrow.end` for task-local scalar places and reborrows
+of incoming borrowed scalar parameters.
 The finite `formal/lexical_borrows.maude` model checks a two-level instance of
 the target rules below; it is not a proof of Core or native code.
 
 ## Ownership and authority
 
-Every loan has a stable task-local storage root, a mode (shared or exclusive),
+Every loan has a stable storage root, a mode (shared or exclusive),
 and a lexical region. Its region must end before the storage root is released:
 `lifetime(loan) ⊆ lifetime(root)`. A move, drop, or replacement of that root
 requires no live loan. A shared loan permits reads and further shared loans.
 An exclusive loan permits reads and writes. Reborrowing an exclusive loan
 freezes the parent authority until the child loan ends; borrowing through a
 shared loan cannot create exclusive authority. A reference never owns its
-root and cannot cross a task or channel boundary.
+root and cannot cross a task or channel boundary. A callee may reborrow an
+incoming reference; its caller retains ownership of the root.
 
 On normal exit, nested loans end in reverse region order before the root is
 released or transferred. On task failure, unwind uses the same order before
@@ -50,11 +52,14 @@ across yield, an exclusive loan across channel receive, and an alias forwarded
 to a suspendable helper. At a call, Core compares direct and lexical argument
 roots, rejects an exclusive overlap or a frozen parent, and allows compatible
 shared borrows. A deadlocked helper under a live loan has an interpreter and
-native unwind test. Generic calls under a live lexical loan remain restricted.
+native unwind test. An incoming borrowed scalar parameter can parent a shorter
+lexical loan. The verifier gives it an external root identity, freezes an
+exclusive parent while the child is active, and checks call aliases against
+that identity. Across suspension, the caller retains the place and the callee
+retains its reference value. Generic calls under a live lexical loan remain
+restricted.
 
-Next, integrate the Core parent relation with incoming borrowed parameters so
-they can be reborrowed as lexical aliases. Ordinary ownership and
-capability-flow verification remain separate passes over the same explicit
+Ordinary ownership and capability-flow verification remain separate passes over the same explicit
 Core edges. The native frame plan must extend the stable-root check to remaining
 suspension points, and cancellation must release loans before their slots. These checks should
 remain linear in Core size apart from the existing CFG fixed point, with no

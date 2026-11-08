@@ -76,6 +76,56 @@ fn lexical_alias_can_reach_suspending_helper() {
 }
 
 #[test]
+fn incoming_exclusive_parameter_can_be_reborrowed_across_yield() {
+    let source = include_str!("../examples/lexical_parameter.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert!(program.to_string().contains("borrow.reborrow &mut v0"));
+    let frames = frame_layout::analyze(&program).unwrap();
+    let main = frames
+        .iter()
+        .find(|frame| program.functions[frame.function.0].name == "main")
+        .unwrap();
+    assert!(main.place_slots.contains(&core::PlaceId(0)));
+    let change = frames
+        .iter()
+        .find(|frame| program.functions[frame.function.0].name == "change")
+        .unwrap();
+    assert!(change.place_slots.is_empty());
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, 42, "parameter");
+}
+
+#[test]
+fn incoming_shared_parameter_grants_shared_lexical_child() {
+    let source = "fn read(value: &I64) -> I64 { with alias = &value { alias } } fn main() -> I64 { var x = 42; read(&x) }";
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert!(program.to_string().contains("borrow.reborrow &v0"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, 42, "shared-parameter");
+}
+
+#[test]
+fn incoming_parameter_is_frozen_while_exclusive_child_is_live() {
+    let source = "fn bad(value: &mut I64) -> I64 { with alias = &mut value { value = 2; }; value } fn main() -> I64 { var x = 1; bad(&mut x) }";
+    let error = core::lower(&syntax::parse(source).unwrap()).unwrap_err();
+    assert!(error.message.contains("frozen parent cannot be used"));
+
+    let upgrade = "fn bad(value: &I64) -> I64 { with alias = &mut value { alias = 2; }; value } fn main() -> I64 { var x = 1; bad(&x) }";
+    let error = core::lower(&syntax::parse(upgrade).unwrap()).unwrap_err();
+    assert!(
+        error
+            .message
+            .contains("exclusive reborrow requires an exclusive parent")
+    );
+
+    let forwarded = "fn read(v: &mut I64) -> I64 { v } fn bad(value: &mut I64) -> I64 { with alias = &mut value { read(&mut value) } } fn main() -> I64 { var x = 1; bad(&mut x) }";
+    let error = core::lower(&syntax::parse(forwarded).unwrap()).unwrap_err();
+    assert!(error.message.contains("frozen parent cannot be forwarded"));
+}
+
+#[test]
 fn unrelated_direct_helper_runs_inside_lexical_region() {
     let source = "fn one() -> I64 { 1 } fn main() -> I64 { var x = 41; with r = &mut x { r = r + one(); }; x }";
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

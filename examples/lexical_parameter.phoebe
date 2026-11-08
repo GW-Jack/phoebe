@@ -1,0 +1,13 @@
+fn change(value: &mut I64) -> I64 {
+  with nested = &mut value {
+    yield;
+    nested = nested + 1;
+  };
+  value
+}
+
+fn main() -> I64 {
+  var x = 41;
+  val result = change(&mut x);
+  x
+}

@@ -52,13 +52,25 @@ enum LoanOrigin {
     Parent(ValueId),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StorageRoot {
+    Place(PlaceId),
+    External(ValueId),
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct LoanState {
     active: Vec<bool>,
     frozen: Vec<bool>,
 }
 
-fn roots(loans: &[Option<Loan>]) -> Option<Vec<Option<PlaceId>>> {
+fn external_root(function: &Function, value: ValueId) -> Option<StorageRoot> {
+    (function.blocks.first()?.params.contains(&value)
+        && function.value_types.get(value.0)?.referent().is_some())
+    .then_some(StorageRoot::External(value))
+}
+
+fn roots(function: &Function, loans: &[Option<Loan>]) -> Option<Vec<Option<StorageRoot>>> {
     let mut roots = vec![None; loans.len()];
     for start in 0..loans.len() {
         if loans[start].is_none() || roots[start].is_some() {
@@ -66,30 +78,30 @@ fn roots(loans: &[Option<Loan>]) -> Option<Vec<Option<PlaceId>>> {
         }
         let mut path = Vec::new();
         let mut current = start;
-        let place = loop {
-            if let Some(place) = roots.get(current).copied().flatten() {
-                break place;
+        let root = loop {
+            if let Some(root) = roots.get(current).copied().flatten() {
+                break root;
             }
-            let loan = loans.get(current)?.as_ref()?;
+            let Some(loan) = loans.get(current)?.as_ref() else {
+                break external_root(function, ValueId(current))?;
+            };
             path.push(current);
             if path.len() > loans.len() {
                 return None;
             }
             match loan.origin {
-                LoanOrigin::Root(place) => break place,
+                LoanOrigin::Root(place) => break StorageRoot::Place(place),
                 LoanOrigin::Parent(parent) => current = parent.0,
             }
         };
         for id in path {
-            roots[id] = Some(place);
+            roots[id] = Some(root);
         }
     }
     Some(roots)
 }
 
-/// Resolve every lexical reference to the place that owns its storage.
-/// The returned roots are useful to frame analysis after Core verification.
-pub fn lexical_roots(function: &Function) -> Result<Vec<Option<PlaceId>>, String> {
+fn loan_definitions(function: &Function) -> Result<Vec<Option<Loan>>, String> {
     let mut loans = vec![None; function.value_types.len()];
     for block in &function.blocks {
         for instruction in &block.instructions {
@@ -113,20 +125,38 @@ pub fn lexical_roots(function: &Function) -> Result<Vec<Option<PlaceId>>, String
             }
         }
     }
-    roots(&loans).ok_or_else(|| format!("{}: reborrow has no lexical root", function.name))
+    Ok(loans)
+}
+
+/// Resolve lexical references rooted in task-local places. Reborrows of
+/// incoming reference parameters return `None`: their caller owns the root.
+pub fn lexical_roots(function: &Function) -> Result<Vec<Option<PlaceId>>, String> {
+    let loans = loan_definitions(function)?;
+    roots(function, &loans)
+        .ok_or_else(|| format!("{}: reborrow has no lexical root", function.name))
+        .map(|roots| {
+            roots
+                .into_iter()
+                .map(|root| match root {
+                    Some(StorageRoot::Place(place)) => Some(place),
+                    _ => None,
+                })
+                .collect()
+        })
 }
 
 fn conflict(
     active: &[bool],
     loans: &[Option<Loan>],
-    roots: &[Option<PlaceId>],
+    roots: &[Option<StorageRoot>],
     root_place: PlaceId,
     exclusive: bool,
 ) -> bool {
     active.iter().enumerate().any(|(id, live)| {
         *live
-            && loans[id]
-                .is_some_and(|loan| roots[id] == Some(root_place) && (exclusive || loan.exclusive))
+            && loans[id].is_some_and(|loan| {
+                roots[id] == Some(StorageRoot::Place(root_place)) && (exclusive || loan.exclusive)
+            })
     })
 }
 
@@ -144,29 +174,8 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
         }) {
             continue;
         }
-        let mut loans = vec![None; function.value_types.len()];
-        for block in &function.blocks {
-            for instruction in &block.instructions {
-                let loan = match instruction.operation {
-                    Operation::BorrowBegin(place, exclusive) => Some(Loan {
-                        origin: LoanOrigin::Root(place),
-                        exclusive,
-                    }),
-                    Operation::BorrowReborrow(parent, exclusive) => Some(Loan {
-                        origin: LoanOrigin::Parent(parent),
-                        exclusive,
-                    }),
-                    _ => None,
-                };
-                if let Some(loan) = loan {
-                    let id = instruction
-                        .result
-                        .ok_or("borrow operation lacks a result")?;
-                    loans[id.0] = Some(loan);
-                }
-            }
-        }
-        let roots = roots(&loans)
+        let loans = loan_definitions(function)?;
+        let roots = roots(function, &loans)
             .ok_or_else(|| format!("{}: reborrow has no lexical root", function.name))?;
         let mut incoming = vec![None; function.blocks.len()];
         incoming[0] = Some(LoanState {
@@ -193,9 +202,9 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                         state.active[instruction.result.expect("typed borrow begin").0] = true;
                     }
                     Operation::BorrowReborrow(parent, _) => {
-                        if loans[parent.0].is_none() {
+                        if loans[parent.0].is_none() && external_root(function, *parent).is_none() {
                             return Err(format!(
-                                "{}: reborrow requires a lexical parent",
+                                "{}: reborrow requires a lexical or incoming borrowed parent",
                                 function.name
                             ));
                         }
@@ -205,7 +214,10 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                                 function.name
                             ));
                         }
-                        if loans[parent.0].expect("checked parent").exclusive {
+                        if matches!(
+                            function.value_types[parent.0],
+                            Type::RefMutI64 | Type::RefMutBool
+                        ) {
                             state.frozen[parent.0] = true;
                         }
                         state.active[instruction.result.expect("typed reborrow").0] = true;
@@ -268,21 +280,18 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                                             function.name
                                         ));
                                     }
-                                    Some((*place, *exclusive))
+                                    Some((StorageRoot::Place(*place), *exclusive))
                                 }
-                                CallArg::Ref(reference, exclusive)
-                                    if loans[reference.0].is_some() =>
-                                {
+                                CallArg::Ref(reference, exclusive) => {
                                     if state.frozen[reference.0] {
                                         return Err(format!(
                                             "{}: frozen parent cannot be forwarded to a call",
                                             function.name
                                         ));
                                     }
-                                    Some((
-                                        roots[reference.0].expect("resolved lexical root"),
-                                        *exclusive,
-                                    ))
+                                    roots[reference.0]
+                                        .or_else(|| external_root(function, *reference))
+                                        .map(|root| (root, *exclusive))
                                 }
                                 _ => None,
                             };

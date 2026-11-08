@@ -43,7 +43,7 @@ impl Lowerer<'_> {
                 self.emit_effect(Operation::PlaceInit(place, value), borrow_span);
                 (Operation::BorrowBegin(place, false), ty)
             }
-            Binding::Ref(parent, parent_mode) if self.lexical_loans.contains(&parent) => {
+            Binding::Ref(parent, parent_mode) => {
                 if mutable && parent_mode != ParamMode::Exclusive {
                     return Err(Diagnostic::new(
                         borrow_span,

@@ -80,7 +80,7 @@ IR slice. `phoebe generic-ir <file>` lowers identity, forwarding, and
 generic-to-generic calls into printable parametric Core. The module verifier
 checks call substitutions and owner transfer.
 
-Build and run the compiler with Buck2:
+Buck2 is the primary build and test entry point. From the repository root:
 
 ```sh
 buck2 build //:phoebe_dist
@@ -89,6 +89,7 @@ buck2 run //:phoebe -- run examples/boolean_short_circuit.phoebe
 buck2 run //:phoebe -- run examples/option.phoebe
 buck2 run //:phoebe -- run examples/scoped_spawn.phoebe
 buck2 run //:phoebe -- run examples/with_pair.phoebe
+buck2 run //:phoebe -- run examples/lexical_parameter.phoebe
 buck2 run //:phoebe -- run examples/channel_exchange.phoebe
 buck2 run //:phoebe -- run examples/mutable_channel_right.phoebe
 buck2 run //:phoebe -- run examples/reply_exchange.phoebe
@@ -121,7 +122,8 @@ hackability plan.
 `docs/build-system.md` describes the crate graph, Buck2 targets, dependency
 pinning, and development commands.
 
-Cargo remains available for tests and standalone runtime archives:
+Cargo remains available for dependency resolution, cross-checking the workspace,
+and standalone runtime archives:
 
 ```sh
 cargo test --workspace

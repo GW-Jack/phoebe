@@ -43,8 +43,8 @@ crate boundaries determine independent build and cache units.
 
 ## Buck2
 
-Install a compatible Buck2 and Rust toolchain, then run from the repository
-root:
+Buck2 is the primary build and test entry point. Install a compatible Buck2
+and Rust toolchain, then run from the repository root:
 
 ```sh
 buck2 build //:phoebe
