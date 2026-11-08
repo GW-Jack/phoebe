@@ -400,7 +400,8 @@ pub(super) fn compile_functions<M: Module>(
                     Terminator::RequestChannelNew {
                         success, failure, ..
                     } => vec![success.0, failure.0],
-                    Terminator::RequestUnpack { next, .. } => vec![next.0],
+                    Terminator::RequestUnpack { next, .. }
+                    | Terminator::ProductUnpack { next, .. } => vec![next.0],
                     Terminator::RequestSend { sent, closed, .. } => vec![sent.0, closed.0],
                     Terminator::RequestReceive { value, end, .. } => vec![value.0, end.0],
                     Terminator::Fork {
@@ -1124,6 +1125,13 @@ pub(super) fn compile_functions<M: Module>(
                     }
                     Terminator::RequestUnpack { request, next } => {
                         let parts = get(*request)
+                            .into_iter()
+                            .map(Into::into)
+                            .collect::<Vec<_>>();
+                        builder.ins().jump(blocks[next.0], &parts);
+                    }
+                    Terminator::ProductUnpack { product, next } => {
+                        let parts = get(*product)
                             .into_iter()
                             .map(Into::into)
                             .collect::<Vec<_>>();

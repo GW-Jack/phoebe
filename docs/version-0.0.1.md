@@ -231,9 +231,11 @@ resumes after the first dequeue. General capability-bearing aggregates remain
 open. Core now computes static capability leaf paths for acyclic nominal
 products and reserves one ownership slot per leaf in each SSA value. Core
 flow moves all leaves through construction, nominal move, block arguments,
-owned calls, and spawn transfer. Product declarations containing capabilities
-remain rejected until projection, structural cleanup, and all execution paths
-agree.
+owned calls, spawn transfer, and whole-product unpack. The interpreter,
+direct Cranelift path, retained task path, and standalone output agree on
+nested closed-product unpack. Product declarations containing capabilities
+remain rejected until source lowering, structural cleanup, and capability-
+product execution paths are verified together.
 The bounded two-request Maude model explores both successful retry and
 receiver closure during a pending send. It checks encoded queue/right
 ownership and terminal cleanup over 25 states; it is not a proof about the

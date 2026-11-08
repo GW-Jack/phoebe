@@ -567,6 +567,12 @@ impl CoreTask {
                     };
                     self.enter(next, vec![Value::I64(value), Value::ReplyTo(right)]);
                 }
+                Terminator::ProductUnpack { product, next } => {
+                    let Value::Product(_, fields) = self.value(product) else {
+                        unreachable!("verified product")
+                    };
+                    self.enter(next, fields);
+                }
                 Terminator::RequestSend {
                     sender,
                     request,
@@ -1015,6 +1021,9 @@ impl fmt::Display for Program {
                     )?,
                     Terminator::RequestUnpack { request, next } => {
                         writeln!(f, "    request.unpack v{} next block{}", request.0, next.0)?
+                    }
+                    Terminator::ProductUnpack { product, next } => {
+                        writeln!(f, "    product.unpack v{} next block{}", product.0, next.0)?
                     }
                     Terminator::RequestSend {
                         sender,

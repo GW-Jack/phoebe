@@ -1356,6 +1356,17 @@ fn compile_poll_module<M: Module>(
                         }
                         builder.ins().jump(blocks[next.0], &[]);
                     }
+                    Terminator::ProductUnpack { product, next } => {
+                        let mut part = 0;
+                        for param in &function.blocks[next.0].params {
+                            for target in &variables[param.0] {
+                                let value = builder.use_var(variables[product.0][part]);
+                                builder.def_var(*target, value);
+                                part += 1;
+                            }
+                        }
+                        builder.ins().jump(blocks[next.0], &[]);
+                    }
                     Terminator::Yield { .. }
                     | Terminator::ScopeJoin { .. }
                     | Terminator::ChannelReceive { .. }
@@ -1742,6 +1753,7 @@ fn validate_poll_function(
                 | Terminator::ReplyReceive { .. }
                 | Terminator::RequestChannelNew { .. }
                 | Terminator::RequestUnpack { .. }
+                | Terminator::ProductUnpack { .. }
                 | Terminator::RequestSend { .. }
                 | Terminator::RequestReceive { .. }
                 | Terminator::Yield { .. }

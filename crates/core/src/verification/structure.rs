@@ -305,7 +305,9 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
                     }
                     vec![*success, *failure]
                 }
-                Terminator::RequestUnpack { next, .. } => vec![*next],
+                Terminator::RequestUnpack { next, .. } | Terminator::ProductUnpack { next, .. } => {
+                    vec![*next]
+                }
                 Terminator::RequestSend { sent, closed, .. } => {
                     if sent == closed {
                         return Err(format!(
@@ -632,6 +634,29 @@ pub(crate) fn verify_structure(program: &Program) -> Result<(), String> {
                     {
                         return Err(format!(
                             "{}: request unpack edge signature mismatch",
+                            function.name
+                        ));
+                    }
+                }
+                Terminator::ProductUnpack { product, next } => {
+                    check_use(*product, block_id, end)?;
+                    let Type::Data(id) = function.value_types[product.0] else {
+                        return Err(format!(
+                            "{}: product unpack requires a product",
+                            function.name
+                        ));
+                    };
+                    let fields = &program.data[id.0].fields;
+                    let params = &function.blocks[next.0].params;
+                    if fields.is_empty()
+                        || params.len() != fields.len()
+                        || params
+                            .iter()
+                            .zip(fields)
+                            .any(|(param, (_, ty))| function.value_types[param.0] != *ty)
+                    {
+                        return Err(format!(
+                            "{}: product unpack edge signature mismatch",
                             function.name
                         ));
                     }

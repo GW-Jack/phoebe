@@ -122,3 +122,71 @@ fn product_pack_move_and_block_argument_transfer_both_rights() {
             .contains("moved twice")
     );
 }
+
+#[test]
+fn whole_product_unpack_transfers_each_right_to_its_field_parameter() {
+    let data = vec![DataDef {
+        name: "Pair".into(),
+        variants: vec![],
+        payloads: vec![],
+        fields: vec![
+            ("sender".into(), Type::SenderI64),
+            ("reply".into(), Type::ReplyToI64),
+        ],
+    }];
+    let mut function = Function {
+        name: "unpack".into(),
+        param_modes: vec![syntax::ParamMode::Own],
+        return_type: Type::I64,
+        value_types: vec![
+            Type::Data(DataId(0)),
+            Type::SenderI64,
+            Type::ReplyToI64,
+            Type::I64,
+        ],
+        place_types: vec![],
+        loan_regions: vec![],
+        blocks: vec![
+            Block {
+                params: vec![ValueId(0)],
+                instructions: vec![],
+                terminator: Terminator::ProductUnpack {
+                    product: ValueId(0),
+                    next: BlockId(1),
+                },
+            },
+            Block {
+                params: vec![ValueId(1), ValueId(2)],
+                instructions: vec![
+                    Instruction {
+                        result: None,
+                        operation: Operation::CloseHandle(ValueId(1)),
+                        span: Span { start: 0, end: 0 },
+                    },
+                    Instruction {
+                        result: None,
+                        operation: Operation::CloseReply(ValueId(2)),
+                        span: Span { start: 0, end: 0 },
+                    },
+                    Instruction {
+                        result: Some(ValueId(3)),
+                        operation: Operation::Const(0),
+                        span: Span { start: 0, end: 0 },
+                    },
+                ],
+                terminator: Terminator::Return(ValueId(3)),
+            },
+        ],
+    };
+    let layout = Layout::new(&data);
+    let (graph, _) = capability_graph(&function, &layout, &[], &[]).unwrap();
+    capability_flow::verify(&graph).unwrap();
+
+    function.blocks[1].instructions.remove(1);
+    let (graph, _) = capability_graph(&function, &layout, &[], &[]).unwrap();
+    assert!(
+        capability_flow::verify(&graph)
+            .unwrap_err()
+            .contains("normal return leaks")
+    );
+}

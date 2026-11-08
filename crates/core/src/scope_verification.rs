@@ -77,7 +77,9 @@ fn verify_function(function: &Function) -> Result<(), String> {
                 success, failure, ..
             }
             | Terminator::ReplyNew { success, failure } => vec![success.0, failure.0],
-            Terminator::RequestUnpack { next, .. } => vec![next.0],
+            Terminator::RequestUnpack { next, .. } | Terminator::ProductUnpack { next, .. } => {
+                vec![next.0]
+            }
             Terminator::RequestSend { sent, closed, .. }
             | Terminator::ChannelSend { sent, closed, .. } => vec![sent.0, closed.0],
             Terminator::RequestReceive { value, end, .. }

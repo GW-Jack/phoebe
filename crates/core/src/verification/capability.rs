@@ -220,6 +220,27 @@ pub(crate) fn capability_graph(
                     }],
                 )]
             }
+            Terminator::ProductUnpack { product, next } => {
+                let destinations = function.blocks[next.0]
+                    .params
+                    .iter()
+                    .flat_map(|param| slots[param.0].clone())
+                    .collect::<Vec<_>>();
+                let source = slots[product.0].clone();
+                assert_eq!(
+                    source.len(),
+                    destinations.len(),
+                    "unpack leaf layout matches fields"
+                );
+                let moves = source
+                    .zip(destinations)
+                    .map(|(from, to)| (capability_flow::Slot(from), capability_flow::Slot(to)))
+                    .collect();
+                vec![edge(
+                    CapTarget::Block(next.0),
+                    vec![CapAction::MoveGroup(moves)],
+                )]
+            }
             Terminator::RequestSend {
                 sender,
                 request,

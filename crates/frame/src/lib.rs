@@ -545,6 +545,10 @@ fn terminator_live(function: &Function, block_id: usize, incoming: &[Live]) -> L
             edge(*next, None);
             live.values[request.0] = true;
         }
+        Terminator::ProductUnpack { product, next } => {
+            edge(*next, None);
+            live.values[product.0] = true;
+        }
         Terminator::RequestSend {
             sender,
             request,

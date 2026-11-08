@@ -193,6 +193,10 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                     value_use(&mut state, *request, true, span)?;
                     vec![next.0]
                 }
+                Terminator::ProductUnpack { product, next } => {
+                    value_use(&mut state, *product, true, span)?;
+                    vec![next.0]
+                }
                 Terminator::RequestSend { sent, closed, .. } => vec![sent.0, closed.0],
                 Terminator::RequestReceive { value, end, .. } => vec![value.0, end.0],
                 Terminator::Fork {

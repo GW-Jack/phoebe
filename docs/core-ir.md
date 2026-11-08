@@ -34,6 +34,11 @@ search. Native lowering expands the match into a tag dispatch; the interpreter
 selects the matching arm directly. Finite products have `product` and
 `field` operations. Their fields remain separate SSA components through native
 calls, returns, and joins; `docs/abi-shapes.md` specifies the current shape.
+`product.unpack` consumes a whole nominal product and passes one typed block
+parameter per field. Nested fields retain their flattened ABI shape. The
+interpreter, direct Cranelift path, retained task path, and standalone path
+agree on a nested closed-product example. Source syntax does not expose this
+terminator yet; capability-bearing product declarations remain rejected.
 
 The first `?` lowering uses this same `match` terminator. Its `Err` target
 receives and returns the original sum value through a block parameter; its

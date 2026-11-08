@@ -215,6 +215,10 @@ pub enum Terminator {
         request: ValueId,
         next: BlockId,
     },
+    ProductUnpack {
+        product: ValueId,
+        next: BlockId,
+    },
     RequestSend {
         sender: ValueId,
         request: ValueId,
@@ -300,6 +304,7 @@ impl Function {
                 | Terminator::ReplyNew { .. }
                 | Terminator::RequestChannelNew { .. }
                 | Terminator::RequestUnpack { .. }
+                | Terminator::ProductUnpack { .. }
                 | Terminator::RequestSend { .. }
                 | Terminator::RequestReceive { .. }
                 | Terminator::Fork { .. }
