@@ -17,8 +17,10 @@ feed `native`. The root facade and CLI depend on these crates.
 - `phoebe-native`: Cranelift JIT, object emission, direct and retained codegen.
 - Root `phoebe`: compatibility facade and CLI.
 
-Within Core, IR definitions stay in `lib.rs`; lowering, verification, and the
-interpreter are separate modules. Within Runtime, the native ABI is separate
+Within Core, IR definitions stay in `lib.rs`; statement lowering lives in
+`lowering/body.rs`, expression lowering in `lowering/expr.rs`, and function
+assembly in `lowering.rs`. Verification and the interpreter are separate
+modules. Within Runtime, the native ABI is separate
 from the scheduler. Within Native, direct codegen and retained polling are
 separate from the JIT/object entry points. Native reachability selection lives
 in `reachability.rs`. These are source boundaries; the
