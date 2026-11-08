@@ -116,12 +116,12 @@ pub(crate) fn capability_graph(
                         .iter()
                         .zip(&function.blocks[target.0].params)
                         .filter(|(arg, _)| is_capability(function.value_types[arg.0]))
-                        .map(|(arg, param)| CapAction::Move {
-                            from: slot(*arg),
-                            to: slot(*param),
-                        })
-                        .collect();
-                    vec![edge(CapTarget::Block(target.0), moves)]
+                        .map(|(arg, param)| (slot(*arg), slot(*param)))
+                        .collect::<Vec<_>>();
+                    vec![edge(
+                        CapTarget::Block(target.0),
+                        vec![CapAction::MoveGroup(moves)],
+                    )]
                 }
                 Terminator::Branch {
                     then_block,

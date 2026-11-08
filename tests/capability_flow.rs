@@ -98,6 +98,53 @@ fn edge_close_reconciles_branch_ownership() {
 }
 
 #[test]
+fn parallel_block_arguments_permute_rights_without_duplication() {
+    let graph = Graph {
+        slots: 3,
+        entry_live: vec![Slot(0), Slot(1)],
+        blocks: vec![Block {
+            actions: vec![],
+            exits: vec![edge(
+                Target::Return,
+                vec![
+                    Action::MoveGroup(vec![(Slot(0), Slot(1)), (Slot(1), Slot(0))]),
+                    Action::Close(Slot(0)),
+                    Action::Close(Slot(1)),
+                ],
+            )],
+        }],
+    };
+    verify(&graph).unwrap();
+
+    let mut duplicate_source = graph.clone();
+    duplicate_source.blocks[0].exits[0].actions[0] =
+        Action::MoveGroup(vec![(Slot(0), Slot(1)), (Slot(0), Slot(2))]);
+    assert!(
+        verify(&duplicate_source)
+            .unwrap_err()
+            .contains("moved twice")
+    );
+
+    let mut duplicate_destination = graph.clone();
+    duplicate_destination.blocks[0].exits[0].actions[0] =
+        Action::MoveGroup(vec![(Slot(0), Slot(2)), (Slot(1), Slot(2))]);
+    assert!(
+        verify(&duplicate_destination)
+            .unwrap_err()
+            .contains("receives two rights")
+    );
+
+    let mut occupied_destination = graph;
+    occupied_destination.blocks[0].exits[0].actions[0] =
+        Action::MoveGroup(vec![(Slot(0), Slot(1))]);
+    assert!(
+        verify(&occupied_destination)
+            .unwrap_err()
+            .contains("destination 1 is not empty")
+    );
+}
+
+#[test]
 fn normal_return_requires_explicit_disposition() {
     let graph = Graph {
         slots: 1,

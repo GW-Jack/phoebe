@@ -49,6 +49,10 @@ state from every predecessor of `c`. If states differ, the lowering must
 insert an explicit close or transfer on the appropriate predecessor edge.
 Closed affine values retain the existing intersection rule. The rule applies
 to loop backedges too; a loop cannot accumulate an unaccounted right.
+Block-argument moves are checked as one simultaneous assignment. Every source
+must be live and unique; every destination must be unique and either empty or
+also a source of the same assignment. This permits a loop backedge to swap two
+rights without temporarily duplicating or losing one.
 
 There is no runtime scan corresponding to this rule. A compiler verifier
 checks the finite IR once per changed function. Its worklist propagates

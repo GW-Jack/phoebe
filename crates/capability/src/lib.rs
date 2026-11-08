@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Slot(pub usize);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Require(Slot),
     Create(Slot),
@@ -19,6 +19,9 @@ pub enum Action {
         from: Slot,
         to: Slot,
     },
+    /// Simultaneous SSA/block-argument assignment. A live destination may
+    /// also be a source in this group, allowing permutations on backedges.
+    MoveGroup(Vec<(Slot, Slot)>),
     Close(Slot),
     /// Provisional lexical cleanup: close only if this scope still owns it.
     CloseIfLive(Slot),
@@ -96,8 +99,8 @@ fn apply(actions: &[Action], state: &mut [bool], block: usize) -> Result<Vec<Slo
                 None => Err(format!("block {block}: invalid capability slot {}", slot.0)),
             }
         };
-        match *action {
-            Action::Require(slot) => require(slot)?,
+        match action {
+            Action::Require(slot) => require(*slot)?,
             Action::Create(slot) => match state.get_mut(slot.0) {
                 Some(false) => state[slot.0] = true,
                 Some(true) => {
@@ -133,7 +136,7 @@ fn apply(actions: &[Action], state: &mut [bool], block: usize) -> Result<Vec<Slo
                 state[second.0] = true;
             }
             Action::Move { from, to } => {
-                require(from)?;
+                require(*from)?;
                 if from == to || state.get(to.0) != Some(&false) {
                     return Err(format!(
                         "block {block}: move destination {} is not empty",
@@ -143,14 +146,46 @@ fn apply(actions: &[Action], state: &mut [bool], block: usize) -> Result<Vec<Slo
                 state[from.0] = false;
                 state[to.0] = true;
             }
+            Action::MoveGroup(moves) => {
+                for (index, &(from, to)) in moves.iter().enumerate() {
+                    require(from)?;
+                    if moves[..index].iter().any(|(prior, _)| *prior == from) {
+                        return Err(format!(
+                            "block {block}: capability slot {} is moved twice",
+                            from.0
+                        ));
+                    }
+                    if moves[..index].iter().any(|(_, prior)| *prior == to) {
+                        return Err(format!(
+                            "block {block}: capability slot {} receives two rights",
+                            to.0
+                        ));
+                    }
+                }
+                for &(_, to) in moves {
+                    if state.get(to.0) != Some(&false) && !moves.iter().any(|(from, _)| *from == to)
+                    {
+                        return Err(format!(
+                            "block {block}: move destination {} is not empty",
+                            to.0
+                        ));
+                    }
+                }
+                for &(from, _) in moves {
+                    state[from.0] = false;
+                }
+                for &(_, to) in moves {
+                    state[to.0] = true;
+                }
+            }
             Action::Close(slot) | Action::Transfer(slot) => {
-                require(slot)?;
+                require(*slot)?;
                 state[slot.0] = false;
             }
             Action::CloseIfLive(slot) => match state.get_mut(slot.0) {
                 Some(live) if *live => {
                     *live = false;
-                    lexical_closes.push(slot);
+                    lexical_closes.push(*slot);
                 }
                 Some(_) => {}
                 None => return Err(format!("block {block}: invalid capability slot {}", slot.0)),

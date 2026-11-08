@@ -66,6 +66,59 @@ fn channel_program() -> Program {
     }
 }
 
+#[test]
+fn core_loop_backedge_swaps_two_owned_block_arguments() {
+    let program = Program {
+        data: vec![],
+        functions: vec![Function {
+            name: "shuffle".into(),
+            param_modes: vec![ParamMode::Own, ParamMode::Own],
+            return_type: Type::I64,
+            value_types: vec![
+                Type::SenderI64,
+                Type::SenderI64,
+                Type::SenderI64,
+                Type::SenderI64,
+                Type::Bool,
+                Type::I64,
+            ],
+            place_types: vec![],
+            loan_regions: vec![],
+            blocks: vec![
+                Block {
+                    params: vec![ValueId(0), ValueId(1)],
+                    instructions: vec![],
+                    terminator: Terminator::Jump(BlockId(1), vec![ValueId(0), ValueId(1)]),
+                },
+                Block {
+                    params: vec![ValueId(2), ValueId(3)],
+                    instructions: vec![instruction(Some(4), Operation::Bool(true))],
+                    terminator: Terminator::Branch {
+                        condition: ValueId(4),
+                        then_block: BlockId(2),
+                        else_block: BlockId(3),
+                    },
+                },
+                Block {
+                    params: vec![],
+                    instructions: vec![
+                        instruction(None, Operation::CloseHandle(ValueId(2))),
+                        instruction(None, Operation::CloseHandle(ValueId(3))),
+                        instruction(Some(5), Operation::Const(0)),
+                    ],
+                    terminator: Terminator::Return(ValueId(5)),
+                },
+                Block {
+                    params: vec![],
+                    instructions: vec![],
+                    terminator: Terminator::Jump(BlockId(1), vec![ValueId(3), ValueId(2)]),
+                },
+            ],
+        }],
+    };
+    core::verify(&program).unwrap();
+}
+
 fn send_receive_program() -> Program {
     let mut program = channel_program();
     let function = &mut program.functions[0];
