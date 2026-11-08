@@ -227,3 +227,30 @@ measurement includes process startup and printing, so it is not a per-message
 latency or throughput figure. These local timings are a reproducible baseline
 for this one workload, not a claim of OCaml-like compilation or general native
 runtime speed.
+
+## Core dominance verification on a long block chain
+
+On 2026-11-08, `examples/bench_core_verify.rs` constructed a synthetic,
+reachable Core function with one constant in its entry block, a chain of
+empty jump blocks, and a final return. It measured `core::verify` only, after
+constructing the graph. The previous verifier at `e5f5266` stored and
+iteratively intersected a full dominator set for every block. The compact
+dominator tree at `038cd74` uses immediate dominators and tree intervals.
+Both binaries used optimized Rust 1.95.0 on the same macOS ARM64 host.
+
+| Blocks | Previous verifier | Compact dominators |
+| ---: | ---: | ---: |
+| 100 | 204–240 µs | 13–16 µs |
+| 500 | 4,345–4,586 µs | 59–69 µs |
+| 1,000 | 16,999–17,984 µs | 119–133 µs |
+| 2,000 | 69,325–69,933 µs | 241–251 µs |
+
+The table gives the range of five interleaved process runs; each process
+reported the median of seven verifier calls per graph size. The same
+benchmark source was built against each revision with
+`cargo run --release --locked --example bench_core_verify`. The fixture isolates a worst-case
+straight-line graph for the old representation. It does not include parsing,
+lowering, native code generation, or linking, and it is not a general
+whole-compiler speedup claim. An independent generated-CFG test checks the
+compact tree's dominance answers against set intersection, including
+backedges.
