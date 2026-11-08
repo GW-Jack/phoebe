@@ -62,6 +62,7 @@ buck2 run //:phoebe -- run examples/hello.phoebe
 buck2 run //:phoebe -- run examples/boolean_short_circuit.phoebe
 buck2 run //:phoebe -- run examples/option.phoebe
 buck2 run //:phoebe -- run examples/scoped_spawn.phoebe
+buck2 run //:phoebe -- run examples/with_pair.phoebe
 buck2 run //:phoebe -- run examples/channel_exchange.phoebe
 buck2 run //:phoebe -- run examples/reply_exchange.phoebe
 buck2 run //:phoebe -- run examples/request_exchange.phoebe

@@ -118,6 +118,10 @@ any still-owned capabilities in reverse lexical order. An explicit `close()`
 or `close_caps()` consumes the owned value and suppresses that cleanup. A move
 transfers responsibility to the destination. The generated cleanup visits
 only active, owned fields; it invokes no user destructor and cannot fail.
+The executable subset also accepts `with (a = sender, b = receiver) { ... }`
+for several bare capabilities. It nests the existing single-owner cleanup
+regions, preserving left-to-right binding and reverse-order cleanup. Owned
+aggregates and `close_caps()` remain design targets.
 
 ```text
 fn publish(out: Sender<Count>, input: &String)

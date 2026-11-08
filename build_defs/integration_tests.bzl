@@ -99,6 +99,15 @@ def integration_tests(rust_test):
     )
 
     rust_test(
+        name = "source_with_group_tests",
+        crate_root = "tests/source_with_group.rs",
+        srcs = ["tests/source_with_group.rs", "examples/with_pair.phoebe"],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
         name = "source_yield_tests",
         crate_root = "tests/source_yield.rs",
         srcs = [

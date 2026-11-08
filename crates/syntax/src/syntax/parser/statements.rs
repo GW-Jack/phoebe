@@ -152,20 +152,11 @@ impl Parser {
                 continue;
             }
             if let Some(start) = self.eat(&TokenKind::With) {
-                let (name, _) = self.name()?;
-                self.expect(&TokenKind::Equal, "= after with binding")?;
-                let value = self.expr(0)?;
+                let bindings = self.with_bindings()?;
                 let body = self.block(false)?;
                 let span = start.span.join(self.tokens[self.pos - 1].span);
                 if body.tail.is_some() {
-                    let expr = Expr {
-                        kind: ExprKind::With {
-                            name,
-                            value: Box::new(value),
-                            body: Box::new(body),
-                        },
-                        span,
-                    };
+                    let expr = nest_with_expression(bindings, body, span);
                     if self.eat(&TokenKind::Semicolon).is_some() {
                         statements.push(Statement::Expr(expr));
                     } else {
@@ -177,12 +168,7 @@ impl Parser {
                     }
                 } else {
                     self.eat(&TokenKind::Semicolon);
-                    statements.push(Statement::With {
-                        name,
-                        span,
-                        value,
-                        body,
-                    });
+                    statements.push(nest_with_statement(bindings, body, span));
                 }
                 continue;
             }

@@ -19,19 +19,10 @@ impl Parser {
                 span,
             } => {
                 self.pos += 1;
-                let (name, _) = self.name()?;
-                self.expect(&TokenKind::Equal, "= after with binding")?;
-                let value = self.expr(0)?;
+                let bindings = self.with_bindings()?;
                 let body = self.block(true)?;
                 let end = self.tokens[self.pos - 1].span;
-                Expr {
-                    kind: ExprKind::With {
-                        name,
-                        value: Box::new(value),
-                        body: Box::new(body),
-                    },
-                    span: span.join(end),
-                }
+                nest_with_expression(bindings, body, span.join(end))
             }
             Token {
                 kind: TokenKind::Int(value),

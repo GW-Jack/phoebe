@@ -3,9 +3,11 @@ mod declarations;
 mod expressions;
 mod statements;
 mod types;
+mod with_bindings;
 use super::lexer::{Token, TokenKind, lex};
 use crate::depth::{body_height, expr_height};
 use crate::{Diagnostic, Span};
+use with_bindings::{nest_with_expression, nest_with_statement};
 
 struct Parser {
     tokens: Vec<Token>,

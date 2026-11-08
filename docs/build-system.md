@@ -57,6 +57,7 @@ buck2 test //:source_requests_tests
 buck2 test //:core_requests_tests
 buck2 test //:source_spawn_tests
 buck2 test //:source_with_tests
+buck2 test //:source_with_group_tests
 buck2 test //:source_yield_tests
 buck2 test //:source_unit_tests
 buck2 test //:source_fork_tests
