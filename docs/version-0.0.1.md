@@ -76,8 +76,9 @@ The parser currently limits nested source constructs and chained expressions
 to 48 levels, and combined expression/body tree depth to 64, reporting a
 source location at the limit. These bound parser and lowering stack use; they
 are implementation limits, not the intended language semantics.
-The diagnostic regression suite mutates three valid programs 1,000 times
-each and checks that parse/lower errors stay in source bounds. It also covers
+The diagnostic regression suite mutates eight valid programs 1,000 times
+each and checks that parse/lower errors stay in source bounds, including
+linked generic and communication syntax. It also covers
 deeply nested expressions, types, and branches. This is bounded test evidence,
 not a proof for every input.
 `phoebe clif <file>` prints the pre-legalization Cranelift IR.
@@ -108,7 +109,9 @@ Single-shot projects resolve public generic calls across modules for `check`,
 `build-session`, reusing checked concrete bodies and an exact linked object set;
 one-shot `build --cache-dir` persists that object set across processes.
 Generic calls in retained tasks and spawned poll children run in JIT and
-standalone code. Linked interpreter and native runs accept the same explicit
+standalone code. `examples/generic_channel_exchange.phoebe` exercises a
+generic call after channel parking through the CLI's interpreter, JIT, and
+standalone routes. Linked interpreter and native runs accept the same explicit
 scope limits; tests compare task-limit rejection in direct and retained
 generic callers. Generic bodies themselves cannot suspend, and per-function
 linked object reuse remains open.

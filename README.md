@@ -63,12 +63,13 @@ Cranelift JIT emission runs the first identity, branch, and generic-call
 subset. The same emitter can produce a linkable object; a standalone smoke
 test executes a transitive generic call. Concrete source calls to the checked
 generic subset now lower into linked Core, which verifies substitution and
-ownership transfer. Single-file `phoebe run <file>` executes non-suspending
-generic calls through Cranelift; `--interp` runs the same calls in the
-interpreter. `phoebe build <file|project> -o <output>` emits a standalone
-generic executable. Public generic functions can be called across imported
-project modules. Retained native tasks, incremental project sessions, and
-persistent generic object caching remain open.
+ownership transfer. Single-file `phoebe run <file>` executes generic calls
+from direct and retained functions through Cranelift; `--interp` runs the same
+calls in the interpreter. `phoebe build <file|project> -o <output>` emits a
+standalone generic executable. Public generic functions can be called across
+imported project modules. Project build sessions reuse checked concrete bodies
+and linked object sets; `build --cache-dir` persists exact object sets across
+compiler processes. Per-function linked object reuse remains open.
 The isolated `phoebe-generic-core` crate now verifies a first opaque-owner
 IR slice. `phoebe generic-ir <file>` lowers identity, forwarding, and
 generic-to-generic calls into printable parametric Core. The module verifier
@@ -94,6 +95,7 @@ buck2 run //:phoebe -- shapes examples/product.phoebe
 buck2 run //:phoebe -- generic-ir examples/generic_identity.phoebe
 buck2 run //:phoebe -- run examples/generic_call.phoebe
 buck2 run //:phoebe -- run examples/generic_call.phoebe --interp
+buck2 run //:phoebe -- run examples/generic_channel_exchange.phoebe
 buck2 run //:phoebe -- build examples/generic_call.phoebe -o /tmp/phoebe-generic
 /tmp/phoebe-generic
 buck2 run //:phoebe -- run examples/generic_project

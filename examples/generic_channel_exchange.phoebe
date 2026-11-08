@@ -1,0 +1,38 @@
+fn identity<T>(value: T) -> T = value
+
+fn producer(sender: Sender<I64>) -> I64 {
+  val first = sender.send(20);
+  val second = when (first) {
+    Send<I64>.Sent -> { sender.send(22) },
+    Send<I64>.Closed(unsent) -> { Send<I64>.Closed(unsent) }
+  };
+  sender.close();
+  when (second) {
+    Send<I64>.Sent -> { 0 },
+    Send<I64>.Closed(unsent) -> { unsent }
+  }
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  spawn producer(sender)?;
+  val first = receiver.receive();
+  val second = receiver.receive();
+  receiver.close();
+  when (first) {
+    Receive<I64>.Value(a) -> {
+      when (second) {
+        Receive<I64>.Value(b) -> { Result<I64, ResourceError>.Ok(identity(a + b)) },
+        Receive<I64>.End -> { Result<I64, ResourceError>.Ok(a) }
+      }
+    },
+    Receive<I64>.End -> { Result<I64, ResourceError>.Ok(0) }
+  }
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

@@ -3,7 +3,16 @@ use phoebe::{core, syntax};
 fn check_source(source: &str) {
     let result = std::panic::catch_unwind(|| match syntax::parse(source) {
         Ok(ast) => {
-            if let Err(error) = core::lower(&ast) {
+            let lowered = if ast
+                .functions
+                .iter()
+                .any(|function| !function.type_params.is_empty())
+            {
+                core::lower_linked_checked(&ast).map(|_| ())
+            } else {
+                core::lower(&ast).map(|_| ())
+            };
+            if let Err(error) = lowered {
                 assert!(error.span.start <= error.span.end);
                 assert!(error.span.end <= source.len(), "{error:?}");
                 let _ = error.render(source);
@@ -25,6 +34,10 @@ fn nearby_malformed_programs_return_diagnostics() {
         include_str!("../examples/nested_variant.phoebe"),
         include_str!("../examples/try.phoebe"),
         include_str!("../examples/boolean_short_circuit.phoebe"),
+        include_str!("../examples/generic_call.phoebe"),
+        include_str!("../examples/channel_exchange.phoebe"),
+        include_str!("../examples/request_backpressure.phoebe"),
+        include_str!("../examples/capability_nested_sum.phoebe"),
     ];
     let insertions: [&[u8]; 15] = [
         b"(", b")", b"{", b"}", b"?", b".", b"\n", b"fn ", b"val ", b"0", b"&mut ", b"send", b"&&",

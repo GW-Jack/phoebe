@@ -450,11 +450,7 @@ fn direct_root_spawns_a_retained_generic_child() {
 
 #[test]
 fn channel_exchange_calls_generic_after_park_and_wake() {
-    let source = format!(
-        "fn identity<T>(value: T) -> T = value\n{}",
-        include_str!("../examples/channel_exchange.phoebe").replace("a + b", "identity(a + b)")
-    );
-    let ast = syntax::parse(&source).unwrap();
+    let ast = syntax::parse(include_str!("../examples/generic_channel_exchange.phoebe")).unwrap();
     let linked = core::lower_linked_checked(&ast).unwrap();
     assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run_linked(&linked, "main", &[]).unwrap(), 42);
