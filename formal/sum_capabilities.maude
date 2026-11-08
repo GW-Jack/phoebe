@@ -4,9 +4,10 @@ mod PHOEBE-SUM-CAPABILITIES is
   protecting BOOL .
 
   sorts Phase Tag Owner State .
-  ops choose ready boxed matched finished failed canceled : -> Phase [ctor] .
+  ops choose ready boxed matched admitted spawnRejected childDone childFailed
+      finished failed canceled : -> Phase [ctor] .
   ops unknown none some : -> Tag [ctor] .
-  ops unborn task sum closed : -> Owner [ctor] .
+  ops unborn task sum child closed : -> Owner [ctor] .
   op st : Phase Tag Owner -> State [ctor] .
   op initial : -> State .
   eq initial = st(choose, unknown, unborn) .
@@ -34,6 +35,29 @@ mod PHOEBE-SUM-CAPABILITIES is
     => st(finished, none, unborn) .
   rl [close-some] : st(matched, some, task)
     => st(finished, some, closed) .
+
+  --- Spawn admission moves exactly the active payload. A rejected admission
+  --- commits no transfer, leaving the parent's envelope intact for cleanup.
+  rl [spawn-none] : st(boxed, none, unborn)
+    => st(admitted, none, unborn) .
+  rl [spawn-some] : st(boxed, some, sum)
+    => st(admitted, some, child) .
+  rl [reject-spawn-none] : st(boxed, none, unborn)
+    => st(spawnRejected, none, unborn) .
+  rl [reject-spawn-some] : st(boxed, some, sum)
+    => st(spawnRejected, some, sum) .
+  rl [cleanup-rejected-none] : st(spawnRejected, none, unborn)
+    => st(failed, none, unborn) .
+  rl [cleanup-rejected-some] : st(spawnRejected, some, sum)
+    => st(failed, some, closed) .
+  rl [finish-child-none] : st(admitted, none, unborn)
+    => st(childDone, none, unborn) .
+  rl [finish-child-some] : st(admitted, some, child)
+    => st(childDone, some, closed) .
+  rl [fail-child-none] : st(admitted, none, unborn)
+    => st(childFailed, none, unborn) .
+  rl [fail-child-some] : st(admitted, some, child)
+    => st(childFailed, some, closed) .
 
   --- Early failure and cancellation dispose of the active payload only.
   rl [fail-none] : st(boxed, none, unborn)
@@ -64,6 +88,14 @@ mod PHOEBE-SUM-CAPABILITIES is
   eq valid(boxed, some, sum) = true .
   eq valid(matched, none, unborn) = true .
   eq valid(matched, some, task) = true .
+  eq valid(admitted, none, unborn) = true .
+  eq valid(admitted, some, child) = true .
+  eq valid(spawnRejected, none, unborn) = true .
+  eq valid(spawnRejected, some, sum) = true .
+  eq valid(childDone, none, unborn) = true .
+  eq valid(childDone, some, closed) = true .
+  eq valid(childFailed, none, unborn) = true .
+  eq valid(childFailed, some, closed) = true .
   eq valid(finished, none, unborn) = true .
   eq valid(finished, some, closed) = true .
   eq valid(failed, none, unborn) = true .

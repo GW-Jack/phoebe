@@ -336,8 +336,9 @@ the child, including sums nested in products. Direct and retained native
 parents use a shared transfer emitter, and the runtime accepts more than four
 descriptors. Source tests cover `Some`, `None`, five-right payloads, and failed
 spawn cleanup in the interpreter and native paths. The bounded
-`formal/sum_capabilities.maude` model checks a one-right abstraction; it is
-not a proof of the compiler or runtime.
+`formal/sum_capabilities.maude` model checks one optional right moving to a
+child only on successful admission; it is not a proof of the compiler or
+runtime.
 The versioned runtime ABI now has send and receive calls with explicit
 `Pending` statuses and no endpoint transfer. Scheduler tests show wake and
 retry across both operations. Generated send and receive leaves use retained

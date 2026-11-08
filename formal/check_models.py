@@ -14,7 +14,7 @@ CASES = (
     ("check_retained_borrow.maude", 1, 4, 1),
     ("check_lexical_scopes.maude", 2, 7, 1),
     ("check_product_capabilities.maude", 2, 12, 1),
-    ("check_sum_capabilities.maude", 2, 12, 2),
+    ("check_sum_capabilities.maude", 4, 22, 3),
 )
 
 

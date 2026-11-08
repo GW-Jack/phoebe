@@ -122,21 +122,25 @@ model.
 
 `sum_capabilities.maude` models an optional affine right. `Some` creates and
 owns one right; `None` has no right. Construction moves the right into a
-tagged sum, and matching moves it to the `Some` arm only. Early failure and
-cancellation close the right only when the active tag is `Some`. The exhaustive
-search explores 13 states with no encoded ownership mismatch. Twelve
-witnesses include both variant paths through construction and matching, and
-branch-specific early-failure cleanup. Deliberately mismatched `None` and
-`Some` states are classified bad.
+tagged sum, and matching moves it to the `Some` arm only. Spawn admission
+transfers the active right to a child; rejected admission retains the parent's
+sum for cleanup. Child completion and failure dispose of its right. Early
+failure and cancellation close the right only when the active tag is `Some`.
+The exhaustive search explores 21 states with no encoded ownership mismatch.
+Twenty-two witnesses cover both variants through construction, matching,
+spawn admission, rejection, and child disposition. Three deliberately
+mismatched states are classified bad, and three specified wrong-owner states
+are unreachable.
 
 The model fixes one optional right and omits nested sums, multiple rights,
-queue transfer, allocation failure, and compiler/runtime state. It establishes
-a design obligation for Core: a sum's capability state must retain its active
+queue transfer, allocation details, scheduler interleavings, and
+compiler/runtime state. It establishes a design obligation for Core: a sum's
+capability state must retain its active
 tag through joins and cleanup. The executable exact-slot checker uses one
 opaque envelope at a CFG join and Core derives pack and unpack actions from
 typed variant construction and matching. Source and native paths now run
-finite capability-bearing sums with tag-aware close; spawn transfer remains
-restricted. No refinement proof connects those implementations to this model.
+finite capability-bearing sums with tag-aware close and spawn transfer. No
+refinement proof connects those implementations to this model.
 
 ## Evidence boundary
 
@@ -150,7 +154,7 @@ does not model executable frame spills or every cancellation interleaving.
 The retained borrow model includes parking but only one same-task call chain,
 one scalar place, and an abstract ordered unwind. It does not encode the
 generated frame offsets, Rust pointer operations, or allocator behavior.
-The tagged-sum model fixes one optional right and omits concurrent transfer.
+The tagged-sum model fixes one optional right and omits scheduler interleavings.
 None models scheduling fairness, foreign calls, or executable compiler IR.
 No proof yet connects any model to the compiler, runtime, or generated machine
 code. A `No solution.` result means only that its stated bad predicate is
