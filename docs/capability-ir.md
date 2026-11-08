@@ -67,9 +67,12 @@ number is separate from `ValueId`: adding scalar calculations cannot grow
 the ownership state. Core flow now moves all leaves together for nominal
 `move`, product construction, owned calls, spawn transfer, and block arguments.
 Whole-product `product.unpack` now moves each leaf to its corresponding field
-block parameter. The product field restriction remains in force because
-structural cleanup and native/runtime capability-product
-validation are incomplete. For a sum,
+block parameter. `close.caps` closes all of an owned product's leaves in
+reverse field order. The ABI computes each leaf's flattened component offset,
+including the nested reply right in `Request<I64>`. The product field
+restriction remains in force until implicit cleanup, place and variant
+restrictions, owned returns, and end-to-end capability-product execution are
+verified together. For a sum,
 the active variant determines which paths exist, so the verifier must either
 split on its tag or carry a tagged slot state. A blind union of variant slots
 would report nonexistent rights; a blind intersection would lose live ones.

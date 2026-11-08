@@ -1,5 +1,37 @@
 use super::*;
 
+fn close_caps(value: Value, context: &mut Option<&mut Context<'_>>) -> Result<(), String> {
+    match value {
+        Value::Product(_, fields) => {
+            for field in fields.into_iter().rev() {
+                close_caps(field, context)?;
+            }
+        }
+        Value::Sender(token) => context
+            .as_deref_mut()
+            .expect("capability close requires runtime context")
+            .close_sender(runtime::Sender::from_token(token))?,
+        Value::Receiver(token) => context
+            .as_deref_mut()
+            .expect("capability close requires runtime context")
+            .close_receiver(runtime::Receiver::from_token(token))?,
+        Value::ReplyTo(token) => context
+            .as_deref_mut()
+            .expect("capability close requires runtime context")
+            .close_reply_to(runtime::ReplyTo::from_token(token))?,
+        Value::ReplyReceiver(token) => context
+            .as_deref_mut()
+            .expect("capability close requires runtime context")
+            .cancel_reply(runtime::ReplyReceiver::from_token(token))?,
+        Value::Request(_, token) => context
+            .as_deref_mut()
+            .expect("capability close requires runtime context")
+            .close_reply_to(runtime::ReplyTo::from_token(token))?,
+        _ => {}
+    }
+    Ok(())
+}
+
 impl Program {
     pub fn cost_events(&self) -> Vec<CostEvent> {
         let mut events = Vec::new();
@@ -92,6 +124,7 @@ impl Program {
     /// operation and their transitive callers. Value types alone do not force
     /// a runtime dependency.
     pub fn runtime_context_functions(&self) -> Vec<bool> {
+        let capability_layout = verification::capability_layout::Layout::new(&self.data);
         let mut callers = vec![Vec::new(); self.functions.len()];
         let mut needed = vec![false; self.functions.len()];
         let mut ready = VecDeque::new();
@@ -120,6 +153,10 @@ impl Program {
                                 | Operation::CloseReply(_)
                                 | Operation::CloseRequest(_)
                                 | Operation::ScopeEnter(_)
+                        ) || matches!(
+                            instruction.operation,
+                            Operation::CloseCaps(value)
+                                if capability_layout.leaves(function.value_types[value.0]) > 0
                         )
                     }))
                 {
@@ -282,7 +319,7 @@ impl CoreTask {
     fn eval_instruction(
         &mut self,
         instruction: &Instruction,
-        context: Option<&mut Context<'_>>,
+        mut context: Option<&mut Context<'_>>,
     ) -> Result<Option<Value>, String> {
         let get = |id| self.value(id);
         let base = self.frames.last().expect("active frame").base;
@@ -390,6 +427,10 @@ impl CoreTask {
                 context
                     .expect("runtime operation has a context")
                     .close_reply_to(runtime::ReplyTo::from_token(token))?;
+                None
+            }
+            Operation::CloseCaps(value) => {
+                close_caps(get(*value), &mut context)?;
                 None
             }
             Operation::ScopeEnter(_) => {
@@ -953,6 +994,7 @@ impl fmt::Display for Program {
                             write!(f, "request.pack v{}, v{}", value.0, right.0)?
                         }
                         Operation::CloseRequest(value) => write!(f, "close.request v{}", value.0)?,
+                        Operation::CloseCaps(value) => write!(f, "close.caps v{}", value.0)?,
                         Operation::ScopeEnter(scope) => write!(f, "scope.enter r{}", scope.0)?,
                     }
                     writeln!(f, "  @{}..{}", instruction.span.start, instruction.span.end)?;

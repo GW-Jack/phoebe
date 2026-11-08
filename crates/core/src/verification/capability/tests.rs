@@ -190,3 +190,49 @@ fn whole_product_unpack_transfers_each_right_to_its_field_parameter() {
             .contains("normal return leaks")
     );
 }
+
+#[test]
+fn structural_close_disposes_product_leaves_in_reverse_field_order() {
+    let data = vec![DataDef {
+        name: "Pair".into(),
+        variants: vec![],
+        payloads: vec![],
+        fields: vec![
+            ("sender".into(), Type::SenderI64),
+            ("reply".into(), Type::ReplyToI64),
+        ],
+    }];
+    let function = Function {
+        name: "close".into(),
+        param_modes: vec![syntax::ParamMode::Own],
+        return_type: Type::I64,
+        value_types: vec![Type::Data(DataId(0)), Type::I64],
+        place_types: vec![],
+        loan_regions: vec![],
+        blocks: vec![Block {
+            params: vec![ValueId(0)],
+            instructions: vec![
+                Instruction {
+                    result: None,
+                    operation: Operation::CloseCaps(ValueId(0)),
+                    span: Span { start: 0, end: 0 },
+                },
+                Instruction {
+                    result: Some(ValueId(1)),
+                    operation: Operation::Const(0),
+                    span: Span { start: 0, end: 0 },
+                },
+            ],
+            terminator: Terminator::Return(ValueId(1)),
+        }],
+    };
+    let (graph, _) = capability_graph(&function, &Layout::new(&data), &[], &[]).unwrap();
+    assert_eq!(
+        graph.blocks[0].actions,
+        vec![
+            CapAction::Close(capability_flow::Slot(1)),
+            CapAction::Close(capability_flow::Slot(0)),
+        ]
+    );
+    capability_flow::verify(&graph).unwrap();
+}

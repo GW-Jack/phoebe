@@ -26,7 +26,7 @@ impl Layout {
             for (field, (_, ty)) in definition.fields.iter().enumerate() {
                 match ty {
                     Type::Data(DataId(id)) => {
-                        for nested in &layout.products[*id] {
+                        for nested in layout.products.get(*id).into_iter().flatten() {
                             let mut path = Vec::with_capacity(nested.path.len() + 1);
                             path.push(field);
                             path.extend_from_slice(&nested.path);
@@ -61,9 +61,9 @@ impl Layout {
         )
     }
 
-    pub(super) fn leaves(&self, ty: Type) -> usize {
+    pub(crate) fn leaves(&self, ty: Type) -> usize {
         match ty {
-            Type::Data(DataId(id)) => self.products[id].len(),
+            Type::Data(DataId(id)) => self.products.get(id).map_or(0, Vec::len),
             ty if Self::bare_right(ty) => 1,
             _ => 0,
         }

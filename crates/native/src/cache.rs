@@ -57,6 +57,7 @@ fn dead_pure_leaf(function: &Function) -> bool {
                     | Operation::CloseReply(_)
                     | Operation::PackRequest { .. }
                     | Operation::CloseRequest(_)
+                    | Operation::CloseCaps(_)
                     | Operation::ScopeEnter(_)
             )
         }) && matches!(

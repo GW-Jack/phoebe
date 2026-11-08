@@ -78,6 +78,12 @@ impl AbiShapes {
             })
             .collect()
     }
+
+    pub(super) fn capability_parts(&self, ty: Type) -> &[phoebe_abi::CapabilityPart] {
+        self.shapes
+            .capability_parts(ty)
+            .expect("checked Core type has an ABI capability layout")
+    }
 }
 
 /// Physical word ranges for the retained functions, derived from the same
@@ -595,6 +601,42 @@ pub(super) fn compile_functions<M: Module>(
                                 callee,
                                 &[runtime_context.expect("runtime context"), one(*value), kind],
                             );
+                            None
+                        }
+                        Operation::CloseCaps(value) => {
+                            let parts = get(*value);
+                            for leaf in shapes
+                                .capability_parts(function.value_types[value.0])
+                                .iter()
+                                .rev()
+                            {
+                                let kind = match leaf.kind {
+                                    Type::SenderI64 | Type::RequestSenderI64 => 0,
+                                    Type::ReceiverI64 | Type::RequestReceiverI64 => 1,
+                                    Type::ReplyToI64 => 0,
+                                    Type::ReplyReceiverI64 => 1,
+                                    _ => unreachable!("capability ABI leaf"),
+                                };
+                                let kind = builder.ins().iconst(types::I64, kind);
+                                let close = match leaf.kind {
+                                    Type::SenderI64
+                                    | Type::ReceiverI64
+                                    | Type::RequestSenderI64
+                                    | Type::RequestReceiverI64 => {
+                                        runtime_imports.expect("channel runtime imports").1
+                                    }
+                                    _ => reply_imports.expect("reply runtime imports").close,
+                                };
+                                let callee = module.declare_func_in_func(close, builder.func);
+                                builder.ins().call(
+                                    callee,
+                                    &[
+                                        runtime_context.expect("runtime context"),
+                                        parts[leaf.part],
+                                        kind,
+                                    ],
+                                );
+                            }
                             None
                         }
                         Operation::CloseReply(value) => {

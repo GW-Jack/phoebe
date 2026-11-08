@@ -62,3 +62,25 @@ fn unpack_binding_names_participate_in_incremental_ast_identity() {
         0,
     ));
 }
+
+#[test]
+fn structural_close_consumes_a_closed_product_without_runtime_context() {
+    for retained in [false, true] {
+        let source = format!(
+            "data Pair {{ left: I64, right: I64 }}\nfn main() -> I64 {{\n  val pair = Pair(19, 23);\n  {}pair.close_caps();\n  42\n}}",
+            if retained { "yield;\n  " } else { "" }
+        );
+        let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+        assert!(program.to_string().contains("close.caps"));
+        assert_eq!(program.runtime_context_functions(), vec![retained]);
+        if !retained {
+            assert!(!native::clif(&program).unwrap().contains("call"));
+        }
+        assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+        assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    }
+
+    let reused = "data Pair { left: I64, right: I64 }\nfn main() -> I64 { val pair = Pair(1, 2); pair.close_caps(); pair.left }";
+    let error = core::lower(&syntax::parse(reused).unwrap()).unwrap_err();
+    assert!(error.message.contains("use after move"));
+}

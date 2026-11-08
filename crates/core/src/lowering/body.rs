@@ -553,6 +553,13 @@ impl Lowerer<'_> {
                         && self.value_types[value.0] == Type::RequestI64
                     {
                         self.emit_effect(Operation::CloseRequest(value), expr.span);
+                    } else if let ExprKind::QualifiedCall(name, method, args) = &expr.kind
+                        && method == "close_caps"
+                        && args.is_empty()
+                        && let Some(Binding::Val(value)) = locals.get(name).copied()
+                        && matches!(self.value_types[value.0], Type::Data(_))
+                    {
+                        self.emit_effect(Operation::CloseCaps(value), expr.span);
                     } else {
                         self.expr(expr, locals)?;
                     }

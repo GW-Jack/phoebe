@@ -105,6 +105,14 @@ pub(crate) fn capability_graph(
                 Operation::CloseHandle(value)
                 | Operation::CloseReply(value)
                 | Operation::CloseRequest(value) => actions.push(CapAction::Close(slot(*value))),
+                Operation::CloseCaps(value) => {
+                    actions.extend(
+                        slots[value.0]
+                            .clone()
+                            .rev()
+                            .map(|slot| CapAction::Close(capability_flow::Slot(slot))),
+                    );
+                }
                 Operation::PackRequest { right, .. } => {
                     let packed = instruction
                         .result

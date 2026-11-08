@@ -24,8 +24,15 @@ impl Shape {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CapabilityPart {
+    pub part: usize,
+    pub kind: Type,
+}
+
 pub struct Shapes {
     data: Vec<Shape>,
+    capabilities: Vec<Vec<CapabilityPart>>,
 }
 
 impl Shapes {
@@ -34,6 +41,7 @@ impl Shapes {
     pub fn new(program: &Program) -> Result<Self, String> {
         let mut shapes = Self {
             data: Vec::with_capacity(program.data.len()),
+            capabilities: Vec::with_capacity(program.data.len()),
         };
         for definition in &program.data {
             if definition.fields.is_empty() == definition.variants.is_empty() {
@@ -42,9 +50,16 @@ impl Shapes {
                     definition.name
                 ));
             }
+            let mut capability_parts = Vec::new();
             let parts = if !definition.fields.is_empty() {
                 let mut parts = Vec::new();
                 for (_, ty) in &definition.fields {
+                    for leaf in shapes.capability_parts(*ty)? {
+                        capability_parts.push(CapabilityPart {
+                            part: parts.len() + leaf.part,
+                            kind: leaf.kind,
+                        });
+                    }
                     parts.extend_from_slice(shapes.parts(*ty)?);
                 }
                 parts
@@ -63,6 +78,7 @@ impl Shapes {
                 vec![Part::Word; count]
             };
             shapes.data.push(Shape { parts });
+            shapes.capabilities.push(capability_parts);
         }
         Ok(shapes)
     }
@@ -97,6 +113,47 @@ impl Shapes {
             | Type::RequestReceiverI64
             | Type::ResourceError => Ok(WORD),
             Type::RequestI64 => Ok(REQUEST),
+        }
+    }
+
+    /// Declaration-order capability leaves with offsets in the flattened
+    /// transport shape. Reverse iteration gives structural close order.
+    pub fn capability_parts(&self, ty: Type) -> Result<&[CapabilityPart], String> {
+        match ty {
+            Type::Data(id) => self
+                .capabilities
+                .get(id.0)
+                .map(Vec::as_slice)
+                .ok_or("unknown ABI data type".into()),
+            Type::SenderI64 => Ok(&[CapabilityPart {
+                part: 0,
+                kind: Type::SenderI64,
+            }]),
+            Type::ReceiverI64 => Ok(&[CapabilityPart {
+                part: 0,
+                kind: Type::ReceiverI64,
+            }]),
+            Type::ReplyToI64 => Ok(&[CapabilityPart {
+                part: 0,
+                kind: Type::ReplyToI64,
+            }]),
+            Type::ReplyReceiverI64 => Ok(&[CapabilityPart {
+                part: 0,
+                kind: Type::ReplyReceiverI64,
+            }]),
+            Type::RequestSenderI64 => Ok(&[CapabilityPart {
+                part: 0,
+                kind: Type::RequestSenderI64,
+            }]),
+            Type::RequestReceiverI64 => Ok(&[CapabilityPart {
+                part: 0,
+                kind: Type::RequestReceiverI64,
+            }]),
+            Type::RequestI64 => Ok(&[CapabilityPart {
+                part: 1,
+                kind: Type::ReplyToI64,
+            }]),
+            _ => Ok(&[]),
         }
     }
 }
@@ -155,5 +212,52 @@ mod tests {
             functions: vec![],
         };
         assert!(Shapes::new(&program).is_err());
+    }
+
+    #[test]
+    fn nested_capability_offsets_follow_flattened_product_parts() {
+        let program = core::Program {
+            data: vec![
+                core::DataDef {
+                    name: "Pair".into(),
+                    variants: vec![],
+                    payloads: vec![],
+                    fields: vec![
+                        ("sender".into(), Type::SenderI64),
+                        ("request".into(), Type::RequestI64),
+                    ],
+                },
+                core::DataDef {
+                    name: "Envelope".into(),
+                    variants: vec![],
+                    payloads: vec![],
+                    fields: vec![
+                        ("number".into(), Type::I64),
+                        ("pair".into(), Type::Data(DataId(0))),
+                        ("receiver".into(), Type::ReceiverI64),
+                    ],
+                },
+            ],
+            functions: vec![],
+        };
+        let shapes = Shapes::new(&program).unwrap();
+        assert_eq!(shapes.parts(Type::Data(DataId(1))).unwrap().len(), 5);
+        assert_eq!(
+            shapes.capability_parts(Type::Data(DataId(1))).unwrap(),
+            [
+                CapabilityPart {
+                    part: 1,
+                    kind: Type::SenderI64
+                },
+                CapabilityPart {
+                    part: 3,
+                    kind: Type::ReplyToI64
+                },
+                CapabilityPart {
+                    part: 4,
+                    kind: Type::ReceiverI64
+                },
+            ]
+        );
     }
 }

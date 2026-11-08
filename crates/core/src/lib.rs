@@ -151,6 +151,7 @@ pub enum Operation {
     CloseReply(ValueId),
     PackRequest { value: ValueId, right: ValueId },
     CloseRequest(ValueId),
+    CloseCaps(ValueId),
     ScopeEnter(TaskScopeId),
 }
 

@@ -81,6 +81,7 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                 let span = instruction.span;
                 match &instruction.operation {
                     Operation::Move(value) => value_use(&mut state, *value, true, span)?,
+                    Operation::CloseCaps(value) => value_use(&mut state, *value, true, span)?,
                     Operation::Variant(_, _, payload) => {
                         if let Some(value) = payload {
                             value_use(&mut state, *value, true, span)?;

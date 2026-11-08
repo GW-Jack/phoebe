@@ -58,6 +58,11 @@ and narrowed on load. This follows the available return registers without
 Cranelift's deprecated implicit multi-return buffer. The
 interpreter uses an explicit product value; its internal allocations are not
 part of the native runtime.
+The shape table also records the part offset and kind of each capability leaf
+in a product. A `Request<I64>` contributes its reply right at its second
+part. Reverse traversal of this table gives structural close order without
+a runtime scan. Capability-bearing product declarations remain gated while
+the compiler and runtime ownership paths are completed.
 
 A sum with a payload reserves the maximum number of flattened payload words
 among its variants. Every payload component is represented as an I64 word;

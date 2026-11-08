@@ -41,6 +41,12 @@ agree on a nested closed-product example. Source `val (a, b, ...) =
 product.unpack();` lowers to this terminator and requires one name per field.
 The existing two-name request unpack uses the same binding syntax.
 Capability-bearing product declarations remain rejected.
+`close.caps` consumes a nominal product. It closes capability leaves in
+reverse field order; for a closed product it has no runtime effect. Source
+`product.close_caps();` emits this operation. The verifier rejects reuse of
+the consumed owner, and the native backend emits no close call when the
+product has no rights. End-to-end capability-bearing product execution is
+still gated.
 
 The first `?` lowering uses this same `match` terminator. Its `Err` target
 receives and returns the original sum value through a block parameter; its

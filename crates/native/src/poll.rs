@@ -929,6 +929,46 @@ fn compile_poll_module<M: Module>(
                             builder.ins().call(close_ref, &[bridge, token, kind]);
                             None
                         }
+                        Operation::CloseCaps(value) => {
+                            let parts = get(*value, &mut builder);
+                            for leaf in shapes
+                                .capability_parts(function.value_types[value.0])
+                                .iter()
+                                .rev()
+                            {
+                                let token = parts[leaf.part];
+                                let kind = match leaf.kind {
+                                    Type::SenderI64 | Type::RequestSenderI64 | Type::ReplyToI64 => {
+                                        0
+                                    }
+                                    Type::ReceiverI64
+                                    | Type::RequestReceiverI64
+                                    | Type::ReplyReceiverI64 => 1,
+                                    _ => unreachable!("capability ABI leaf"),
+                                };
+                                let kind = builder.ins().iconst(types::I64, kind);
+                                match leaf.kind {
+                                    Type::SenderI64
+                                    | Type::ReceiverI64
+                                    | Type::RequestSenderI64
+                                    | Type::RequestReceiverI64 => {
+                                        builder.ins().call(close_ref, &[bridge, token, kind]);
+                                    }
+                                    _ => {
+                                        let call = builder
+                                            .ins()
+                                            .call(reply_close_ref, &[bridge, token, kind]);
+                                        let status = builder.inst_results(call)[0];
+                                        let valid =
+                                            builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                                        let next = builder.create_block();
+                                        builder.ins().brif(valid, next, &[], fault, &[]);
+                                        builder.switch_to_block(next);
+                                    }
+                                }
+                            }
+                            None
+                        }
                         Operation::CloseReply(value) => {
                             let token = get(*value, &mut builder)[0];
                             let kind =
@@ -1722,6 +1762,7 @@ fn validate_poll_function(
                     | Operation::CloseReply(_)
                     | Operation::PackRequest { .. }
                     | Operation::CloseRequest(_)
+                    | Operation::CloseCaps(_)
                     | Operation::Call(_, _)
                     | Operation::ScopeEnter(_)
             ) {
