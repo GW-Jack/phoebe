@@ -112,3 +112,71 @@ fn main() -> I64 = when (acquire()) {
         assert_eq!(output.stdout, b"42\n");
     }
 }
+
+#[test]
+fn spawn_moves_product_from_place_and_failure_closes_taken_owner() {
+    let source = r#"
+data Pair { sender: Sender<I64>, receiver: Receiver<I64> }
+
+fn worker(pair: Pair) -> Unit {
+  pair.close_caps();
+}
+
+fn acquire() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  var saved = Pair(sender, receiver);
+  spawn worker(saved)?;
+  val (next_sender, next_receiver) = channel<I64>(capacity = 1)?;
+  saved = Pair(next_sender, next_receiver);
+  val next = saved;
+  next.close_caps();
+  Result<I64, ResourceError>.Ok(42)
+}
+
+fn main() -> I64 = when (acquire()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+"#;
+    for retained in [false, true] {
+        let source = if retained {
+            source.replace(
+                "  spawn worker(saved)?;",
+                "  yield;\n  spawn worker(saved)?;",
+            )
+        } else {
+            source.to_owned()
+        };
+        let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+        core::verify(&program).unwrap();
+        assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+        assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+        let no_child = ScopeLimits {
+            tasks: 1,
+            ..ScopeLimits::default()
+        };
+        assert_eq!(
+            program
+                .interpret_with_limits("main", &[], no_child)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            native::run_with_limits(&program, "main", &[], no_child).unwrap(),
+            0
+        );
+        let path = std::env::temp_dir().join(format!(
+            "phoebe-place-spawn-{}-{retained}",
+            std::process::id()
+        ));
+        native::build_executable(&program, &path).unwrap();
+        let output = Command::new(&path).output().unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"42\n");
+    }
+}

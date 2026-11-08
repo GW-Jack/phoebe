@@ -293,6 +293,10 @@ parameters and `spawn worker(sender)?;` as a fallible statement. On success
 the child owns its argument; on task-limit failure the parent retains it and
 the `?` cleanup closes it. Children without suspension also run through the
 Cranelift JIT and standalone object path.
+Named nominal `var` arguments are taken before spawn. The success edge
+transfers their rights; the failure edge closes the retained values. A source
+test covers direct and suspended parents, task-limit rejection, and
+reassignment of the emptied place after successful spawn.
 Source `val another = sender.fork()?` and the receiver equivalent now create
 one independently owned handle on success. The original remains live on both
 edges, and a resource failure creates no new handle. Core checks the fresh

@@ -199,9 +199,11 @@ The verifier transfers endpoint slots only on the success edge. Its affine
 check similarly moves closed nominal arguments only on success.
 Source `spawn worker(sender)?;` uses these same edges. The child parameter
 is an owned `Sender<I64>` or another supported owned type. Source lowering
-requires a named `val` for non-scalar arguments so pre-commit failure can
-retain the original owner; arbitrary owned temporaries need a later retained
-argument representation. The task-limit failure edge runs source `?` cleanup.
+requires a named binding for non-scalar arguments. A nominal aggregate may
+be taken from `var`; the empty place may then be reassigned. On pre-commit
+failure, the taken owner remains live in the parent and source `?` cleanup
+closes it. Arbitrary owned temporaries need a later retained argument
+representation.
 
 Source `?` exits now use the same exact flow graph as the verifier. The
 lowerer marks an implicit error return as a cleanup exit, reads its live

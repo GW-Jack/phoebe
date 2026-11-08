@@ -249,24 +249,6 @@ impl Lowerer<'_> {
                         let (value, ty) = if let ExprKind::Name(name) = &expr.kind {
                             match locals.get(name).copied() {
                                 Some(Binding::Val(value)) => (value, self.value_types[value.0]),
-                                Some(Binding::Var(place))
-                                    if matches!(
-                                        self.place_types[place.0],
-                                        Type::Data(_)
-                                            | Type::SenderI64
-                                            | Type::ReceiverI64
-                                            | Type::ReplyToI64
-                                            | Type::ReplyReceiverI64
-                                            | Type::RequestI64
-                                            | Type::RequestSenderI64
-                                            | Type::RequestReceiverI64
-                                    ) =>
-                                {
-                                    return Err(Diagnostic::new(
-                                        expr.span,
-                                        "owned spawn arguments must be named vals until retained cleanup supports places",
-                                    ));
-                                }
                                 _ => self.expr(expr, locals)?,
                             }
                         } else {

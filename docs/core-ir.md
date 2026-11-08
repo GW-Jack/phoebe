@@ -151,9 +151,10 @@ those owners to a new task; failure retains them with the parent. The Core
 interpreter runs a parent and child exchanging an `I64` over a bounded channel.
 Source `spawn worker(sender)?;` now lowers to this terminator and uses the
 exact failure-edge live-slot map for parent cleanup. It accepts only owned
-arguments and an `I64`-returning child; capability or nominal arguments must
-currently be named `val`s so their ownership is retained on failure. Native
-spawn and structural cleanup remain open. Source `sender.send(value)` returns
+arguments and an `I64`- or `Unit`-returning child. Nominal arguments may be
+named `val`s or moved from a named `var`; failure retains the taken value for
+parent cleanup. Native spawn and structural cleanup run in the interpreter,
+JIT, and standalone path. Source `sender.send(value)` returns
 `Send<I64>.Sent` or `Send<I64>.Closed(value)`, while
 `receiver.receive()` returns `Receive<I64>.Value(value)` or
 `Receive<I64>.End`. Both lower to the checked Core terminators; the
