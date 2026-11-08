@@ -90,6 +90,13 @@ Core uses one traversal for every instruction and terminator source span,
 including `spawn` and `scope.join`. The native direct-object cache removes
 those spans from its function key, so moving unchanged source text does not
 force code emission solely because locations changed.
+`NativeBuildSession` now keys direct objects by qualified function name and
+normalizes call and spawn targets to those names. Internal linker symbols use
+an injective encoding of the name, so inserting a private helper does not
+rename existing objects. The session compares existing signatures, runtime
+context needs, suspension flags, and frame facts before reuse. A changed
+retained child frame invalidates direct parents that could spawn it. Poll
+objects are still emitted afresh, and these symbols are not a public ABI.
 
 The current CLI starts a fresh parse and Core session for each command.
 `phoebe build <project> -o <output> --cache-dir <directory>` can persist
@@ -103,7 +110,7 @@ exact codegen key and discards truncated or corrupt entries. The linker runs on
 every build. The cache is optional and does not persist typed interfaces or
 incremental type checking. A changed Core program recompiles its object set;
 in-process `NativeBuildSession` still reuses direct function objects after
-individual body edits.
+individual body edits or harmless function-index shifts.
 Cached ASTs are cloned and qualified again when an in-process project session
 is loaded. The small warm-session baseline in `docs/performance-baseline.md` shows only a
 marginal difference on a six-function project.

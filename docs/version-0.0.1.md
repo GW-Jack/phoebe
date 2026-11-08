@@ -119,7 +119,8 @@ SHA-256 fingerprint for a future persistent cache; in-process invalidation
 still compares exact structures. Public imported nominal variants can be constructed and matched
 with qualified names. An in-process `NativeBuildSession` now emits separate
 objects for direct functions and reuses them after checked Core edits when
-their body and ABI inputs are unchanged; standalone one-shot builds retain
+their body and ABI inputs are unchanged, including across unrelated function
+insertions or removals; standalone one-shot builds retain
 single-object emission. The optional CLI `--cache-dir` now persists a complete
 emitted object set for unchanged codegen inputs, ignoring source spans and
 unreachable pure leaf bodies, but still parses, verifies Core,

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::io::Write;
@@ -32,6 +32,30 @@ mod reachability;
 mod runtime_imports;
 pub use poll::{PollExecutable, PollLeafExecutable, compile_poll_jit, compile_poll_leaf_jit};
 use reachability::{spawned_poll_children, spawned_poll_children_in, standalone_direct_functions};
+
+/// Injective internal symbol encoding. Names are source identifiers qualified
+/// by modules, while linkers see only ASCII letters, digits, and underscores.
+fn symbol_suffix(name: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(name.len() * 2);
+    for byte in name.bytes() {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 15) as usize] as char);
+    }
+    encoded
+}
+
+fn direct_symbol(name: &str) -> String {
+    if name == "main" {
+        "phoebe_main".into()
+    } else {
+        format!("phoebe_fn_{}", symbol_suffix(name))
+    }
+}
+
+fn spawn_poll_symbol(name: &str) -> String {
+    format!("phoebe_spawn_poll_{}", symbol_suffix(name))
+}
 
 pub struct JitExecutable {
     module: JITModule,
@@ -76,7 +100,7 @@ pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, Strin
     for child in spawned_poll_children(program)? {
         let executable = compile_poll_jit(program, &program.functions[child.0].name)?;
         jit.symbol(
-            format!("phoebe_spawn_poll_{}", child.0),
+            spawn_poll_symbol(&program.functions[child.0].name),
             unsafe { executable.entry() } as *const u8,
         );
         poll_children.push(executable);
@@ -312,7 +336,30 @@ struct ObjectEmission {
 #[derive(Clone, Default)]
 pub struct NativeBuildSession {
     global_key: Option<String>,
-    objects: Vec<Option<(String, Vec<u8>)>>,
+    facts: BTreeMap<String, String>,
+    objects: BTreeMap<String, (String, Vec<u8>)>,
+}
+
+/// The object relocation names are stable across index shifts. Normalize
+/// call and spawn IDs in the body key to those names as well; otherwise an
+/// unrelated insertion would still make every caller appear changed.
+fn direct_function_key(program: &Program, index: usize) -> String {
+    let mut function = program.functions[index].clone();
+    function.for_each_source_span_mut(|span| *span = phoebe_syntax::Span { start: 0, end: 0 });
+    let mut targets = Vec::new();
+    for block in &mut function.blocks {
+        for instruction in &mut block.instructions {
+            if let Operation::Call(target, _) = &mut instruction.operation {
+                targets.push(program.functions[target.0].name.clone());
+                target.0 = 0;
+            }
+        }
+        if let Terminator::Spawn { child, .. } = &mut block.terminator {
+            targets.push(program.functions[child.0].name.clone());
+            child.0 = 0;
+        }
+    }
+    format!("{:?}", (function, targets))
 }
 
 impl NativeBuildSession {
@@ -365,7 +412,7 @@ fn emit_object_with_poll_layout(
         let (object, _) = poll::emit_poll_object(
             program,
             &program.functions[child.0].name,
-            &format!("phoebe_spawn_poll_{}", child.0),
+            &spawn_poll_symbol(&program.functions[child.0].name),
         )?;
         poll_objects.push(object);
     }
@@ -399,53 +446,71 @@ fn emit_object_with_poll_layout(
             0,
         ));
     }
-    let global_key = format!(
-        "{:?}{:?}{:?}{:?}{:?}",
-        program.data,
-        program
-            .functions
-            .iter()
-            .map(|function| (
-                &function.name,
-                &function.param_modes,
-                function.return_type,
-                function.blocks[0]
-                    .params
-                    .iter()
-                    .map(|id| function.value_types[id.0])
-                    .collect::<Vec<_>>(),
-            ))
-            .collect::<Vec<_>>(),
-        context_functions,
-        suspendable,
-        frame_layout::analyze(program)?
-            .into_iter()
-            .filter(|frame| suspendable[frame.function.0])
-            .collect::<Vec<_>>(),
-    );
+    let global_key = format!("{:?}", program.data);
+    let mut frame_facts = vec![None; program.functions.len()];
+    for frame in frame_layout::analyze(program)? {
+        let function = &program.functions[frame.function.0];
+        frame_facts[frame.function.0] = Some(format!(
+            "{:?}",
+            (
+                frame.points,
+                frame.value_slots,
+                frame.place_slots,
+                &function.value_types,
+                &function.place_types,
+            )
+        ));
+    }
+    let facts = program
+        .functions
+        .iter()
+        .enumerate()
+        .map(|(index, function)| {
+            (
+                function.name.clone(),
+                format!(
+                    "{:?}",
+                    (
+                        &function.param_modes,
+                        function.return_type,
+                        function.blocks[0]
+                            .params
+                            .iter()
+                            .map(|id| function.value_types[id.0])
+                            .collect::<Vec<_>>(),
+                        context_functions[index],
+                        suspendable[index],
+                        &frame_facts[index],
+                    )
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut direct_objects = Vec::new();
     let mut reused = 0;
     if let Some(session) = cache.as_deref_mut() {
-        if session.global_key.as_ref() != Some(&global_key) {
+        if session.global_key.as_ref() != Some(&global_key)
+            || session
+                .facts
+                .iter()
+                .any(|(name, old)| facts.get(name).is_some_and(|now| now != old))
+        {
             session.objects.clear();
-            session.global_key = Some(global_key);
         }
+        session.global_key = Some(global_key);
+        session.facts = facts;
         session
             .objects
-            .resize_with(program.functions.len(), || None);
-        session.objects.truncate(program.functions.len());
+            .retain(|name, _| session.facts.contains_key(name));
     }
     for index in 0..program.functions.len() {
         if !direct[index] {
             continue;
         }
-        let mut function_key = program.functions[index].clone();
-        function_key
-            .for_each_source_span_mut(|span| *span = phoebe_syntax::Span { start: 0, end: 0 });
-        let key = format!("{function_key:?}");
+        let key = direct_function_key(program, index);
         if let Some((_, object)) = cache
             .as_deref()
-            .and_then(|session| session.objects[index].as_ref())
+            .and_then(|session| session.objects.get(&program.functions[index].name))
             .filter(|(previous, _)| *previous == key)
         {
             direct_objects.push(object.clone());
@@ -476,7 +541,9 @@ fn emit_object_with_poll_layout(
         )?;
         let object = module.finish().emit().map_err(|e| e.to_string())?;
         if let Some(session) = cache.as_deref_mut() {
-            session.objects[index] = Some((key, object.clone()));
+            session
+                .objects
+                .insert(program.functions[index].name.clone(), (key, object.clone()));
         }
         direct_objects.push(object);
     }

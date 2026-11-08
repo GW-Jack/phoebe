@@ -617,6 +617,18 @@ fn private_helper_insertion_preserves_checked_bodies_and_remaps_calls() {
     let mut session = ProjectCompilerSession::new();
     let (before, _) = session.compile(&path).unwrap();
     let old_count = before.functions.len();
+    let executable = path.join("app");
+    let mut native_session = native::NativeBuildSession::new();
+    assert_eq!(
+        native_session
+            .build_executable(&before, &executable)
+            .unwrap(),
+        0
+    );
+    let warm_objects = native_session
+        .build_executable(&before, &executable)
+        .unwrap();
+    assert!(warm_objects > 0);
     let math = path.join("math.phoebe");
     let source = std::fs::read_to_string(&math).unwrap();
     let inserted = format!("fn helper() -> I64 = 0\n{source}");
@@ -628,13 +640,17 @@ fn private_helper_insertion_preserves_checked_bodies_and_remaps_calls() {
     assert_eq!(after.functions.len(), old_count + 1);
     assert_eq!(after.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&after, "main", &[]).unwrap(), 42);
+    assert_eq!(
+        native_session
+            .build_executable(&after, &executable)
+            .unwrap(),
+        warm_objects
+    );
     let fresh = project::load(&path).unwrap();
     assert_eq!(
         after.to_string(),
         core::lower(&fresh.ast).unwrap().to_string()
     );
-    let executable = path.join("app");
-    native::build_executable(&after, &executable).unwrap();
     let output = std::process::Command::new(&executable).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
@@ -643,17 +659,36 @@ fn private_helper_insertion_preserves_checked_bodies_and_remaps_calls() {
     let (restored, report) = session.compile(&path).unwrap();
     assert_eq!(report.reused_core_functions, old_count);
     assert_eq!(restored.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(
+        native_session
+            .build_executable(&restored, &executable)
+            .unwrap(),
+        warm_objects
+    );
     std::fs::remove_dir_all(path).unwrap();
 }
 
 #[test]
 fn inserting_a_function_remaps_reused_spawn_targets() {
-    let before = "fn child() -> I64 = 0\n\
+    let before = "fn child() -> I64 { yield; 0 }\n\
         fn launch() -> Result<I64, ResourceError> { spawn child()?; Result<I64, ResourceError>.Ok(42) }\n\
         fn main() -> I64 = when (launch()) { Result<I64, ResourceError>.Ok(value) -> { value }, Result<I64, ResourceError>.Err(error) -> { 0 } }\n";
     let after = format!("fn helper() -> I64 = 0\n{before}");
     let old_ast = syntax::parse(before).unwrap();
     let old_core = core::lower(&old_ast).unwrap();
+    let executable =
+        std::env::temp_dir().join(format!("phoebe-spawn-index-cache-{}", std::process::id()));
+    let mut native_session = native::NativeBuildSession::new();
+    assert_eq!(
+        native_session
+            .build_executable(&old_core, &executable)
+            .unwrap(),
+        0
+    );
+    let warm_objects = native_session
+        .build_executable(&old_core, &executable)
+        .unwrap();
+    assert!(warm_objects > 0);
     let new_ast = syntax::parse(&after).unwrap();
     let delta = "fn helper() -> I64 = 0\n".len() as isize;
     let (reused, count) = core::lower_reusing(
@@ -671,6 +706,33 @@ fn inserting_a_function_remaps_reused_spawn_targets() {
     );
     assert_eq!(reused.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&reused, "main", &[]).unwrap(), 42);
+    assert_eq!(
+        native_session
+            .build_executable(&reused, &executable)
+            .unwrap(),
+        warm_objects
+    );
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+
+    // A larger retained child frame changes the parent's spawn ABI inputs.
+    // Keeping its previous direct object would pass the wrong frame size.
+    let wider_child = after.replace(
+        "fn child() -> I64 { yield; 0 }",
+        "fn child() -> I64 { var x = 0; yield; x }",
+    );
+    let wider_core = core::lower(&syntax::parse(&wider_child).unwrap()).unwrap();
+    assert_eq!(
+        native_session
+            .build_executable(&wider_core, &executable)
+            .unwrap(),
+        0
+    );
+    let output = std::process::Command::new(&executable).output().unwrap();
+    std::fs::remove_file(executable).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
 }
 
 #[test]

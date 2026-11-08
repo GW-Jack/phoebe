@@ -231,11 +231,7 @@ pub(super) fn compile_functions<M: Module>(
                 .returns
                 .extend(result_types.into_iter().map(AbiParam::new));
         }
-        let symbol = if function.name == "main" {
-            "phoebe_main".to_owned()
-        } else {
-            format!("phoebe_fn_{index}")
-        };
+        let symbol = direct_symbol(&function.name);
         let linkage = if suspendable[index] || selected.is_some_and(|set| !set[index]) {
             Linkage::Import
         } else if export_main && (selected.is_some() || function.name == "main") {
@@ -270,7 +266,7 @@ pub(super) fn compile_functions<M: Module>(
                     signature.returns.push(AbiParam::new(types::I64));
                     let id = module
                         .declare_function(
-                            &format!("phoebe_spawn_poll_{}", child.0),
+                            &spawn_poll_symbol(&program.functions[child.0].name),
                             Linkage::Import,
                             &signature,
                         )
@@ -301,7 +297,7 @@ pub(super) fn compile_functions<M: Module>(
                 signature.returns.push(AbiParam::new(types::I64));
                 let id = module
                     .declare_function(
-                        &format!("phoebe_spawn_poll_{}", child.0),
+                        &spawn_poll_symbol(&program.functions[child.0].name),
                         Linkage::Local,
                         &signature,
                     )

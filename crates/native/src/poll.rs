@@ -295,7 +295,7 @@ fn compile_poll_module<M: Module>(
                 signature.returns.push(AbiParam::new(types::I64));
                 let wrapper = module
                     .declare_function(
-                        &format!("phoebe_spawn_poll_{}", child.0),
+                        &spawn_poll_symbol(&program.functions[child.0].name),
                         Linkage::Local,
                         &signature,
                     )
