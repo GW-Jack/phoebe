@@ -142,6 +142,16 @@ fn statement(a: &Statement, b: &Statement, delta: isize) -> bool {
             },
         ) => ac == bc && args(aa, ba, delta) && span(*asp, *bsp, delta),
         (
+            Statement::Scope {
+                span: asp,
+                body: ab,
+            },
+            Statement::Scope {
+                span: bsp,
+                body: bb,
+            },
+        ) => span(*asp, *bsp, delta) && body(ab, bb, delta),
+        (
             Statement::With {
                 name: an,
                 span: asp,

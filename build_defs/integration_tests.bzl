@@ -1,5 +1,14 @@
 def integration_tests(rust_test):
     rust_test(
+        name = "source_scopes_tests",
+        crate_root = "tests/source_scopes.rs",
+        srcs = ["tests/source_scopes.rs", "examples/scoped_spawn.phoebe"],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
         name = "source_traffic_tests",
         crate_root = "tests/source_traffic.rs",
         srcs = [
@@ -150,7 +159,7 @@ def integration_tests(rust_test):
     rust_test(
         name = "cost_acceptance_tests",
         crate_root = "tests/cost_acceptance.rs",
-        srcs = ["tests/cost_acceptance.rs", "examples/cost/identity.phoebe", "examples/spawn_pair.phoebe"],
+        srcs = ["tests/cost_acceptance.rs", "examples/cost/identity.phoebe", "examples/cost/empty_scope.phoebe", "examples/spawn_pair.phoebe"],
         edition = "2024",
         deps = [":phoebe_lib"],
         resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},

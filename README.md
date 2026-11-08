@@ -24,6 +24,9 @@ standalone executable.
 request channel across the same three backends.
 `examples/request_backpressure.phoebe` sends two owned requests through a
 one-slot queue, parking and resuming both sides.
+Source `scope { ... }` joins tasks started inside the block, including their
+descendants. Early `?` exits join before returning. A scope that cannot spawn
+is erased from Core; `examples/scoped_spawn.phoebe` shows the source form.
 
 ## Current milestone
 
@@ -53,6 +56,7 @@ Build and run the compiler with Buck2:
 ```sh
 buck2 build //:phoebe_dist
 buck2 run //:phoebe -- run examples/hello.phoebe
+buck2 run //:phoebe -- run examples/scoped_spawn.phoebe
 buck2 run //:phoebe -- run examples/channel_exchange.phoebe
 buck2 run //:phoebe -- run examples/reply_exchange.phoebe
 buck2 run //:phoebe -- run examples/request_exchange.phoebe

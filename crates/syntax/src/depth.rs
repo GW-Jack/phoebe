@@ -54,6 +54,7 @@ pub(crate) fn body_height(body: &Body) -> usize {
             Statement::RequestUnpackVal { request, .. } => expr_height(request),
             Statement::ReplyVal { .. } => 0,
             Statement::Spawn { args, .. } => arguments_height(args),
+            Statement::Scope { body, .. } => body_height(body),
             Statement::With { value, body, .. } => expr_height(value).max(body_height(body)),
             Statement::While(condition, body) => expr_height(condition).max(body_height(body)),
             Statement::Yield(_) => 0,

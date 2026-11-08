@@ -1,0 +1,18 @@
+fn child() -> I64 {
+  yield;
+  7
+}
+
+fn start() -> Result<I64, ResourceError> {
+  scope {
+    spawn child()?;
+  }
+  Result<I64, ResourceError>.Ok(42)
+}
+
+fn main() -> I64 {
+  when (start()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

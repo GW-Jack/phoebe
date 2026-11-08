@@ -96,9 +96,10 @@ instructions for one event or eliminate instructions when semantics allow it.
 ## 3. Acceptance examples
 
 The source programs and pseudo IR in `examples/cost/` are design fixtures.
-Only `identity.phoebe` is executable today: `tests/cost_acceptance.rs` checks
-its Core IR and the pre-legalization Cranelift IR exposed by
-`phoebe clif <file>`. The remaining fixtures are **not executable tests yet**.
+`identity.phoebe` and `empty_scope.phoebe` are executable today:
+`tests/cost_acceptance.rs` checks their Core IR and the pre-legalization
+Cranelift IR exposed by `phoebe clif <file>`. The remaining fixtures are
+**not executable tests yet**.
 That test file also checks that unreachable channel and spawn code does not
 change a standalone `main` build's runtime ABI.
 A future compiler test will compare
@@ -124,8 +125,9 @@ operation and is necessary under the initial task-local ownership model.
 The executable compiler emits a tab-separated static cost-site ledger on
 demand with `phoebe cost <file>`. It currently records `copy.value`,
 `task.create`, `task.yield`, `scope.enter`, and `scope.join`, with a distinct
-reason for an automatic loop checkpoint. Scope events currently arise from
-hand-built Core; source lowering and empty-scope erasure remain open.
+reason for an automatic loop checkpoint. Scope events also arise from source
+`scope` statements that may spawn. Empty-scope erasure is an executable
+acceptance check.
 The development compiler should extend it to the remaining event kinds.
 Acceptance tests compare it with these fixtures. An IR verifier checks
 provenance and forbidden operations in tests and debug builds. Proofs of core

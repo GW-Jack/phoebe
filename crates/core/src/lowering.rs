@@ -19,12 +19,14 @@ struct FunctionSignature {
 struct CleanupSites {
     returns: Vec<(BlockId, Span)>,
     scopes: Vec<(BlockId, ValueId, Span)>,
+    task_returns: Vec<(BlockId, Vec<(TaskScopeId, Span)>)>,
 }
 
 struct Lowerer<'a> {
     functions: &'a HashMap<String, FunctionSignature>,
     data: &'a [DataDef],
     data_names: &'a HashMap<String, DataId>,
+    spawn_effects: &'a HashMap<String, bool>,
     blocks: Vec<DraftBlock>,
     value_types: Vec<Type>,
     place_types: Vec<Type>,
@@ -33,6 +35,9 @@ struct Lowerer<'a> {
     current: BlockId,
     implicit_cleanup_returns: Vec<(BlockId, Span)>,
     scoped_cleanup_exits: Vec<(BlockId, ValueId, Span)>,
+    task_scope_stack: Vec<(TaskScopeId, Span)>,
+    task_scope_returns: Vec<(BlockId, Vec<(TaskScopeId, Span)>)>,
+    next_task_scope: usize,
     automatic_checkpoints: bool,
 }
 
@@ -41,6 +46,7 @@ impl<'a> Lowerer<'a> {
         functions: &'a HashMap<String, FunctionSignature>,
         data: &'a [DataDef],
         data_names: &'a HashMap<String, DataId>,
+        spawn_effects: &'a HashMap<String, bool>,
         params: Vec<(ParamMode, Type)>,
         return_type: Type,
         automatic_checkpoints: bool,
@@ -49,6 +55,7 @@ impl<'a> Lowerer<'a> {
             functions,
             data,
             data_names,
+            spawn_effects,
             blocks: vec![DraftBlock {
                 params: Vec::new(),
                 instructions: Vec::new(),
@@ -61,6 +68,9 @@ impl<'a> Lowerer<'a> {
             current: BlockId(0),
             implicit_cleanup_returns: Vec::new(),
             scoped_cleanup_exits: Vec::new(),
+            task_scope_stack: Vec::new(),
+            task_scope_returns: Vec::new(),
+            next_task_scope: 0,
             automatic_checkpoints,
         };
         for (mode, own_type) in params {
@@ -124,6 +134,15 @@ impl<'a> Lowerer<'a> {
     fn terminate(&mut self, terminator: Terminator) {
         assert!(self.blocks[self.current.0].terminator.is_none());
         self.blocks[self.current.0].terminator = Some(terminator);
+    }
+
+    fn implicit_return(&mut self, value: ValueId, span: Span) {
+        self.terminate(Terminator::Return(value));
+        self.implicit_cleanup_returns.push((self.current, span));
+        if !self.task_scope_stack.is_empty() {
+            self.task_scope_returns
+                .push((self.current, self.task_scope_stack.clone()));
+        }
     }
 
     fn require(&self, actual: Type, expected: Type, span: Span) -> Result<(), Diagnostic> {
@@ -266,8 +285,7 @@ impl<'a> Lowerer<'a> {
                         self.return_type,
                         *span,
                     );
-                    self.terminate(Terminator::Return(failed));
-                    self.implicit_cleanup_returns.push((self.current, *span));
+                    self.implicit_return(failed, *span);
                     self.current = success;
                     locals.insert(sender.0.clone(), Binding::Val(send_value));
                     locals.insert(receiver.0.clone(), Binding::Val(receive_value));
@@ -298,8 +316,7 @@ impl<'a> Lowerer<'a> {
                         self.return_type,
                         *span,
                     );
-                    self.terminate(Terminator::Return(failed));
-                    self.implicit_cleanup_returns.push((self.current, *span));
+                    self.implicit_return(failed, *span);
                     self.current = success;
                     locals.insert(right.0.clone(), Binding::Val(right_value));
                     locals.insert(receiver.0.clone(), Binding::Val(receiver_value));
@@ -337,8 +354,7 @@ impl<'a> Lowerer<'a> {
                         self.return_type,
                         *span,
                     );
-                    self.terminate(Terminator::Return(failed));
-                    self.implicit_cleanup_returns.push((self.current, *span));
+                    self.implicit_return(failed, *span);
                     self.current = success;
                     locals.insert(sender.0.clone(), Binding::Val(send_value));
                     locals.insert(receiver.0.clone(), Binding::Val(receive_value));
@@ -451,8 +467,7 @@ impl<'a> Lowerer<'a> {
                         self.return_type,
                         *span,
                     );
-                    self.terminate(Terminator::Return(failed));
-                    self.implicit_cleanup_returns.push((self.current, *span));
+                    self.implicit_return(failed, *span);
                     self.current = success;
                 }
                 Statement::With {
@@ -468,6 +483,31 @@ impl<'a> Lowerer<'a> {
                         ));
                     }
                     self.with_body(name, *span, value, body, locals)?;
+                }
+                Statement::Scope { span, body } => {
+                    if let Some(tail) = &body.tail {
+                        return Err(Diagnostic::new(
+                            tail.span,
+                            "scope body cannot end in a value expression; add a semicolon",
+                        ));
+                    }
+                    if !spawn_scan::body_can_spawn(body, self.spawn_effects) {
+                        self.body(body, &mut locals.clone())?;
+                        continue;
+                    }
+                    let scope = TaskScopeId(self.next_task_scope);
+                    self.next_task_scope += 1;
+                    self.emit_effect(Operation::ScopeEnter(scope), *span);
+                    self.task_scope_stack.push((scope, *span));
+                    self.body(body, &mut locals.clone())?;
+                    self.task_scope_stack.pop();
+                    let resume = self.block();
+                    self.terminate(Terminator::ScopeJoin {
+                        scope,
+                        resume,
+                        span: *span,
+                    });
+                    self.current = resume;
                 }
                 Statement::Yield(span) => {
                     let resume = self.block();
@@ -522,9 +562,7 @@ impl<'a> Lowerer<'a> {
                             self.return_type,
                             expr.span,
                         );
-                        self.terminate(Terminator::Return(failed));
-                        self.implicit_cleanup_returns
-                            .push((self.current, expr.span));
+                        self.implicit_return(failed, expr.span);
                         self.current = success;
                         locals.insert(name.clone(), Binding::Val(fresh));
                         continue;
@@ -996,9 +1034,7 @@ impl<'a> Lowerer<'a> {
                     arms,
                 });
                 self.current = failure;
-                self.terminate(Terminator::Return(original));
-                self.implicit_cleanup_returns
-                    .push((self.current, expr.span));
+                self.implicit_return(original, expr.span);
                 self.current = success;
                 return Ok((payload, ok_ty));
             }
@@ -1437,6 +1473,7 @@ impl<'a> Lowerer<'a> {
             CleanupSites {
                 returns: self.implicit_cleanup_returns,
                 scopes: self.scoped_cleanup_exits,
+                task_returns: self.task_scope_returns,
             },
         ))
     }
@@ -1544,9 +1581,9 @@ fn lower_internal(
     ast: &syntax::Program,
     reuse: Option<(&syntax::Program, &Program, &[bool], &[isize])>,
 ) -> Result<(Program, usize), Diagnostic> {
-    let checkpointed = spawn_scan::checkpoint_functions(ast);
-    let previous_checkpointed =
-        reuse.map(|(previous_ast, _, _, _)| spawn_scan::checkpoint_functions(previous_ast));
+    let spawn_analysis = spawn_scan::analyze(ast);
+    let previous_spawn_analysis =
+        reuse.map(|(previous_ast, _, _, _)| spawn_scan::analyze(previous_ast));
     if let Some(import) = ast.imports.first() {
         return Err(Diagnostic::new(
             import.span,
@@ -1815,9 +1852,12 @@ fn lower_internal(
     let mut cleanup_sites = Vec::with_capacity(ast.functions.len());
     for (index, function) in ast.functions.iter().enumerate() {
         if stable_environment
-            && previous_checkpointed
-                .as_ref()
-                .is_some_and(|previous| previous[index] == checkpointed[index])
+            && previous_spawn_analysis.as_ref().is_some_and(|previous| {
+                previous.checkpointed[index] == spawn_analysis.checkpointed[index]
+            })
+            && previous_spawn_analysis.as_ref().is_some_and(|previous| {
+                previous.call_effects[index] == spawn_analysis.call_effects[index]
+            })
             && let Some((previous_ast, previous, reusable, deltas)) = reuse
             && reusable[index]
             && phoebe_syntax::same_function_with_shift(
@@ -1832,6 +1872,7 @@ fn lower_internal(
                 cleanup_sites.push(CleanupSites {
                     returns: Vec::new(),
                     scopes: Vec::new(),
+                    task_returns: Vec::new(),
                 });
                 reused += 1;
                 continue;
@@ -1841,13 +1882,14 @@ fn lower_internal(
             &functions,
             &data,
             &data_names,
+            &spawn_analysis.effects,
             function
                 .params
                 .iter()
                 .map(|param| Ok((param.mode, resolve(&param.ty, param.span)?)))
                 .collect::<Result<Vec<_>, Diagnostic>>()?,
             resolve(&function.return_type, function.name_span)?,
-            checkpointed[index],
+            spawn_analysis.checkpointed[index],
         );
         let mut locals = HashMap::new();
         for (index, param) in function.params.iter().enumerate() {
@@ -1966,6 +2008,44 @@ fn lower_internal(
             }
         }
     }
+    // A fallible operation inside a scope first performs its inferred
+    // capability cleanup, then joins the open task regions from inner to
+    // outer before returning the original error value.
+    for (function, exits) in program.functions.iter_mut().zip(&cleanup_sites) {
+        for (block, stack) in &exits.task_returns {
+            let Terminator::Return(value) = function.blocks[block.0].terminator else {
+                unreachable!("recorded task-scope exit is a return")
+            };
+            let final_return = BlockId(function.blocks.len());
+            function.blocks.push(Block {
+                params: Vec::new(),
+                instructions: Vec::new(),
+                terminator: Terminator::Return(value),
+            });
+            let mut resume = final_return;
+            for (scope, span) in stack.iter().take(stack.len() - 1) {
+                let join = BlockId(function.blocks.len());
+                function.blocks.push(Block {
+                    params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: Terminator::ScopeJoin {
+                        scope: *scope,
+                        resume,
+                        span: *span,
+                    },
+                });
+                resume = join;
+            }
+            let (scope, span) = stack.last().expect("nonempty task-scope exit");
+            function.blocks[block.0].terminator = Terminator::ScopeJoin {
+                scope: *scope,
+                resume,
+                span: *span,
+            };
+        }
+    }
+    super::scope_verification::verify(&program)
+        .map_err(|message| Diagnostic::new(Span { start: 0, end: 0 }, message))?;
     verify_capability_edges(&program).map_err(|message| {
         let span = ast
             .functions

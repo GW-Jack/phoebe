@@ -571,6 +571,18 @@ fn rewrite_body(
                     results,
                 )?;
             }
+            Statement::Scope { body, .. } => {
+                rewrite_body(
+                    body,
+                    module,
+                    root,
+                    local_data,
+                    local_functions,
+                    imports,
+                    available,
+                    results,
+                )?;
+            }
             Statement::With { value, body, .. } => {
                 rewrite(value)?;
                 rewrite_body(
@@ -829,6 +841,10 @@ fn shift_body(body: &mut Body, offset: usize) {
             }
             Statement::While(condition, body) => {
                 shift_expr(condition, offset);
+                shift_body(body, offset);
+            }
+            Statement::Scope { span, body } => {
+                shift_span(span, offset);
                 shift_body(body, offset);
             }
             Statement::With {

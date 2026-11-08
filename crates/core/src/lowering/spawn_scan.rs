@@ -7,26 +7,17 @@ use std::collections::{HashMap, VecDeque};
 
 use phoebe_syntax::syntax::{Body, CallArgument, Expr, ExprKind, Program, Statement};
 
-pub(super) fn checkpoint_functions(program: &Program) -> Vec<bool> {
-    let names = program
-        .functions
-        .iter()
-        .enumerate()
-        .map(|(id, function)| (function.name.as_str(), id))
-        .collect::<HashMap<_, _>>();
-    let mut graph = Scan {
-        names,
-        edges: vec![Vec::new(); program.functions.len()],
-        spawn_sources: Vec::new(),
-        current: 0,
-    };
-    for (id, function) in program.functions.iter().enumerate() {
-        graph.current = id;
-        graph.body(&function.body);
-    }
+pub(super) struct Analysis {
+    pub checkpointed: Vec<bool>,
+    pub effects: HashMap<String, bool>,
+    pub call_effects: Vec<Vec<bool>>,
+}
+
+pub(super) fn analyze(program: &Program) -> Analysis {
+    let graph = Scan::program(program);
     let mut checkpoint = vec![false; program.functions.len()];
     let mut ready = VecDeque::new();
-    for source in graph.spawn_sources {
+    for &source in &graph.spawn_sources {
         if !checkpoint[source] {
             checkpoint[source] = true;
             ready.push_back(source);
@@ -40,12 +31,143 @@ pub(super) fn checkpoint_functions(program: &Program) -> Vec<bool> {
             }
         }
     }
-    checkpoint
+    let mut callers = vec![Vec::new(); program.functions.len()];
+    for (caller, callees) in graph.calls.iter().enumerate() {
+        for &callee in callees {
+            callers[callee].push(caller);
+        }
+    }
+    let mut effects = vec![false; program.functions.len()];
+    let mut ready = VecDeque::new();
+    for &source in &graph.spawn_sources {
+        if !effects[source] {
+            effects[source] = true;
+            ready.push_back(source);
+        }
+    }
+    while let Some(callee) = ready.pop_front() {
+        for &caller in &callers[callee] {
+            if !effects[caller] {
+                effects[caller] = true;
+                ready.push_back(caller);
+            }
+        }
+    }
+    let call_effects = graph
+        .calls
+        .iter()
+        .map(|calls| calls.iter().map(|callee| effects[*callee]).collect())
+        .collect();
+    let effects = program
+        .functions
+        .iter()
+        .zip(effects)
+        .map(|(function, effect)| (function.name.clone(), effect))
+        .collect();
+    Analysis {
+        checkpointed: checkpoint,
+        effects,
+        call_effects,
+    }
+}
+
+#[cfg(test)]
+fn checkpoint_functions(program: &Program) -> Vec<bool> {
+    analyze(program).checkpointed
+}
+
+pub(super) fn body_can_spawn(body: &Body, effects: &HashMap<String, bool>) -> bool {
+    fn arguments(args: &[CallArgument], effects: &HashMap<String, bool>) -> bool {
+        args.iter().any(|arg| match arg {
+            CallArgument::Value(value) => expr(value, effects),
+            CallArgument::Borrow { .. } => false,
+        })
+    }
+    fn expr(value: &Expr, effects: &HashMap<String, bool>) -> bool {
+        match &value.kind {
+            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(_, _) => {
+                false
+            }
+            ExprKind::Copy(value) | ExprKind::Neg(value) | ExprKind::Try(value) => {
+                expr(value, effects)
+            }
+            ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Lt(a, b) => expr(a, effects) || expr(b, effects),
+            ExprKind::VariantCall(_, _, value) => expr(value, effects),
+            ExprKind::Call(name, args) => {
+                effects.get(name).copied().unwrap_or(true) || arguments(args, effects)
+            }
+            ExprKind::QualifiedCall(name, member, args) => {
+                effects
+                    .get(&format!("{name}.{member}"))
+                    .copied()
+                    .unwrap_or(false)
+                    || arguments(args, effects)
+            }
+            ExprKind::If(condition, yes, no) => {
+                expr(condition, effects)
+                    || body_can_spawn(yes, effects)
+                    || body_can_spawn(no, effects)
+            }
+            ExprKind::When(subject, arms) => {
+                expr(subject, effects) || arms.iter().any(|arm| body_can_spawn(&arm.body, effects))
+            }
+            ExprKind::With { value, body, .. } => {
+                expr(value, effects) || body_can_spawn(body, effects)
+            }
+        }
+    }
+    body.statements.iter().any(|statement| match statement {
+        Statement::Spawn { .. } => true,
+        Statement::Val(_, _, value)
+        | Statement::Var(_, _, value)
+        | Statement::Assign(_, _, value)
+        | Statement::Expr(value) => expr(value, effects),
+        Statement::ChannelVal { capacity, .. } | Statement::RequestChannelVal { capacity, .. } => {
+            expr(capacity, effects)
+        }
+        Statement::RequestUnpackVal { request, .. } => expr(request, effects),
+        Statement::With { value, body, .. } => {
+            expr(value, effects) || body_can_spawn(body, effects)
+        }
+        Statement::Scope { body, .. } => body_can_spawn(body, effects),
+        Statement::While(condition, body) => {
+            expr(condition, effects) || body_can_spawn(body, effects)
+        }
+        Statement::ReplyVal { .. } | Statement::Yield(_) => false,
+    }) || body.tail.as_ref().is_some_and(|tail| expr(tail, effects))
+}
+
+impl<'a> Scan<'a> {
+    fn program(program: &'a Program) -> Self {
+        let names = program
+            .functions
+            .iter()
+            .enumerate()
+            .map(|(id, function)| (function.name.as_str(), id))
+            .collect::<HashMap<_, _>>();
+        let mut graph = Scan {
+            names,
+            edges: vec![Vec::new(); program.functions.len()],
+            calls: vec![Vec::new(); program.functions.len()],
+            spawn_sources: Vec::new(),
+            current: 0,
+        };
+        for (id, function) in program.functions.iter().enumerate() {
+            graph.current = id;
+            graph.body(&function.body);
+        }
+        graph
+    }
 }
 
 struct Scan<'a> {
     names: HashMap<&'a str, usize>,
     edges: Vec<Vec<usize>>,
+    calls: Vec<Vec<usize>>,
     spawn_sources: Vec<usize>,
     current: usize,
 }
@@ -53,6 +175,7 @@ struct Scan<'a> {
 impl Scan<'_> {
     fn connect(&mut self, name: &str) {
         if let Some(&other) = self.names.get(name) {
+            self.calls[self.current].push(other);
             self.edges[self.current].push(other);
             self.edges[other].push(self.current);
         }
@@ -92,7 +215,10 @@ impl Scan<'_> {
                 self.connect(name);
                 self.arguments(args);
             }
-            ExprKind::QualifiedCall(_, _, args) => self.arguments(args),
+            ExprKind::QualifiedCall(name, member, args) => {
+                self.connect(&format!("{name}.{member}"));
+                self.arguments(args);
+            }
             ExprKind::If(condition, yes, no) => {
                 self.expr(condition);
                 self.body(yes);
@@ -129,6 +255,7 @@ impl Scan<'_> {
                 self.expr(value);
                 self.body(body);
             }
+            Statement::Scope { body, .. } => self.body(body),
             Statement::While(condition, body) => {
                 self.expr(condition);
                 self.body(body);

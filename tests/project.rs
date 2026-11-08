@@ -674,3 +674,43 @@ fn main() -> I64 {
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 22);
     std::fs::remove_dir_all(path).unwrap();
 }
+
+#[test]
+fn imported_spawn_call_keeps_lexical_scope() {
+    let path = temp_project();
+    std::fs::write(
+        path.join("math.phoebe"),
+        r#"
+fn child() -> I64 = 7
+pub fn launch() -> Result<I64, ResourceError> {
+  spawn child()?;
+  Result<I64, ResourceError>.Ok(1)
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        path.join("app.phoebe"),
+        r#"
+import math
+fn start() -> Result<I64, ResourceError> {
+  scope { val unused = math.launch()?; }
+  Result<I64, ResourceError>.Ok(42)
+}
+fn main() -> I64 {
+  when (start()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let loaded = project::load(&path).unwrap();
+    let program = core::lower(&loaded.ast).unwrap();
+    core::verify(&program).unwrap();
+    assert!(program.to_string().contains("scope.enter"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    std::fs::remove_dir_all(path).unwrap();
+}

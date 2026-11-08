@@ -1,8 +1,8 @@
 # Cost acceptance examples
 
-Only `identity.phoebe` compiles today. Its executable acceptance test checks
-zero Phoebe cost events and a direct return in Cranelift IR. The other files
-use draft syntax and cannot compile yet. The snippets
+`identity.phoebe` and `empty_scope.phoebe` compile today. Their executable
+acceptance tests check zero Phoebe cost events and no runtime calls in
+Cranelift IR. The other files use draft syntax and cannot compile yet. The snippets
 below describe the checked IR shape required by the non-pessimization contract.
 `cost.*` denotes a logical event with source and reason metadata. Ordinary
 loads, stores, branches, and scalar arithmetic are omitted from the snippets.

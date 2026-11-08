@@ -64,7 +64,7 @@ each and checks that parse/lower errors stay in source bounds. It also covers
 deeply nested expressions, types, and branches. This is bounded test evidence,
 not a proof for every input.
 `phoebe clif <file>` prints the pre-legalization Cranelift IR. The scalar
-`identity` cost fixture is an executable acceptance test; the other cost
+`identity` and `empty_scope` cost fixtures are executable acceptance tests; the other cost
 fixtures remain design sketches. `docs/performance-baseline.md` records a
 local phase-timing snapshot without a general speed claim.
 Native execution uses Cranelift JIT or Cranelift object emission linked with
@@ -117,7 +117,7 @@ their body and ABI inputs are unchanged; standalone one-shot builds retain
 single-object emission. This is an object-level rebuild witness, not yet a
 persistent command-line build cache. Registry dependencies and cached typed
 interfaces remain open. The
-`examples/cost/` files other than scalar `identity` remain
+`examples/cost/` files other than `identity` and `empty_scope` remain
 design fixtures, not executable acceptance tests.
 Standalone emission starts at `main` and omits unreachable direct functions
 and their spawned poll children. A dead runtime-using function cannot change
@@ -140,9 +140,11 @@ successfully with an open nested scope. The runtime archive has native scope
 entry and join calls; a synthetic poll task parks at join and resumes after
 its child completes. Hand-built Core now has `scope.enter` and a suspending
 `scope.join` with a verifier-enforced region stack. Interpreter, JIT, and
-standalone tests cover a pending join and spawn-limit failure. Source lowering
-for these operations remains open; `docs/scope-ir.md` records the invariant
-and remaining integration work.
+standalone tests cover a pending join and spawn-limit failure. Source
+`scope { ... }` is now a statement. Implicit `?` returns close owned rights,
+join open scopes from inner to outer, and then return the error. A directed
+spawn-effect summary erases scopes that cannot spawn, including calls to pure
+helpers. `docs/scope-ir.md` records the invariant and remaining evidence.
 The Rust spawn path now atomically transfers channel handles and either reply
 capability to a child. Native reply and typed spawn shims are exercised by
 synthetic poll frames, including a receiver that parks and wakes across tasks

@@ -14,6 +14,7 @@ enum TokenKind {
     Copy,
     While,
     Spawn,
+    Scope,
     With,
     Yield,
     If,
@@ -84,6 +85,7 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     "copy" => TokenKind::Copy,
                     "while" => TokenKind::While,
                     "spawn" => TokenKind::Spawn,
+                    "scope" => TokenKind::Scope,
                     "with" => TokenKind::With,
                     "yield" => TokenKind::Yield,
                     "if" => TokenKind::If,
@@ -342,6 +344,10 @@ pub enum Statement {
         child: String,
         args: Vec<CallArgument>,
         span: Span,
+    },
+    Scope {
+        span: Span,
+        body: Body,
     },
     With {
         name: String,
@@ -857,6 +863,13 @@ impl Parser {
                     args,
                     span: start.span.join(end.span),
                 });
+                continue;
+            }
+            if let Some(start) = self.eat(&TokenKind::Scope) {
+                let body = self.block(false)?;
+                let span = start.span.join(self.tokens[self.pos - 1].span);
+                self.eat(&TokenKind::Semicolon);
+                statements.push(Statement::Scope { span, body });
                 continue;
             }
             if let Some(start) = self.eat(&TokenKind::With) {

@@ -15,13 +15,13 @@ to a conditional branch and a join block whose parameter carries the chosen
 arm's result. A `while` statement lowers to a loop head, body, exit, and
 backedge.
 
-Hand-built Core may also enter a lexical task scope with `scope.enter r` and
+Source `scope { ... }` and hand-built Core enter a lexical task scope with `scope.enter r` and
 leave it through a suspending `scope.join r -> resume` terminator. The verifier
 tracks the exact stack of open region IDs at each block, requires LIFO joins,
 and rejects a return while any scope is open. The interpreter, retained
 Cranelift JIT, and standalone object path execute an enter, spawned child,
-pending join, and resumed return. Source lowering for `scope` is still open;
-see `docs/scope-ir.md`.
+pending join, and resumed return. Source lowering also routes implicit `?`
+returns through joins from inner to outer; see `docs/scope-ir.md`.
 
 Nominal sum variants have a distinct `Data(id)` type and an explicit `variant`
 instruction. Source `when` checks every variant exactly once, then lowers to

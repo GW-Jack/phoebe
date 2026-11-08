@@ -1,7 +1,8 @@
 # Lexical task scopes: Core contract
 
-Status: checked Core representation and interpreter/native execution for
-hand-built programs. Phoebe source does not yet expose it.
+Status: source statement, checked Core representation, and interpreter/native
+execution implemented for the current subset. The full release invariant is
+still under test.
 
 `scope { body }` creates a child lifetime inside the current task. Every task
 spawned while that body runs, including descendants spawned by those tasks,
@@ -27,9 +28,9 @@ enter pushes its ID; a join must match and pop the top ID on its resume edge.
 All incoming edges to a block must agree on the complete stack. A return
 requires an empty stack, and a region cannot be entered twice while already
 open. This checks LIFO closure through branches, loops, calls, and `?`
-without running a proof search in ordinary compilation. Source lowering must
-route early returns through joins in reverse lexical order, after cleanup of
-rights whose own lexical scopes have ended. A failed scope entry faults the
+without running a proof search in ordinary compilation. Source lowering routes
+implicit `?` returns through joins in reverse lexical order, after closing
+rights still owned by the returning task. A failed scope entry faults the
 task before publishing a region; the outer scheduler cancels the remaining
 tasks. A future typed resource outcome can replace that fault without
 changing the join invariant.
@@ -54,17 +55,18 @@ behavior and bounded tests, not a proof of the future generated code.
 
 `scope.enter` and `scope.join` are visible Core effects and cost sites when
 the body can spawn. A scope whose body and transitively called functions
-cannot spawn may be erased after an effect summary proves that fact. This is
-required for the `empty_scope` cost fixture: it must compile to a direct
-return without scheduler calls. The effect summary must include calls reached
-from the body, not only textual `spawn` statements. Join parking is a dynamic
+cannot spawn is erased after a directed call effect summary. The
+`empty_scope` cost fixture compiles without scheduler calls. Incremental Core
+reuse checks called functions' spawn effects before retaining a prior body.
+Join parking is a dynamic
 event; the static ledger identifies the possible join site rather than
 claiming every execution parks.
 
 ## Evidence still needed
 
-- Source tests for nested scopes, early `?`, capability cleanup, and a task
-  spawned before an inner scope.
+- Source tests cover nested scopes, early `?`, a child already running at
+  failure, transitive and imported calls, erasure, and a sibling spawned
+  before the inner scope. Broader cancellation paths remain untested.
 - Core verifier tests for more complex loops; unmatched, duplicated, and
   branch-dependent joins are already rejected.
 - Differential runs across child failure and allocation failure paths. A

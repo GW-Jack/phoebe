@@ -20,6 +20,18 @@ fn scalar_identity_has_no_phoebe_cost_or_backend_runtime_work() {
 }
 
 #[test]
+fn empty_scope_has_no_scope_cost_or_runtime_call() {
+    let source = include_str!("../examples/cost/empty_scope.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert!(program.cost_events().is_empty());
+    assert!(!program.to_string().contains("scope.enter"));
+    let clif = native::clif(&program).unwrap();
+    assert!(!clif.contains("call "), "{clif}");
+    assert_eq!(program.interpret("empty_scope", &[]).unwrap(), 7);
+    assert_eq!(native::run(&program, "empty_scope", &[]).unwrap(), 7);
+}
+
+#[test]
 fn each_source_spawn_has_one_attributed_task_creation_site() {
     let source = include_str!("../examples/spawn_pair.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
