@@ -131,8 +131,9 @@ allows public generic calls across imported modules; incremental project
 compiler sessions now reuse checked concrete bodies across edits, remapping
 generic callee and nominal type IDs. `build-session` reuses an exact linked
 native object on warm generic project builds and skips relinking an intact
-output. Per-function linked object reuse and a persistent object cache key
-remain open. The current IR has no
+output. One-shot `build --cache-dir` also reuses a linked object across
+compiler processes after validating the cache entry. Per-function linked
+object reuse remains open. The current IR has no
 suspension, hidden runtime context, or dictionary
 operations; adding any of them requires extending the sharing key and its
 soundness argument before emission.

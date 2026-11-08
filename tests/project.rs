@@ -216,6 +216,62 @@ fn generic_project_build_session_reuses_output_and_recovers_after_edits() {
 }
 
 #[test]
+fn linked_disk_cache_rejects_changed_and_corrupt_inputs() {
+    let path = temp_generic_project();
+    let executable = path.join("program");
+    let cache = path.join("cache");
+    let loaded = project::load(&path).unwrap();
+    let checked = core::lower_linked_checked(&loaded.ast).unwrap();
+    let cold = native::build_executable_cached_linked(&checked, &executable, &cache).unwrap();
+    assert!(!cold.reused);
+    assert!(cold.cache_write_error.is_none());
+    let warm = native::build_executable_cached_linked(&checked, &executable, &cache).unwrap();
+    assert!(warm.reused);
+
+    let base = path.join("base.phoebe");
+    let base_source = std::fs::read_to_string(&base).unwrap();
+    std::fs::write(&base, format!("\n{base_source}")).unwrap();
+    let shifted = project::load(&path).unwrap();
+    let shifted = core::lower_linked_checked(&shifted.ast).unwrap();
+    assert!(
+        native::build_executable_cached_linked(&shifted, &executable, &cache)
+            .unwrap()
+            .reused
+    );
+
+    let app = path.join("app.phoebe");
+    let original = std::fs::read_to_string(&app).unwrap();
+    std::fs::write(&app, original.replace("42", "43")).unwrap();
+    let changed = project::load(&path).unwrap();
+    let changed = core::lower_linked_checked(&changed.ast).unwrap();
+    let rebuilt = native::build_executable_cached_linked(&changed, &executable, &cache).unwrap();
+    assert!(!rebuilt.reused);
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"43\n"
+    );
+
+    let cache_file = cache.join("objects.v4");
+    let mut bytes = std::fs::read(&cache_file).unwrap();
+    let last = bytes.last_mut().unwrap();
+    *last ^= 1;
+    std::fs::write(&cache_file, bytes).unwrap();
+    let recovered = native::build_executable_cached_linked(&changed, &executable, &cache).unwrap();
+    assert!(!recovered.reused);
+    assert_eq!(
+        std::process::Command::new(&executable)
+            .output()
+            .unwrap()
+            .stdout,
+        b"43\n"
+    );
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
 fn project_build_session_reuses_bodies_and_objects_after_body_edits() {
     let path = temp_project();
     let executable = path.join("program");

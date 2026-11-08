@@ -11,7 +11,7 @@ use std::time::UNIX_EPOCH;
 use phoebe_core::{self as core, Function, Operation, Program, Terminator};
 use sha2::{Digest, Sha256};
 
-use super::{ObjectEmission, emit_object_with_poll_layout, link_executable};
+use super::{ObjectEmission, emit_object_linked, emit_object_with_poll_layout, link_executable};
 
 const MAGIC: &[u8] = b"PHOEBE-NATIVE-OBJECTS\0\x04";
 const CACHE_FILE: &str = "objects.v4";
@@ -124,6 +124,14 @@ fn program_key(program: &Program) -> Result<String, String> {
         });
     }
     Ok(format!("{normalized:?}"))
+}
+
+fn linked_program_key(linked: &core::CheckedLinkedProgram) -> Result<String, String> {
+    Ok(format!(
+        "PHOEBE-LINKED-OBJECT-KEY\0\x01{:?}\n{}",
+        linked.generics().as_module(),
+        program_key(linked.program())?
+    ))
 }
 
 struct Decoder<'a> {
@@ -298,6 +306,30 @@ pub fn build_executable_cached_checked(
     directory: &Path,
 ) -> Result<CachedBuildReport, String> {
     build_executable_cached_verified(program.verified(), output, directory)
+}
+
+/// Reuse a linked generic object only for the same checked concrete program,
+/// parametric module, and compiler executable. Corrupt entries are ignored.
+pub fn build_executable_cached_linked(
+    linked: &core::CheckedLinkedProgram,
+    output: &Path,
+    directory: &Path,
+) -> Result<CachedBuildReport, String> {
+    let program = linked.program();
+    let key = linked_program_key(linked)?;
+    if let Some(emitted) = read_cache(directory, &key) {
+        link_executable(program, &emitted, output)?;
+        return Ok(CachedBuildReport {
+            reused: true,
+            cache_write_error: None,
+        });
+    }
+    let emitted = emit_object_linked(linked)?;
+    link_executable(program, &emitted, output)?;
+    Ok(CachedBuildReport {
+        reused: false,
+        cache_write_error: write_cache(directory, &key, &emitted).err(),
+    })
 }
 
 fn build_executable_cached_verified(

@@ -108,7 +108,10 @@ non-suspending generic project path reuses checked concrete bodies and an
 exact linked object on a warm build. Its object is currently emitted as one
 unit, so a source edit can rebuild more code than necessary. The separate
 `--cache-dir` mode of one-shot
-`build` persists exact-program native objects across processes.
+`build` persists exact-program native objects across processes, including the
+non-suspending generic project path. The linked generic cache stores one
+object; it is invalidated by a changed checked program, generic module, or
+compiler executable.
 
 `third-party/rust/Cargo.toml` and its lockfile pin third-party Rust versions.
 Reindeer generates `third-party/rust/BUCK` and sha256-checked archive rules.

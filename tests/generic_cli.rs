@@ -127,6 +127,28 @@ fn generic_project_resolves_public_calls_across_modules() {
     );
     assert_eq!(result.stdout, b"42\n");
 
+    let cache = directory.join("native-cache");
+    for expected_hit in [false, true] {
+        let cached = Command::new(&compiler)
+            .arg("build")
+            .arg(&directory)
+            .arg("-o")
+            .arg(&executable)
+            .arg("--cache-dir")
+            .arg(&cache)
+            .output()
+            .unwrap();
+        assert!(
+            cached.status.success(),
+            "{}",
+            String::from_utf8_lossy(&cached.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&cached.stdout)
+                .contains(&format!("object cache hit: {expected_hit}"))
+        );
+    }
+
     for (action, expected) in [
         ("check", "ok: 3 function(s)"),
         ("ir", "call.generic"),

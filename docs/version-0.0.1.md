@@ -104,8 +104,10 @@ cover a transitive branch and a wide nominal return buffer. Single-file
 `phoebe build` emits the same planned instances and concrete callers into one
 linkable object; the resulting executable runs without the compiler process.
 Single-shot projects resolve public generic calls across modules for `check`,
-`run`, `build`, and IR inspection. Retained native tasks, incremental project
-sessions, and persistent generic object caching remain open.
+`run`, `build`, and IR inspection. Generic projects also rebuild through
+`build-session`, reusing checked concrete bodies and an exact linked object;
+one-shot `build --cache-dir` persists that object across processes. Retained
+native tasks and per-function linked object reuse remain open.
 The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures

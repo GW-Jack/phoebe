@@ -99,6 +99,7 @@ buck2 run //:phoebe -- build examples/generic_call.phoebe -o /tmp/phoebe-generic
 buck2 run //:phoebe -- run examples/generic_project
 buck2 run //:phoebe -- build examples/generic_project -o /tmp/phoebe-generic-project
 /tmp/phoebe-generic-project
+buck2 run //:phoebe -- build examples/generic_project -o /tmp/phoebe-generic-project --cache-dir /tmp/phoebe-generic-cache
 buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 /tmp/phoebe-exchange
 buck2 test //...

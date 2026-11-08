@@ -148,13 +148,20 @@ fn linked_command(
         }
         "build" => {
             let (output, cache_dir) = build_arguments(args)?;
-            if cache_dir.is_some() {
-                return Err(
-                    "linked generic builds do not have a persistent object cache yet".into(),
-                );
+            if let Some(directory) = cache_dir {
+                let report = native::build_executable_cached_linked(
+                    linked,
+                    Path::new(&output),
+                    Path::new(&directory),
+                )?;
+                if let Some(error) = report.cache_write_error {
+                    eprintln!("native object cache not saved: {error}");
+                }
+                println!("built {output} (object cache hit: {})", report.reused);
+            } else {
+                native::build_executable_linked(linked, Path::new(&output))?;
+                println!("built {output}");
             }
-            native::build_executable_linked(linked, Path::new(&output))?;
-            println!("built {output}");
         }
         _ => {
             return Err(format!(

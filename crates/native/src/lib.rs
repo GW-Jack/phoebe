@@ -36,7 +36,10 @@ mod runtime_imports;
 mod transfer;
 
 pub use build_session::{NativeBuildReport, NativeBuildSession};
-pub use cache::{CachedBuildReport, build_executable_cached, build_executable_cached_checked};
+pub use cache::{
+    CachedBuildReport, build_executable_cached, build_executable_cached_checked,
+    build_executable_cached_linked,
+};
 pub use codegen::frame_word_layouts;
 pub use poll::{PollExecutable, PollLeafExecutable, compile_poll_jit, compile_poll_leaf_jit};
 
