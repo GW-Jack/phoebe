@@ -1,7 +1,7 @@
 # Cooperative runtime kernel
 
 Status: executable Rust kernel for one scope, bounded `I64` and request
-channels, a fixed-width closed-message queue, and one-shot `ReplyTo<I64>`.
+channels, a fixed-width typed-message queue, and one-shot `ReplyTo<I64>`.
 Checked Core programs interpret
 channel creation, traffic, endpoint close, and task spawn through it. Cranelift
 JIT and standalone object code call the same kernel through a C ABI shim.
@@ -9,14 +9,18 @@ Source syntax covers fallible `I64` channel creation, explicit endpoint
 close, task spawn, and `I64` send/receive outcomes. Native call continuations
 run in the supported poll subset; general typed messages remain open.
 
-The Rust `typed_words_channel` API reserves a flat ring of `capacity × width`
-words when the channel is created. Send and receive check a concrete `type_id`
-and width before touching the queue. A zero-width value still occupies one
-slot. A full or closed send leaves the caller's words untouched; closing the
-last receiver discards queued values. This path is restricted to values with
-no communication rights. Checked Core and native code do not use it yet;
-capability transfer, structural discard, and descriptor generation are the
-next integration steps in [`typed-messages.md`](typed-messages.md).
+The Rust `typed_words_channel` and `typed_right_channel` APIs reserve a flat
+ring of `capacity × width` words when the channel is created. Send and receive
+check a concrete `type_id` and width before touching the queue. A zero-width
+value still occupies one slot. The latter API stores a tag-aware plan for
+`ReplyTo<I64>` leaves. Enqueue validates every active right and duplicate
+before changing any owner; dequeue returns those rights to the receiving task.
+A full or closed send leaves the caller's words and rights untouched. Closing
+the last receiver structurally closes queued rights. Tests cover multiple
+rights, tagged inactive payloads, rejection, discard, and two-task parking.
+Checked Core and native code do not use this path yet; descriptor generation
+and other transferable right kinds are the next integration steps in
+[`typed-messages.md`](typed-messages.md).
 
 `Scheduler` owns bounded tables of task records, lexical scope slots,
 channels, handles, and reply slots. The caller supplies all five limits. Each

@@ -99,6 +99,7 @@ mod scopes;
 pub use scopes::ScopeId;
 mod typed_queue;
 use typed_queue::TypedQueue;
+pub use typed_queue::TypedRightPlan;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Token(usize);
@@ -618,6 +619,19 @@ impl Scheduler {
                     _ => return Err("channel contains wrong message shape".into()),
                 }
             }
+            if let Some(typed) = &channel.typed {
+                typed.visit_queued_rights(|token| {
+                    let right = self
+                        .reply_rights
+                        .get(token.0)
+                        .ok_or("queued typed message has invalid reply token")?;
+                    if right.owner != ReplyOwner::Queue(index) {
+                        return Err("queued typed message does not own its reply right".into());
+                    }
+                    queued_rights[token.0] += 1;
+                    Ok(())
+                })?;
+            }
         }
         for (index, slot) in self.reply_slots.iter().enumerate() {
             let right = self
@@ -856,8 +870,37 @@ impl Scheduler {
                             )?;
                         }
                     }
-                    if let Some(typed) = &mut self.channels[channel].typed {
-                        self.stats.discarded_messages += typed.discard();
+                    while self.channels[channel]
+                        .typed
+                        .as_ref()
+                        .is_some_and(|typed| typed.len() != 0)
+                    {
+                        let count = {
+                            let typed = self.channels[channel].typed.as_mut().expect("typed queue");
+                            let rights = typed.collect_front_rights()?;
+                            for token in rights {
+                                if self.reply_rights.get(token.0).map(|right| right.owner)
+                                    != Some(ReplyOwner::Queue(channel))
+                                {
+                                    return Err("queued typed reply ownership mismatch".into());
+                                }
+                            }
+                            rights.len()
+                        };
+                        for index in 0..count {
+                            let token = self.channels[channel]
+                                .typed
+                                .as_ref()
+                                .expect("typed queue")
+                                .scratch_right(index);
+                            self.close_reply_right(token, ReplyOwner::Queue(channel))?;
+                        }
+                        self.channels[channel]
+                            .typed
+                            .as_mut()
+                            .expect("typed queue")
+                            .discard_front();
+                        self.stats.discarded_messages += 1;
                     }
                     self.wake_all(channel, true);
                 }
@@ -1320,14 +1363,30 @@ impl Context<'_> {
         type_id: u64,
         width: usize,
     ) -> Result<(Sender, Receiver), ResourceError> {
-        self.create_channel(capacity, ChannelKind::Typed, Some((type_id, width)))
+        self.create_channel(
+            capacity,
+            ChannelKind::Typed,
+            Some((type_id, width, TypedRightPlan::Empty)),
+        )
+    }
+
+    /// Create a fixed-width channel whose active payload may own reply
+    /// rights. The plan is stored once per channel, never per message.
+    pub fn typed_right_channel(
+        &mut self,
+        capacity: usize,
+        type_id: u64,
+        width: usize,
+        plan: TypedRightPlan,
+    ) -> Result<(Sender, Receiver), ResourceError> {
+        self.create_channel(capacity, ChannelKind::Typed, Some((type_id, width, plan)))
     }
 
     fn create_channel(
         &mut self,
         capacity: usize,
         kind: ChannelKind,
-        typed_layout: Option<(u64, usize)>,
+        typed_layout: Option<(u64, usize, TypedRightPlan)>,
     ) -> Result<(Sender, Receiver), ResourceError> {
         if capacity == 0 {
             return Err(ResourceError::InvalidChannelCapacity);
@@ -1345,8 +1404,12 @@ impl Context<'_> {
             return Err(ResourceError::HandleLimit);
         }
         let typed = match typed_layout {
-            Some((type_id, width)) if kind == ChannelKind::Typed => {
-                Some(TypedQueue::new(type_id, width, capacity)?)
+            Some((type_id, width, plan)) if kind == ChannelKind::Typed => {
+                Some(if plan == TypedRightPlan::Empty {
+                    TypedQueue::new(type_id, width, capacity)?
+                } else {
+                    TypedQueue::with_plan(type_id, width, capacity, plan)?
+                })
             }
             None if kind != ChannelKind::Typed => None,
             _ => return Err(ResourceError::InvalidChannelCapacity),
@@ -1621,9 +1684,9 @@ impl Context<'_> {
         Ok(SendResult::Sent)
     }
 
-    /// Send one capability-free concrete message. `words` remains owned by
-    /// the caller on Pending, Closed, and every error; an available slot is
-    /// filled without allocating. The caller retains its sender right.
+    /// Send one concrete message. `words` and its active reply rights remain
+    /// with the caller on Pending, Closed, and every precommit error. An
+    /// available slot is filled without allocating.
     pub fn send_typed_words(
         &mut self,
         sender: &Sender,
@@ -1657,6 +1720,33 @@ impl Context<'_> {
             self.wait = Some(Wait::Send(channel));
             return Ok(TypedSendResult::Pending);
         }
+        let right_count = {
+            let typed = self.scheduler.channels[channel]
+                .typed
+                .as_mut()
+                .expect("checked typed channel");
+            let rights = typed.collect_send_rights(words)?;
+            for token in rights {
+                if self
+                    .scheduler
+                    .reply_rights
+                    .get(token.0)
+                    .map(|right| right.owner)
+                    != Some(ReplyOwner::Task(self.task))
+                {
+                    return Err("typed reply right is closed or owned elsewhere".into());
+                }
+            }
+            rights.len()
+        };
+        for index in 0..right_count {
+            let token = self.scheduler.channels[channel]
+                .typed
+                .as_ref()
+                .expect("typed queue")
+                .scratch_right(index);
+            self.scheduler.reply_rights[token.0].owner = ReplyOwner::Queue(channel);
+        }
         let typed = self.scheduler.channels[channel]
             .typed
             .as_mut()
@@ -1683,7 +1773,35 @@ impl Context<'_> {
         if !typed.matches(type_id, output.len()) {
             return Err("typed message identity or width mismatch".into());
         }
-        if typed.pop(output) {
+        if typed.len() != 0 {
+            let right_count = {
+                let rights = typed.collect_front_rights()?;
+                for token in rights {
+                    if self
+                        .scheduler
+                        .reply_rights
+                        .get(token.0)
+                        .map(|right| right.owner)
+                        != Some(ReplyOwner::Queue(channel))
+                    {
+                        return Err("queued typed reply ownership mismatch".into());
+                    }
+                }
+                rights.len()
+            };
+            for index in 0..right_count {
+                let token = self.scheduler.channels[channel]
+                    .typed
+                    .as_ref()
+                    .expect("typed queue")
+                    .scratch_right(index);
+                self.scheduler.reply_rights[token.0].owner = ReplyOwner::Task(self.task);
+            }
+            self.scheduler.channels[channel]
+                .typed
+                .as_mut()
+                .expect("typed queue")
+                .pop(output);
             self.scheduler.wake_one(channel, true);
             return Ok(TypedReceiveResult::Value);
         }
