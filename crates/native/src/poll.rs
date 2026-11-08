@@ -843,6 +843,10 @@ fn compile_poll_module<M: Module>(
                             let value = get(*value, &mut builder)[0];
                             Some(vec![builder.ins().ineg(value)])
                         }
+                        Operation::Not(value) => {
+                            let value = get(*value, &mut builder)[0];
+                            Some(vec![builder.ins().icmp_imm_u(IntCC::Equal, value, 0)])
+                        }
                         Operation::Add(a, b) | Operation::Sub(a, b) => {
                             let a = get(*a, &mut builder)[0];
                             let b = get(*b, &mut builder)[0];
@@ -1660,6 +1664,7 @@ fn validate_poll_function(
                     | Operation::Product(_, _)
                     | Operation::Field(_, _)
                     | Operation::Neg(_)
+                    | Operation::Not(_)
                     | Operation::Add(_, _)
                     | Operation::Sub(_, _)
                     | Operation::Mul(_, _)

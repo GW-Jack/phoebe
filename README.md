@@ -56,6 +56,7 @@ Build and run the compiler with Buck2:
 ```sh
 buck2 build //:phoebe_dist
 buck2 run //:phoebe -- run examples/hello.phoebe
+buck2 run //:phoebe -- run examples/boolean_short_circuit.phoebe
 buck2 run //:phoebe -- run examples/scoped_spawn.phoebe
 buck2 run //:phoebe -- run examples/channel_exchange.phoebe
 buck2 run //:phoebe -- run examples/reply_exchange.phoebe

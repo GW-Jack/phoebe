@@ -355,6 +355,46 @@ fn bool_function_boundaries_work_across_backends() {
 }
 
 #[test]
+fn boolean_operators_short_circuit_error_effects_across_backends() {
+    let program = compile(include_str!("../examples/boolean_short_circuit.phoebe"));
+    let (_, skipped) = program.function("skipped_and").unwrap();
+    assert!(matches!(
+        skipped.blocks[0].terminator,
+        core::Terminator::Branch { .. }
+    ));
+    assert!(
+        !skipped.blocks[0]
+            .instructions
+            .iter()
+            .any(|instruction| { matches!(instruction.operation, core::Operation::Call(_, _)) })
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-bool-short-aot-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let result = Command::new(&path).output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(result.status.success());
+    assert_eq!(result.stdout, b"42\n");
+}
+
+#[test]
+fn boolean_operator_precedence_and_types_are_checked() {
+    let program =
+        compile("fn main() -> I64 = if (!false || false && false == true) { 42 } else { 0 }");
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    for source in [
+        "fn main() -> I64 = if (1 && true) { 42 } else { 0 }",
+        "fn main() -> I64 = if (true || 1) { 42 } else { 0 }",
+        "fn main() -> I64 = if (!1) { 42 } else { 0 }",
+    ] {
+        let error = core::lower(&syntax::parse(source).unwrap()).unwrap_err();
+        assert!(error.message.contains("expected Bool"), "{error:?}");
+    }
+}
+
+#[test]
 fn mismatched_bool_signature_is_rejected() {
     let source =
         "fn choose(flag: Bool) -> I64 = if (flag) { 1 } else { 0 } fn main() -> I64 = choose(1)";

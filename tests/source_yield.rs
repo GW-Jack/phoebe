@@ -3,6 +3,21 @@ use phoebe::{core, frame_layout, native, syntax};
 use std::process::Command;
 
 #[test]
+fn boolean_not_and_short_circuit_resume_in_retained_native_code() {
+    let source = "fn main() -> I64 { yield; if (!false && true) { 42 } else { 0 } }";
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert!(program.to_string().contains("not v"));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-bool-poll-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
 fn source_yield_resumes_with_mutable_state_in_all_backends() {
     let source = include_str!("../examples/yield_loop.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

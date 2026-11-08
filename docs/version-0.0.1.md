@@ -40,10 +40,14 @@ User-declared payloads and fields may contain earlier nominal types and finite
 concrete `Result` applications; recursive data remains unsupported.
 It supports up to four owned parameters (I64 borrows only), `val` and
 `var` bindings, assignment, `while`, integer and boolean literals, unary
-negation, `+`, `-`, `*`, `==`, `<`, `if` expressions with block arms, exhaustive
-`when` expressions, acyclic direct calls, call-site `&I64` and `&mut I64`
+numeric negation, Boolean `!`, `+`, `-`, `*`, `==`, `<`, short-circuit `&&`
+and `||`, `if` expressions with block arms, exhaustive `when` expressions,
+acyclic direct calls, call-site `&I64` and `&mut I64`
 arguments, `?` on concrete built-in `Result<T, E>` applications with
 primitive or existing nominal payloads, and a matching tail expression.
+Boolean operators require `Bool` on both sides even when the right side is
+skipped at runtime. Their precedence is `||` below `&&`, below comparisons;
+the right side is a separate Core CFG branch and may contain `?`.
 Nominal values have affine move checking:
 owning uses and nominal field projections consume them; primitive product
 field reads preserve them. CFG joins reject later reuse when any incoming path

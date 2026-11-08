@@ -288,6 +288,7 @@ impl CoreTask {
                 Some(fields[*index].clone())
             }
             Operation::Neg(a) => Some(Value::I64(as_i64(get(*a)).wrapping_neg())),
+            Operation::Not(a) => Some(Value::Bool(!as_bool(get(*a)))),
             Operation::Add(a, b) => Some(Value::I64(as_i64(get(*a)).wrapping_add(as_i64(get(*b))))),
             Operation::Sub(a, b) => Some(Value::I64(as_i64(get(*a)).wrapping_sub(as_i64(get(*b))))),
             Operation::Mul(a, b) => Some(Value::I64(as_i64(get(*a)).wrapping_mul(as_i64(get(*b))))),
@@ -866,6 +867,7 @@ impl fmt::Display for Program {
                             write!(f, "place.field p{}, {}", place.0, index)?
                         }
                         Operation::Neg(a) => write!(f, "neg v{}", a.0)?,
+                        Operation::Not(a) => write!(f, "not v{}", a.0)?,
                         Operation::Add(a, b) => write!(f, "add v{}, v{}", a.0, b.0)?,
                         Operation::Sub(a, b) => write!(f, "sub v{}, v{}", a.0, b.0)?,
                         Operation::Mul(a, b) => write!(f, "mul v{}, v{}", a.0, b.0)?,

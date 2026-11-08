@@ -86,6 +86,12 @@ method and any required copy or move in diagnostics and IR dumps. An operator
 cannot hide a parking operation; fallible operations should use named methods
 returning `Result` initially. Index syntax is deferred until its bounds,
 borrow, and failure behavior are specified.
+`!`, `&&`, and `||` are built-in Bool operators, not overloadable trait
+calls. The binary operators evaluate the right operand only when needed;
+`?` in that operand
+therefore runs only on that path. Their precedence is `||`, then `&&`, then
+comparison, arithmetic, and unary operators. `!` lowers to one typed Core
+operation; the binary operators lower to branches with a Bool block parameter.
 
 ## Errors and capability cleanup
 

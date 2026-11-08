@@ -88,14 +88,17 @@ pub(super) fn body_can_spawn(body: &Body, effects: &HashMap<String, bool>) -> bo
             ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(_, _) => {
                 false
             }
-            ExprKind::Copy(value) | ExprKind::Neg(value) | ExprKind::Try(value) => {
-                expr(value, effects)
-            }
+            ExprKind::Copy(value)
+            | ExprKind::Neg(value)
+            | ExprKind::Not(value)
+            | ExprKind::Try(value) => expr(value, effects),
             ExprKind::Add(a, b)
             | ExprKind::Sub(a, b)
             | ExprKind::Mul(a, b)
             | ExprKind::Eq(a, b)
-            | ExprKind::Lt(a, b) => expr(a, effects) || expr(b, effects),
+            | ExprKind::Lt(a, b)
+            | ExprKind::And(a, b)
+            | ExprKind::Or(a, b) => expr(a, effects) || expr(b, effects),
             ExprKind::VariantCall(_, _, value) => expr(value, effects),
             ExprKind::Call(name, args) => {
                 effects.get(name).copied().unwrap_or(true) || arguments(args, effects)
@@ -201,12 +204,17 @@ impl Scan<'_> {
     fn expr(&mut self, expr: &Expr) {
         match &expr.kind {
             ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(_, _) => {}
-            ExprKind::Copy(value) | ExprKind::Neg(value) | ExprKind::Try(value) => self.expr(value),
+            ExprKind::Copy(value)
+            | ExprKind::Neg(value)
+            | ExprKind::Not(value)
+            | ExprKind::Try(value) => self.expr(value),
             ExprKind::Add(a, b)
             | ExprKind::Sub(a, b)
             | ExprKind::Mul(a, b)
             | ExprKind::Eq(a, b)
-            | ExprKind::Lt(a, b) => {
+            | ExprKind::Lt(a, b)
+            | ExprKind::And(a, b)
+            | ExprKind::Or(a, b) => {
                 self.expr(a);
                 self.expr(b);
             }

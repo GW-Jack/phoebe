@@ -82,6 +82,12 @@ fn op_type(
             }
             Ok(Some(Type::I64))
         }
+        Operation::Not(a) => {
+            if ty(*a) != Type::Bool {
+                return Err("not expects Bool".into());
+            }
+            Ok(Some(Type::Bool))
+        }
         Operation::Add(a, b) | Operation::Sub(a, b) | Operation::Mul(a, b) => {
             if ty(*a) != Type::I64 || ty(*b) != Type::I64 {
                 return Err("arithmetic expects I64".into());
@@ -232,6 +238,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::CloseReply(a)
         | Operation::CloseRequest(a)
         | Operation::Neg(a)
+        | Operation::Not(a)
         | Operation::PlaceInit(_, a)
         | Operation::Store(_, a)
         | Operation::LoadRef(a) => vec![*a],

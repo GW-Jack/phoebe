@@ -520,6 +520,21 @@ fn project_interface_invalidation_reaches_transitive_importers() {
 }
 
 #[test]
+fn project_rewrites_imported_calls_inside_short_circuit_branches() {
+    let path = temp_project();
+    std::fs::write(
+        path.join("app.phoebe"),
+        "import math\nfn main() -> I64 = if (true && math.add(20, 22) == 42) { 42 } else { 0 }\n",
+    )
+    .unwrap();
+    let loaded = project::load(&path).unwrap();
+    let program = core::lower(&loaded.ast).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
 fn compiler_session_reuses_checked_core_bodies_and_rebases_spans() {
     let path = temp_project();
     let mut session = ProjectCompilerSession::new();

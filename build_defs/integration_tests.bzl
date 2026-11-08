@@ -30,6 +30,7 @@ def integration_tests(rust_test):
         crate_root = "tests/compiler.rs",
         srcs = [
             "tests/compiler.rs",
+            "examples/boolean_short_circuit.phoebe",
             "examples/borrow.phoebe",
             "examples/copy.phoebe",
             "examples/nested_result.phoebe",

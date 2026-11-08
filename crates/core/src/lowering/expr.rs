@@ -396,6 +396,34 @@ impl Lowerer<'_> {
                 self.require(ty, Type::I64, rhs.span)?;
                 (Operation::Neg(value), Type::I64)
             }
+            ExprKind::Not(rhs) => {
+                let (value, ty) = self.expr(rhs, locals)?;
+                self.require(ty, Type::Bool, rhs.span)?;
+                (Operation::Not(value), Type::Bool)
+            }
+            ExprKind::And(lhs, rhs) | ExprKind::Or(lhs, rhs) => {
+                let (condition, ty) = self.expr(lhs, locals)?;
+                self.require(ty, Type::Bool, lhs.span)?;
+                let evaluate = self.block();
+                let short = self.block();
+                let join = self.block();
+                let result = self.block_param(join, Type::Bool);
+                let is_and = matches!(expr.kind, ExprKind::And(_, _));
+                self.terminate(Terminator::Branch {
+                    condition,
+                    then_block: if is_and { evaluate } else { short },
+                    else_block: if is_and { short } else { evaluate },
+                });
+                self.current = short;
+                let short_value = self.emit(Operation::Bool(!is_and), Type::Bool, expr.span);
+                self.terminate(Terminator::Jump(join, vec![short_value]));
+                self.current = evaluate;
+                let (rhs_value, rhs_type) = self.expr(rhs, locals)?;
+                self.require(rhs_type, Type::Bool, rhs.span)?;
+                self.terminate(Terminator::Jump(join, vec![rhs_value]));
+                self.current = join;
+                return Ok((result, Type::Bool));
+            }
             ExprKind::Add(lhs, rhs) => {
                 let ((a, ta), (b, tb)) = self.pair(lhs, rhs, locals)?;
                 self.require(ta, Type::I64, lhs.span)?;

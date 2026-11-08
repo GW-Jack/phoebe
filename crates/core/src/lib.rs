@@ -126,6 +126,7 @@ pub enum Operation {
     Field(ValueId, usize),
     ReadField(PlaceId, usize),
     Neg(ValueId),
+    Not(ValueId),
     Add(ValueId, ValueId),
     Sub(ValueId, ValueId),
     Mul(ValueId, ValueId),

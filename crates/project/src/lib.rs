@@ -636,12 +636,17 @@ fn rewrite_expr(
     };
     match &mut expr.kind {
         ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) => {}
-        ExprKind::Copy(inner) | ExprKind::Neg(inner) | ExprKind::Try(inner) => nested(inner)?,
+        ExprKind::Copy(inner)
+        | ExprKind::Neg(inner)
+        | ExprKind::Not(inner)
+        | ExprKind::Try(inner) => nested(inner)?,
         ExprKind::Add(a, b)
         | ExprKind::Sub(a, b)
         | ExprKind::Mul(a, b)
         | ExprKind::Eq(a, b)
-        | ExprKind::Lt(a, b) => {
+        | ExprKind::Lt(a, b)
+        | ExprKind::And(a, b)
+        | ExprKind::Or(a, b) => {
             nested(a)?;
             nested(b)?;
         }
@@ -872,14 +877,19 @@ fn shift_expr(expr: &mut Expr, offset: usize) {
     shift_span(&mut expr.span, offset);
     match &mut expr.kind {
         ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(_, _) => {}
-        ExprKind::Copy(value) | ExprKind::Neg(value) | ExprKind::Try(value) => {
+        ExprKind::Copy(value)
+        | ExprKind::Neg(value)
+        | ExprKind::Not(value)
+        | ExprKind::Try(value) => {
             shift_expr(value, offset);
         }
         ExprKind::Add(a, b)
         | ExprKind::Sub(a, b)
         | ExprKind::Mul(a, b)
         | ExprKind::Eq(a, b)
-        | ExprKind::Lt(a, b) => {
+        | ExprKind::Lt(a, b)
+        | ExprKind::And(a, b)
+        | ExprKind::Or(a, b) => {
             shift_expr(a, offset);
             shift_expr(b, offset);
         }

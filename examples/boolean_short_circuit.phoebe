@@ -1,0 +1,21 @@
+fn fail() -> Result<Bool, I64> = Result<Bool, I64>.Err(7)
+
+fn skipped_and() -> Result<Bool, I64> =
+  Result<Bool, I64>.Ok(false && fail()?)
+
+fn skipped_or() -> Result<Bool, I64> =
+  Result<Bool, I64>.Ok(true || fail()?)
+
+fn checked_and() -> Result<Bool, I64> =
+  Result<Bool, I64>.Ok(true && fail()?)
+
+fn checked_or() -> Result<Bool, I64> =
+  Result<Bool, I64>.Ok(false || fail()?)
+
+fn score(result: Result<Bool, I64>) -> I64 = when (result) {
+  Result<Bool, I64>.Ok(value) -> { if (!value) { 20 } else { 10 } },
+  Result<Bool, I64>.Err(error) -> { error - 1 },
+}
+
+fn main() -> I64 =
+  score(skipped_and()) + score(skipped_or()) + score(checked_and()) + score(checked_or())

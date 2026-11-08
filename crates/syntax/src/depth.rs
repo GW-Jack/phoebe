@@ -17,12 +17,17 @@ fn arguments_height(arguments: &[CallArgument]) -> usize {
 pub(crate) fn expr_height(expr: &Expr) -> usize {
     1 + match &expr.kind {
         ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(_, _) => 0,
-        ExprKind::Copy(value) | ExprKind::Neg(value) | ExprKind::Try(value) => expr_height(value),
+        ExprKind::Copy(value)
+        | ExprKind::Neg(value)
+        | ExprKind::Not(value)
+        | ExprKind::Try(value) => expr_height(value),
         ExprKind::Add(a, b)
         | ExprKind::Sub(a, b)
         | ExprKind::Mul(a, b)
         | ExprKind::Eq(a, b)
-        | ExprKind::Lt(a, b) => expr_height(a).max(expr_height(b)),
+        | ExprKind::Lt(a, b)
+        | ExprKind::And(a, b)
+        | ExprKind::Or(a, b) => expr_height(a).max(expr_height(b)),
         ExprKind::VariantCall(_, _, value) => expr_height(value),
         ExprKind::Call(_, arguments) | ExprKind::QualifiedCall(_, _, arguments) => {
             arguments_height(arguments)

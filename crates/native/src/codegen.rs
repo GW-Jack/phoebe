@@ -500,6 +500,9 @@ pub(super) fn compile_functions<M: Module>(
                             )])
                         }
                         Operation::Neg(a) => Some(vec![builder.ins().ineg(one(*a))]),
+                        Operation::Not(a) => {
+                            Some(vec![builder.ins().icmp_imm_u(IntCC::Equal, one(*a), 0)])
+                        }
                         Operation::Add(a, b) => Some(vec![builder.ins().iadd(one(*a), one(*b))]),
                         Operation::Sub(a, b) => Some(vec![builder.ins().isub(one(*a), one(*b))]),
                         Operation::Mul(a, b) => Some(vec![builder.ins().imul(one(*a), one(*b))]),

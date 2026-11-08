@@ -40,6 +40,9 @@ enum TokenKind {
     Minus,
     Star,
     Amp,
+    AndAnd,
+    OrOr,
+    Bang,
     Question,
     Eof,
 }
@@ -161,9 +164,21 @@ fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 i += 1;
                 TokenKind::Star
             }
+            b'&' if bytes.get(i + 1) == Some(&b'&') => {
+                i += 2;
+                TokenKind::AndAnd
+            }
             b'&' => {
                 i += 1;
                 TokenKind::Amp
+            }
+            b'|' if bytes.get(i + 1) == Some(&b'|') => {
+                i += 2;
+                TokenKind::OrOr
+            }
+            b'!' => {
+                i += 1;
+                TokenKind::Bang
             }
             b'?' => {
                 i += 1;
@@ -375,11 +390,14 @@ pub enum ExprKind {
     Name(String),
     Copy(Box<Expr>),
     Neg(Box<Expr>),
+    Not(Box<Expr>),
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
     Eq(Box<Expr>, Box<Expr>),
     Lt(Box<Expr>, Box<Expr>),
+    And(Box<Expr>, Box<Expr>),
+    Or(Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Body>, Box<Body>),
     Member(String, String),
     VariantCall(String, String, Box<Expr>),
@@ -1166,10 +1184,22 @@ impl Parser {
                 span,
             } => {
                 self.pos += 1;
-                let rhs = self.expr(7)?;
+                let rhs = self.expr(11)?;
                 let end = rhs.span;
                 Expr {
                     kind: ExprKind::Neg(Box::new(rhs)),
+                    span: span.join(end),
+                }
+            }
+            Token {
+                kind: TokenKind::Bang,
+                span,
+            } => {
+                self.pos += 1;
+                let rhs = self.expr(11)?;
+                let end = rhs.span;
+                Expr {
+                    kind: ExprKind::Not(Box::new(rhs)),
                     span: span.join(end),
                 }
             }
@@ -1187,7 +1217,7 @@ impl Parser {
 
         let mut chain = 0;
         loop {
-            if self.current().kind == TokenKind::Question && min_bp <= 9 {
+            if self.current().kind == TokenKind::Question && min_bp <= 13 {
                 if chain == MAX_PARSE_DEPTH {
                     return Err(Diagnostic::new(
                         self.current().span,
@@ -1204,9 +1234,11 @@ impl Parser {
                 continue;
             }
             let (left_bp, right_bp) = match self.current().kind {
-                TokenKind::EqualEqual | TokenKind::Less => (1, 2),
-                TokenKind::Plus | TokenKind::Minus => (3, 4),
-                TokenKind::Star => (5, 6),
+                TokenKind::OrOr => (1, 2),
+                TokenKind::AndAnd => (3, 4),
+                TokenKind::EqualEqual | TokenKind::Less => (5, 6),
+                TokenKind::Plus | TokenKind::Minus => (7, 8),
+                TokenKind::Star => (9, 10),
                 _ => break,
             };
             if left_bp < min_bp {
@@ -1229,6 +1261,8 @@ impl Parser {
                 TokenKind::Star => ExprKind::Mul(Box::new(lhs), Box::new(rhs)),
                 TokenKind::EqualEqual => ExprKind::Eq(Box::new(lhs), Box::new(rhs)),
                 TokenKind::Less => ExprKind::Lt(Box::new(lhs), Box::new(rhs)),
+                TokenKind::AndAnd => ExprKind::And(Box::new(lhs), Box::new(rhs)),
+                TokenKind::OrOr => ExprKind::Or(Box::new(lhs), Box::new(rhs)),
                 _ => unreachable!(),
             };
             lhs = Expr { kind, span };

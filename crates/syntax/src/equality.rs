@@ -184,12 +184,15 @@ fn expr(a: &Expr, b: &Expr, delta: isize) -> bool {
         (ExprKind::Name(a), ExprKind::Name(b)) => a == b,
         (ExprKind::Copy(a), ExprKind::Copy(b))
         | (ExprKind::Neg(a), ExprKind::Neg(b))
+        | (ExprKind::Not(a), ExprKind::Not(b))
         | (ExprKind::Try(a), ExprKind::Try(b)) => expr(a, b, delta),
         (ExprKind::Add(a1, a2), ExprKind::Add(b1, b2))
         | (ExprKind::Sub(a1, a2), ExprKind::Sub(b1, b2))
         | (ExprKind::Mul(a1, a2), ExprKind::Mul(b1, b2))
         | (ExprKind::Eq(a1, a2), ExprKind::Eq(b1, b2))
-        | (ExprKind::Lt(a1, a2), ExprKind::Lt(b1, b2)) => {
+        | (ExprKind::Lt(a1, a2), ExprKind::Lt(b1, b2))
+        | (ExprKind::And(a1, a2), ExprKind::And(b1, b2))
+        | (ExprKind::Or(a1, a2), ExprKind::Or(b1, b2)) => {
             expr(a1, b1, delta) && expr(a2, b2, delta)
         }
         (ExprKind::If(ac, at, ae), ExprKind::If(bc, bt, be)) => {
