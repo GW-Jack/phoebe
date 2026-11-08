@@ -172,6 +172,15 @@ rust_test(
 )
 
 rust_test(
+    name = "core_scopes_tests",
+    crate_root = "tests/core_scopes.rs",
+    srcs = ["tests/core_scopes.rs"],
+    edition = "2024",
+    deps = [":phoebe_lib"],
+    resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+)
+
+rust_test(
     name = "cost_acceptance_tests",
     crate_root = "tests/cost_acceptance.rs",
     srcs = ["tests/cost_acceptance.rs", "examples/cost/identity.phoebe", "examples/spawn_pair.phoebe"],

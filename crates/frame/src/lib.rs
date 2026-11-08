@@ -261,6 +261,7 @@ pub fn suspendable_functions(program: &Program) -> Result<Vec<bool>, String> {
                         | Terminator::RequestReceive { .. }
                         | Terminator::ReplyReceive { .. }
                         | Terminator::Yield { .. }
+                        | Terminator::ScopeJoin { .. }
                 )
             })
         })
@@ -322,6 +323,7 @@ pub fn analyze(program: &Program) -> Result<Vec<FunctionFrame>, String> {
                     | Terminator::RequestReceive { .. }
                     | Terminator::ReplyReceive { .. }
                     | Terminator::Yield { .. }
+                    | Terminator::ScopeJoin { .. }
             ) {
                 all.union(&live);
                 points.push(point(BlockId(block_id), None, &live));
@@ -491,7 +493,9 @@ fn terminator_live(function: &Function, block_id: usize, incoming: &[Live]) -> L
         live.union(&after);
     };
     match terminator {
-        Terminator::Yield { resume, .. } => edge(*resume, None),
+        Terminator::Yield { resume, .. } | Terminator::ScopeJoin { resume, .. } => {
+            edge(*resume, None)
+        }
         Terminator::Return(value) => live.values[value.0] = true,
         Terminator::Jump(target, args) => edge(*target, Some(args)),
         Terminator::Branch {

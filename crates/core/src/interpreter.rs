@@ -6,6 +6,17 @@ impl Program {
         for function in &self.functions {
             for (block_id, block) in function.blocks.iter().enumerate() {
                 for (instruction_id, instruction) in block.instructions.iter().enumerate() {
+                    if let Operation::ScopeEnter(_) = instruction.operation {
+                        events.push(CostEvent {
+                            function: function.name.clone(),
+                            block: block_id,
+                            instruction: instruction_id,
+                            span: instruction.span,
+                            kind: "scope.enter",
+                            type_name: "TaskScope".into(),
+                            reason: "lexical scope",
+                        });
+                    }
                     let ty = match instruction.operation {
                         Operation::Copy(value) => function.value_types[value.0],
                         Operation::CopyPlace(place) => function.place_types[place.0],
@@ -53,6 +64,17 @@ impl Program {
                         reason: "explicit spawn",
                     });
                 }
+                if let Terminator::ScopeJoin { span, .. } = block.terminator {
+                    events.push(CostEvent {
+                        function: function.name.clone(),
+                        block: block_id,
+                        instruction: block.instructions.len(),
+                        span,
+                        kind: "scope.join",
+                        type_name: "TaskScope".into(),
+                        reason: "lexical scope",
+                    });
+                }
             }
         }
         events
@@ -85,6 +107,7 @@ impl Program {
                             | Terminator::RequestReceive { .. }
                             | Terminator::Fork { .. }
                             | Terminator::Yield { .. }
+                            | Terminator::ScopeJoin { .. }
                             | Terminator::ChannelSend { .. }
                             | Terminator::ChannelReceive { .. }
                             | Terminator::ReplyComplete { .. }
@@ -96,6 +119,7 @@ impl Program {
                             Operation::CloseHandle(_)
                                 | Operation::CloseReply(_)
                                 | Operation::CloseRequest(_)
+                                | Operation::ScopeEnter(_)
                         )
                     }))
                 {
@@ -338,6 +362,12 @@ impl CoreTask {
                     .close_reply_to(runtime::ReplyTo::from_token(token))?;
                 None
             }
+            Operation::ScopeEnter(_) => {
+                context
+                    .expect("scope enter requires a runtime task")
+                    .scope_enter()?;
+                None
+            }
         })
     }
 }
@@ -382,6 +412,16 @@ impl CoreTask {
                         .ok_or("yield requires a runtime task")?
                         .yield_now()?;
                     return Ok(Poll::Pending);
+                }
+                Terminator::ScopeJoin { resume, .. } => {
+                    match context
+                        .as_deref_mut()
+                        .ok_or("scope join requires a runtime task")?
+                        .scope_join_current()?
+                    {
+                        Poll::Ready(()) => self.enter(resume, Vec::new()),
+                        Poll::Pending => return Ok(Poll::Pending),
+                    }
                 }
                 Terminator::Return(value) => {
                     let result = self.value(value);
@@ -866,6 +906,7 @@ impl fmt::Display for Program {
                             write!(f, "request.pack v{}, v{}", value.0, right.0)?
                         }
                         Operation::CloseRequest(value) => write!(f, "close.request v{}", value.0)?,
+                        Operation::ScopeEnter(scope) => write!(f, "scope.enter r{}", scope.0)?,
                     }
                     writeln!(f, "  @{}..{}", instruction.span.start, instruction.span.end)?;
                 }
@@ -875,6 +916,9 @@ impl fmt::Display for Program {
                     } => {
                         let name = if *automatic { "yield.auto" } else { "yield" };
                         writeln!(f, "    {name} resume block{}", resume.0)?
+                    }
+                    Terminator::ScopeJoin { scope, resume, .. } => {
+                        writeln!(f, "    scope.join r{} resume block{}", scope.0, resume.0)?
                     }
                     Terminator::Return(value) => writeln!(f, "    return v{}", value.0)?,
                     Terminator::Jump(target, args) => {

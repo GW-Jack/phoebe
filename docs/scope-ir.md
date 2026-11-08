@@ -1,8 +1,7 @@
 # Lexical task scopes: Core contract
 
-Status: design for the next compiler integration. The Rust scheduler and its
-native entry points execute this boundary; Phoebe source and Core IR do not
-yet represent it.
+Status: checked Core representation and interpreter/native execution for
+hand-built programs. Phoebe source does not yet expose it.
 
 `scope { body }` creates a child lifetime inside the current task. Every task
 spawned while that body runs, including descendants spawned by those tasks,
@@ -14,11 +13,11 @@ statement. A later expression form may carry a result through the join.
 
 ## Checked IR representation
 
-The intended Core operations are an effectful `scope.enter r` instruction and
-a `scope.join r -> resume` terminator. `r` is a compiler-assigned region ID in
-the function's scope-region table, not a transferable runtime value. A join
-may park and retry the same terminator. The region table records its source
-span and enter site; each normal or early exit has a join site. Generated code
+Core uses an effectful `scope.enter r` instruction and
+a `scope.join r -> resume` terminator. `r` is a function-local region ID,
+not a transferable runtime value. A join may park and retry the same
+terminator. The enter instruction and each join carry source spans; the
+verifier requires one static enter per region ID. Generated code
 calls `phoebe_rt_v1_scope_enter` and `phoebe_rt_v1_scope_join`. The scheduler
 keeps the current scope in the task record, so the region ID needs no native
 frame word or channel message representation.
@@ -66,10 +65,13 @@ claiming every execution parks.
 
 - Source tests for nested scopes, early `?`, capability cleanup, and a task
   spawned before an inner scope.
-- Core verifier tests for unmatched, duplicated, and branch-dependent joins.
-- Interpreter, JIT, and standalone differential runs across Ready, Pending,
-  child failure, and allocation failure paths.
-- Frame analysis proving values and places used after a pending join survive
-  the suspension; generated code must retry the join rather than re-entering.
+- Core verifier tests for more complex loops; unmatched, duplicated, and
+  branch-dependent joins are already rejected.
+- Differential runs across child failure and allocation failure paths. A
+  hand-built Core program already covers Ready, Pending, and a spawn-limit
+  failure in the interpreter and JIT, plus Pending in standalone code.
+- More frame tests for borrowed places across a pending join. Existing
+  scalar and mutable-place tests show that generated code retries the join
+  rather than re-entering.
 - A bounded formal model of nested scope membership and cancellation, with a
   separate argument for the compiler's stack and backend erasure rules.

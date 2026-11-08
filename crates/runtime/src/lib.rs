@@ -214,6 +214,7 @@ pub use native::*;
 mod native_reply;
 mod native_scope;
 pub use native_reply::*;
+pub use native_scope::{phoebe_scope_enter, phoebe_scope_join};
 mod native_request;
 pub use native_request::*;
 

@@ -138,9 +138,11 @@ an owner can enter a nested scope, spawn into it, and join its transitive
 tasks without waiting for preexisting siblings. A task cannot finish
 successfully with an open nested scope. The runtime archive has native scope
 entry and join calls; a synthetic poll task parks at join and resumes after
-its child completes. Source and Core lowering for these operations remain open.
-`docs/scope-ir.md` fixes the intended region stack and backend erasure
-obligations for that integration.
+its child completes. Hand-built Core now has `scope.enter` and a suspending
+`scope.join` with a verifier-enforced region stack. Interpreter, JIT, and
+standalone tests cover a pending join and spawn-limit failure. Source lowering
+for these operations remains open; `docs/scope-ir.md` records the invariant
+and remaining integration work.
 The Rust spawn path now atomically transfers channel handles and either reply
 capability to a child. Native reply and typed spawn shims are exercised by
 synthetic poll frames, including a receiver that parks and wakes across tasks

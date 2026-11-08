@@ -7,12 +7,21 @@ A function contains typed SSA values, numbered basic blocks, and numbered
 mutable places. Each block has zero or more typed parameters, an instruction
 sequence, and exactly one `return`, `jump`, `branch`, `match`,
 `channel.new.i64`, `channel.send.i64`, `channel.receive.i64`,
-`reply.new.i64`, `reply.complete.i64`, `reply.receive.i64`, or `spawn`
+`reply.new.i64`, `reply.complete.i64`, `reply.receive.i64`, `spawn`, or
+`scope.join`
 terminator. A `jump`
 supplies one typed value per destination parameter. An `if` expression lowers
 to a conditional branch and a join block whose parameter carries the chosen
 arm's result. A `while` statement lowers to a loop head, body, exit, and
 backedge.
+
+Hand-built Core may also enter a lexical task scope with `scope.enter r` and
+leave it through a suspending `scope.join r -> resume` terminator. The verifier
+tracks the exact stack of open region IDs at each block, requires LIFO joins,
+and rejects a return while any scope is open. The interpreter, retained
+Cranelift JIT, and standalone object path execute an enter, spawned child,
+pending join, and resumed return. Source lowering for `scope` is still open;
+see `docs/scope-ir.md`.
 
 Nominal sum variants have a distinct `Data(id)` type and an explicit `variant`
 instruction. Source `when` checks every variant exactly once, then lowers to

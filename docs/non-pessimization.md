@@ -21,6 +21,7 @@ memory instructions:
 | `task.create` | Create a child task and retained frame | Executed `spawn` |
 | `task.park` | Yield a task waiting for a channel or scope | Blocking operation that was not immediately ready |
 | `task.yield` | Requeue the current task | Explicit source `yield;` or a budgeted `while` backedge |
+| `scope.enter`, `scope.join` | Establish and join a lexical child lifetime | Source `scope` whose body may spawn |
 | `channel.op` | Create, fork, send, receive, or close a channel capability | Corresponding source operation |
 | `call.indirect` | Call through a dynamic function value or generic trait dictionary | Source-level dynamic call or trait bound |
 
@@ -122,7 +123,9 @@ operation and is necessary under the initial task-local ownership model.
 
 The executable compiler emits a tab-separated static cost-site ledger on
 demand with `phoebe cost <file>`. It currently records `copy.value`,
-`task.create`, and `task.yield`, with a distinct reason for an automatic loop checkpoint.
+`task.create`, `task.yield`, `scope.enter`, and `scope.join`, with a distinct
+reason for an automatic loop checkpoint. Scope events currently arise from
+hand-built Core; source lowering and empty-scope erasure remain open.
 The development compiler should extend it to the remaining event kinds.
 Acceptance tests compare it with these fixtures. An IR verifier checks
 provenance and forbidden operations in tests and debug builds. Proofs of core

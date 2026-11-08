@@ -59,6 +59,14 @@ pub fn compile_poll_jit(program: &Program, name: &str) -> Result<PollExecutable,
     );
     jit.symbol("phoebe_rt_v1_yield", runtime::phoebe_yield as *const u8);
     jit.symbol(
+        "phoebe_rt_v1_scope_enter",
+        runtime::phoebe_scope_enter as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_scope_join",
+        runtime::phoebe_scope_join as *const u8,
+    );
+    jit.symbol(
         "phoebe_rt_v1_close_handle_i64",
         runtime::phoebe_close_handle_i64 as *const u8,
     );
@@ -327,6 +335,16 @@ fn compile_poll_module<M: Module>(
     let yield_function = module
         .declare_function("phoebe_rt_v1_yield", Linkage::Import, &yield_signature)
         .map_err(|e| e.to_string())?;
+    let scope_enter = module
+        .declare_function(
+            "phoebe_rt_v1_scope_enter",
+            Linkage::Import,
+            &yield_signature,
+        )
+        .map_err(|e| e.to_string())?;
+    let scope_join = module
+        .declare_function("phoebe_rt_v1_scope_join", Linkage::Import, &yield_signature)
+        .map_err(|e| e.to_string())?;
     let mut close_signature = module.make_signature();
     close_signature.params.extend([
         AbiParam::new(pointer),
@@ -579,6 +597,8 @@ fn compile_poll_module<M: Module>(
             let receive_ref = module.declare_func_in_func(receive, builder.func);
             let send_ref = module.declare_func_in_func(send, builder.func);
             let yield_ref = module.declare_func_in_func(yield_function, builder.func);
+            let scope_enter_ref = module.declare_func_in_func(scope_enter, builder.func);
+            let scope_join_ref = module.declare_func_in_func(scope_join, builder.func);
             let close_ref = module.declare_func_in_func(close, builder.func);
             let call_ref = module.declare_func_in_func(call, builder.func);
             let create_ref = module.declare_func_in_func(create, builder.func);
@@ -724,6 +744,15 @@ fn compile_poll_module<M: Module>(
                         continue;
                     }
                     let result = match &instruction.operation {
+                        Operation::ScopeEnter(_) => {
+                            let call = builder.ins().call(scope_enter_ref, &[bridge]);
+                            let status = builder.inst_results(call)[0];
+                            let succeeded = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                            let next = builder.create_block();
+                            builder.ins().brif(succeeded, next, &[], fault, &[]);
+                            builder.switch_to_block(next);
+                            None
+                        }
                         Operation::Const(value) => {
                             Some(vec![builder.ins().iconst(types::I64, *value)])
                         }
@@ -1293,6 +1322,7 @@ fn compile_poll_module<M: Module>(
                         builder.ins().jump(blocks[next.0], &[]);
                     }
                     Terminator::Yield { .. }
+                    | Terminator::ScopeJoin { .. }
                     | Terminator::ChannelReceive { .. }
                     | Terminator::ChannelSend { .. }
                     | Terminator::ReplyReceive { .. }
@@ -1333,6 +1363,10 @@ fn compile_poll_module<M: Module>(
                 let status = match terminator {
                     Terminator::Yield { .. } => {
                         let call = builder.ins().call(yield_ref, &[bridge]);
+                        builder.inst_results(call)[0]
+                    }
+                    Terminator::ScopeJoin { .. } => {
+                        let call = builder.ins().call(scope_join_ref, &[bridge]);
                         builder.inst_results(call)[0]
                     }
                     Terminator::ChannelReceive { receiver, .. } => {
@@ -1436,6 +1470,9 @@ fn compile_poll_module<M: Module>(
                     Terminator::ChannelSend { sent, .. } => {
                         builder.ins().jump(blocks[sent.0], &[]);
                     }
+                    Terminator::ScopeJoin { resume, .. } => {
+                        builder.ins().jump(blocks[resume.0], &[]);
+                    }
                     Terminator::RequestReceive { value, .. } => {
                         let (value_slot, right_slot) = request_slots.expect("request output slots");
                         let received = builder.ins().stack_load(pointer, types::I64, value_slot, 0);
@@ -1481,6 +1518,9 @@ fn compile_poll_module<M: Module>(
                             builder.def_var(*destination, component);
                         }
                         builder.ins().jump(blocks[closed.0], &[]);
+                    }
+                    Terminator::ScopeJoin { .. } => {
+                        builder.ins().jump(fault, &[]);
                     }
                     _ => unreachable!(),
                 }
@@ -1596,6 +1636,7 @@ fn validate_poll_function(
                 | Terminator::RequestReceive { .. }
                 | Terminator::RequestSend { .. }
                 | Terminator::Yield { .. }
+                | Terminator::ScopeJoin { .. }
         ) {
             return Err("unsupported retained poll point".into());
         }
@@ -1630,6 +1671,7 @@ fn validate_poll_function(
                     | Operation::PackRequest { .. }
                     | Operation::CloseRequest(_)
                     | Operation::Call(_, _)
+                    | Operation::ScopeEnter(_)
             ) {
                 return Err("operation is not yet supported by retained poll".into());
             }
@@ -1662,6 +1704,7 @@ fn validate_poll_function(
                 | Terminator::RequestSend { .. }
                 | Terminator::RequestReceive { .. }
                 | Terminator::Yield { .. }
+                | Terminator::ScopeJoin { .. }
         ) || matches!(
             block.terminator,
             Terminator::ChannelReceive { .. }
@@ -1670,6 +1713,7 @@ fn validate_poll_function(
                 | Terminator::RequestSend { .. }
                 | Terminator::RequestReceive { .. }
                 | Terminator::Yield { .. }
+                | Terminator::ScopeJoin { .. }
         ) && !layout
             .resumes
             .iter()

@@ -29,6 +29,9 @@ pub struct PlaceId(pub usize);
 pub struct RegionId(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TaskScopeId(pub usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DataId(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,6 +143,7 @@ pub enum Operation {
     CloseReply(ValueId),
     PackRequest { value: ValueId, right: ValueId },
     CloseRequest(ValueId),
+    ScopeEnter(TaskScopeId),
 }
 
 #[derive(Clone, Debug)]
@@ -169,6 +173,11 @@ pub enum Terminator {
         resume: BlockId,
         span: Span,
         automatic: bool,
+    },
+    ScopeJoin {
+        scope: TaskScopeId,
+        resume: BlockId,
+        span: Span,
     },
     Jump(BlockId, Vec<ValueId>),
     Branch {
@@ -290,6 +299,7 @@ pub struct DataDef {
 
 mod interpreter;
 mod lowering;
+mod scope_verification;
 mod verification;
 
 pub use lowering::{lower, lower_reusing};

@@ -407,7 +407,9 @@ pub(super) fn compile_functions<M: Module>(
             while let Some(block_id) = ready.pop_front() {
                 order.push(block_id);
                 let successors = match &function.blocks[block_id].terminator {
-                    Terminator::Yield { resume, .. } => vec![resume.0],
+                    Terminator::Yield { resume, .. } | Terminator::ScopeJoin { resume, .. } => {
+                        vec![resume.0]
+                    }
                     Terminator::Return(_) => vec![],
                     Terminator::Jump(target, _) => vec![target.0],
                     Terminator::Branch {
@@ -457,6 +459,9 @@ pub(super) fn compile_functions<M: Module>(
                     };
                     let one = |id: core::ValueId| get(id)[0];
                     let value = match &instruction.operation {
+                        Operation::ScopeEnter(_) => {
+                            return Err("scope enter requires retained task code".into());
+                        }
                         Operation::Const(value) => {
                             Some(vec![builder.ins().iconst(types::I64, *value)])
                         }
@@ -643,6 +648,9 @@ pub(super) fn compile_functions<M: Module>(
                 match &block.terminator {
                     Terminator::Yield { .. } => {
                         return Err("native yield requires retained task frames".into());
+                    }
+                    Terminator::ScopeJoin { .. } => {
+                        return Err("native scope join requires retained task frames".into());
                     }
                     Terminator::Return(value) => {
                         let returned = get(*value);
