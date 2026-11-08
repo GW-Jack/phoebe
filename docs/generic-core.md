@@ -127,8 +127,8 @@ call verifies the caller-owned return-buffer path. A generated object links
 with a C entry and runs the transitive call without the compiler process.
 Moves and scalar copies alias existing SSA values, generating no explicit
 copy instruction. Non-suspending concrete source calls now use these planned
-instances in the same JIT module. Standalone object integration and a
-persistent object-cache key remain open. The current IR has no
+instances in the same JIT module or standalone object. A persistent object
+cache key remains open. The current IR has no
 suspension, hidden runtime context, or dictionary
 operations; adding any of them requires extending the sharing key and its
 soundness argument before emission.

@@ -65,8 +65,9 @@ test executes a transitive generic call. Concrete source calls to the checked
 generic subset now lower into linked Core, which verifies substitution and
 ownership transfer. Single-file `phoebe run <file>` executes non-suspending
 generic calls through Cranelift; `--interp` runs the same calls in the
-interpreter. Project builds, retained native tasks, and standalone generic
-executables remain open.
+interpreter. Single-file `phoebe build <file> -o <output>` emits a standalone
+generic executable. Project builds, retained native tasks, and persistent
+generic object caching remain open.
 The isolated `phoebe-generic-core` crate now verifies a first opaque-owner
 IR slice. `phoebe generic-ir <file>` lowers identity, forwarding, and
 generic-to-generic calls into printable parametric Core. The module verifier
@@ -92,6 +93,8 @@ buck2 run //:phoebe -- shapes examples/product.phoebe
 buck2 run //:phoebe -- generic-ir examples/generic_identity.phoebe
 buck2 run //:phoebe -- run examples/generic_call.phoebe
 buck2 run //:phoebe -- run examples/generic_call.phoebe --interp
+buck2 run //:phoebe -- build examples/generic_call.phoebe -o /tmp/phoebe-generic
+/tmp/phoebe-generic
 buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 /tmp/phoebe-exchange
 buck2 test //...

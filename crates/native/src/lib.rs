@@ -18,6 +18,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use cranelift_native::builder as native_builder;
+use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use phoebe_core::{self as core, CallArg, MatchBinding, Operation, Program, Terminator, Type};
 use phoebe_frame::{self as frame_layout, FrameWords, FunctionFrame};
@@ -41,7 +42,9 @@ pub use poll::{PollExecutable, PollLeafExecutable, compile_poll_jit, compile_pol
 
 use build_session::emit_object_with_poll_layout;
 use codegen::{AbiShapes, GenericTargets, compile_functions};
-use reachability::{spawned_poll_children, spawned_poll_children_with_suspendable};
+use reachability::{
+    spawned_poll_children, spawned_poll_children_with_suspendable, standalone_direct_functions,
+};
 
 /// Injective internal symbol encoding. Names are source identifiers qualified
 /// by modules, while linkers see only ASCII letters, digits, and underscores.
@@ -74,6 +77,54 @@ pub struct JitExecutable {
     arity: usize,
     name: String,
     uses_runtime: bool,
+}
+
+fn plan_linked_calls<M: Module>(
+    module: &mut M,
+    linked: &core::CheckedLinkedProgram,
+    suspendable: &[bool],
+    selected: Option<&[bool]>,
+) -> Result<GenericTargets, String> {
+    let program = linked.program();
+    let shapes = phoebe_abi::Shapes::new(program)?;
+    let target = phoebe_abi::generic::TargetAbi {
+        triple: module.isa().triple().to_string(),
+        direct_register_results: codegen::direct_register_results(module),
+    };
+    let mut planner =
+        phoebe_abi::generic::Planner::from_checked(linked.generics(), &shapes, target)?;
+    let mut calls = HashMap::new();
+    for (function_id, function) in program.functions.iter().enumerate() {
+        if selected.is_some_and(|selected| !selected[function_id]) {
+            continue;
+        }
+        for (block_id, block) in function.blocks.iter().enumerate() {
+            for (instruction_id, instruction) in block.instructions.iter().enumerate() {
+                if let Operation::GenericCall {
+                    callee, type_args, ..
+                } = &instruction.operation
+                {
+                    calls.insert(
+                        (function_id, block_id, instruction_id),
+                        planner.plan(*callee, type_args)?,
+                    );
+                }
+            }
+        }
+    }
+    let calls = if calls.is_empty() {
+        HashMap::new()
+    } else {
+        let (ids, _) = generic::emit_into(module, &planner, 0, false)?;
+        calls
+            .into_iter()
+            .map(|(site, instance)| (site, ids[instance]))
+            .collect()
+    };
+    Ok(GenericTargets {
+        calls,
+        suspendable: suspendable.to_vec(),
+    })
 }
 
 pub fn compile_jit(program: &Program, name: &str) -> Result<JitExecutable, String> {
@@ -214,38 +265,7 @@ fn compile_jit_impl(
     }
     let mut module = JITModule::new(jit);
     let targets = if let Some(linked) = linked {
-        let shapes = phoebe_abi::Shapes::new(program)?;
-        let mut planner = phoebe_abi::generic::Planner::from_checked(
-            linked.generics(),
-            &shapes,
-            generic::host_target_abi()?,
-        )?;
-        let mut calls = HashMap::new();
-        for (function_id, function) in program.functions.iter().enumerate() {
-            for (block_id, block) in function.blocks.iter().enumerate() {
-                for (instruction_id, instruction) in block.instructions.iter().enumerate() {
-                    if let Operation::GenericCall {
-                        callee, type_args, ..
-                    } = &instruction.operation
-                    {
-                        calls.insert(
-                            (function_id, block_id, instruction_id),
-                            planner.plan(*callee, type_args)?,
-                        );
-                    }
-                }
-            }
-        }
-        let calls = if calls.is_empty() {
-            HashMap::new()
-        } else {
-            let (ids, _) = generic::emit_into(&mut module, &planner, 0, false)?;
-            calls
-                .into_iter()
-                .map(|(site, instance)| (site, ids[instance]))
-                .collect()
-        };
-        Some(GenericTargets { calls, suspendable })
+        Some(plan_linked_calls(&mut module, linked, &suspendable, None)?)
     } else {
         None
     };
@@ -525,6 +545,63 @@ pub fn build_executable_checked(
     output: &Path,
 ) -> Result<(), String> {
     build_executable_verified(program.verified(), output)
+}
+
+pub fn build_executable_linked(
+    linked: &core::CheckedLinkedProgram,
+    output: &Path,
+) -> Result<(), String> {
+    let program = linked.program();
+    let (main, entry) = program
+        .function("main")
+        .ok_or("standalone executable requires `fn main() -> I64`")?;
+    if !entry.blocks[0].params.is_empty() {
+        return Err("standalone `main` must take no parameters".into());
+    }
+    if entry.return_type != Type::I64 {
+        return Err("standalone `main` must return I64".into());
+    }
+    let suspendable = frame_layout::suspendable_functions_linked(linked);
+    if suspendable[main.0] {
+        return Err("linked generic calls in retained native tasks need poll dispatch".into());
+    }
+    let direct = standalone_direct_functions(program, main, &suspendable);
+    if !spawned_poll_children_with_suspendable(program, &direct, &suspendable).is_empty() {
+        return Err("linked generic calls in spawned poll tasks need native poll dispatch".into());
+    }
+    let mut flags = settings::builder();
+    flags
+        .set("use_colocated_libcalls", "false")
+        .map_err(|error| error.to_string())?;
+    flags
+        .set("is_pic", "true")
+        .map_err(|error| error.to_string())?;
+    let isa = native_builder()
+        .map_err(|error| format!("unsupported native host: {error}"))?
+        .finish(settings::Flags::new(flags))
+        .map_err(|error| error.to_string())?;
+    let builder = ObjectBuilder::new(isa, "phoebe", default_libcall_names())
+        .map_err(|error| error.to_string())?;
+    let mut module = ObjectModule::new(builder);
+    let targets = plan_linked_calls(&mut module, linked, &suspendable, Some(&direct))?;
+    compile_functions(
+        &mut module,
+        program,
+        &program.runtime_context_functions(),
+        true,
+        None,
+        Some(&direct),
+        Some(&targets),
+    )?;
+    link_executable(
+        program,
+        &ObjectEmission {
+            root: module.finish().emit().map_err(|error| error.to_string())?,
+            poll_words: None,
+            children: Vec::new(),
+        },
+        output,
+    )
 }
 
 fn build_executable_verified(

@@ -30,6 +30,21 @@ fn run_arguments(rest: &[String]) -> Result<(String, Vec<i64>), String> {
     Ok((name.to_owned(), values))
 }
 
+fn build_arguments(args: impl Iterator<Item = String>) -> Result<(String, Option<String>), String> {
+    let mut output = None;
+    let mut cache_dir = None;
+    let mut args = args;
+    while let Some(option) = args.next() {
+        let value = args.next().ok_or_else(|| usage().to_owned())?;
+        match option.as_str() {
+            "-o" if output.is_none() => output = Some(value),
+            "--cache-dir" if cache_dir.is_none() => cache_dir = Some(value),
+            _ => return Err(usage().into()),
+        }
+    }
+    Ok((output.ok_or_else(|| usage().to_owned())?, cache_dir))
+}
+
 fn command() -> Result<(), String> {
     let mut args = env::args().skip(1);
     let action = args.next().ok_or_else(|| usage().to_owned())?;
@@ -92,25 +107,38 @@ fn command() -> Result<(), String> {
     }
     let mut args = args.collect::<Vec<_>>().into_iter();
     let mut preloaded = None;
-    if action == "run" && !Path::new(&path).is_dir() && !path.ends_with(".toml") {
+    if matches!(action.as_str(), "run" | "build")
+        && !Path::new(&path).is_dir()
+        && !path.ends_with(".toml")
+    {
         let source = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
         let ast = syntax::parse(&source).map_err(|e| format!("{path}:{}", e.render(&source)))?;
         let interpreted = args.clone().any(|arg| arg == "--interp");
-        if interpreted
-            || ast
-                .functions
-                .iter()
-                .any(|function| !function.type_params.is_empty())
-        {
+        let has_generics = ast
+            .functions
+            .iter()
+            .any(|function| !function.type_params.is_empty());
+        if has_generics || (action == "run" && interpreted) {
             let linked = core::lower_linked_checked(&ast)
                 .map_err(|e| format!("{path}:{}", e.render(&source)))?;
-            let (name, values) = run_arguments(&args.collect::<Vec<_>>())?;
-            let result = if interpreted {
-                linked.interpret(&name, &values)?
+            if action == "build" {
+                let (output, cache_dir) = build_arguments(args)?;
+                if cache_dir.is_some() {
+                    return Err(
+                        "linked generic builds do not have a persistent object cache yet".into(),
+                    );
+                }
+                native::build_executable_linked(&linked, Path::new(&output))?;
+                println!("built {output}");
             } else {
-                native::run_linked(&linked, &name, &values)?
-            };
-            println!("{result}");
+                let (name, values) = run_arguments(&args.collect::<Vec<_>>())?;
+                let result = if interpreted {
+                    linked.interpret(&name, &values)?
+                } else {
+                    native::run_linked(&linked, &name, &values)?
+                };
+                println!("{result}");
+            }
             return Ok(());
         }
         preloaded = Some((source, ast));
@@ -214,17 +242,7 @@ fn command() -> Result<(), String> {
             println!("{result}");
         }
         "build" => {
-            let mut output = None;
-            let mut cache_dir = None;
-            while let Some(option) = args.next() {
-                let value = args.next().ok_or_else(|| usage().to_owned())?;
-                match option.as_str() {
-                    "-o" if output.is_none() => output = Some(value),
-                    "--cache-dir" if cache_dir.is_none() => cache_dir = Some(value),
-                    _ => return Err(usage().into()),
-                }
-            }
-            let output = output.ok_or_else(|| usage().to_owned())?;
+            let (output, cache_dir) = build_arguments(args)?;
             if let Some(directory) = cache_dir {
                 let directory = Path::new(&directory);
                 let report = native::build_executable_cached_checked(

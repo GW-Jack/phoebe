@@ -31,6 +31,45 @@ fn linked_source_wide_nominal_generic_result_uses_return_buffer() {
 }
 
 #[test]
+fn linked_source_wide_generic_call_builds_standalone_executable() {
+    let ast = phoebe_syntax::parse(
+        "data Triple { a: I64, b: I64, c: I64 }\nfn identity<T>(x: T) -> T = x\nfn sum(x: Triple) -> I64 = x.a + x.b + x.c\nfn main() -> I64 = sum(identity(Triple(10, 20, 12)))",
+    )
+    .unwrap();
+    let linked = phoebe_core::lower_linked_checked(&ast).unwrap();
+    let directory = std::env::temp_dir().join(format!(
+        "phoebe-linked-object-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let executable = directory.join("linked-test");
+    crate::build_executable_linked(&linked, &executable).unwrap();
+    let run = Command::new(&executable).output().unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(run.stdout, b"42\n");
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn linked_generic_call_transfers_channel_right_in_both_engines() {
+    let ast = phoebe_syntax::parse(
+        "fn identity<T>(x: T) -> T = x\nfn use_right() -> Result<I64, ResourceError> { val (sender, receiver) = channel<I64>(capacity = 1)?; val moved = identity(sender); moved.close(); receiver.close(); Result<I64, ResourceError>.Ok(42) }\nfn main() -> I64 = when (use_right()) { Result<I64, ResourceError>.Ok(value) -> { value }, Result<I64, ResourceError>.Err(error) -> { 0 } }",
+    )
+    .unwrap();
+    let linked = phoebe_core::lower_linked_checked(&ast).unwrap();
+    assert_eq!(linked.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(crate::run_linked(&linked, "main", &[]).unwrap(), 42);
+}
+
+#[test]
 fn generic_identity_and_transitive_call_run_as_native_i64() {
     let generic = source("fn identity<T>(x: T) -> T = x\nfn through<U>(x: U) -> U = identity(x)");
     let concrete = Program {

@@ -1,5 +1,13 @@
 def integration_tests(rust_test):
     rust_test(
+        name = "generic_cli_tests",
+        crate_root = "tests/generic_cli.rs",
+        srcs = ["tests/generic_cli.rs", "examples/generic_call.phoebe"],
+        edition = "2024",
+        env = {"PHOEBE_TEST_COMPILER": "$(location :phoebe)"},
+    )
+
+    rust_test(
         name = "checked_program_tests",
         crate_root = "tests/checked_program.rs",
         srcs = ["tests/checked_program.rs", "examples/hello.phoebe", "examples/channel_exchange.phoebe"],
