@@ -296,7 +296,10 @@ executable. Source now has `request_channel<I64>(capacity)?`,
 JIT, and standalone execution for delivery, closed-send recovery, cleanup,
 resource limits, and a full request queue. The two-request, one-slot example
 retains the second request's nested reply right across a pending send and
-resumes after the first dequeue. Core now
+resumes after the first dequeue. The concrete request runtime adapter now
+stores those messages in the preallocated typed ring and uses its active-right
+transfer and discard plan; existing Core, JIT, and standalone request tests
+exercise that storage path. Core now
 computes static capability leaf paths for acyclic nominal
 products and reserves one ownership slot per leaf in each SSA value. Core
 flow moves all leaves through construction, nominal move, block arguments,

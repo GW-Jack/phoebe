@@ -1,8 +1,8 @@
 # Typed message transfer contract
 
 Status: design obligation for general `channel<T>` messages. The executable
-kernel has separate `I64` and `Request<I64>` queues and a preallocated
-fixed-width queue that can carry multiple `ReplyTo<I64>` rights. This document
+kernel has a scalar `I64` queue and a preallocated fixed-width queue that
+carries `Request<I64>` and other messages containing `ReplyTo<I64>` rights. This document
 defines the bridge from checked Core values to a general bounded queue; it
 does not claim that bridge is implemented or proved.
 
@@ -101,8 +101,11 @@ occupancy so boundedness is preserved.
    invalid rights, and a two-task full queue. Injected precommit allocation
    failure and transfer of channel handles remain open.
 3. Add one checked Core typed send/receive family and lower source
-   `channel<T>` through it. The native ABI passes descriptor identity and
-   flattened words; it never treats a matching word count as type identity.
+   `channel<T>` through it. The existing concrete `Request<I64>` Core and
+   native operations now run through the typed queue via their runtime
+   adapters; general `channel<T>` is still absent. Its native ABI must pass
+   descriptor identity and flattened words, never treating a matching word
+   count as type identity.
 4. Extend the bounded Maude model to cover a two-message queue containing
    differently tagged aggregates. Its finite search is design evidence; an
    explicit refinement argument or independent executable tests are still

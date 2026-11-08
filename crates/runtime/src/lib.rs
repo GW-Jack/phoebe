@@ -114,6 +114,8 @@ impl Token {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ReplyToken(usize);
 
+pub const REQUEST_I64_MESSAGE_TYPE_ID: u64 = 4;
+
 impl ReplyToken {
     /// Encodes a reply right in a flattened native message component.
     pub fn native_word(self) -> Result<i64, String> {
@@ -190,6 +192,17 @@ pub struct OwnedError<T> {
     pub message: String,
     pub resource_error: Option<ResourceError>,
     pub value: T,
+}
+
+fn typed_send_error(
+    message: impl Into<String>,
+    resource_error: Option<ResourceError>,
+) -> OwnedError<()> {
+    OwnedError {
+        message: message.into(),
+        resource_error,
+        value: (),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -358,14 +371,7 @@ enum HandleKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChannelKind {
     Scalar,
-    Request,
     Typed,
-}
-
-#[derive(Debug)]
-enum Message {
-    Scalar(i64),
-    Request(Request),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -395,7 +401,7 @@ struct Handle {
 }
 
 struct Channel {
-    queue: VecDeque<Message>,
+    queue: VecDeque<i64>,
     typed: Option<TypedQueue>,
     kind: ChannelKind,
     capacity: usize,
@@ -597,7 +603,7 @@ impl Scheduler {
                         && typed.capacity() == channel.capacity
                         && channel.queue.is_empty()
                 }
-                (ChannelKind::Scalar | ChannelKind::Request, None) => true,
+                (ChannelKind::Scalar, None) => true,
                 _ => false,
             };
             if channel.capacity == 0
@@ -609,22 +615,6 @@ impl Scheduler {
                 || (channel.receivers == 0 && (!channel.queue.is_empty() || typed_len != 0))
             {
                 return Err(format!("channel {index} violates bounded ownership"));
-            }
-            for message in &channel.queue {
-                match message {
-                    Message::Scalar(_) if channel.kind == ChannelKind::Scalar => {}
-                    Message::Request(request) if channel.kind == ChannelKind::Request => {
-                        let right = self
-                            .reply_rights
-                            .get(request.reply.token.0)
-                            .ok_or("queued request has invalid reply token")?;
-                        if right.owner != ReplyOwner::Queue(index) {
-                            return Err("queued request does not own its reply right".into());
-                        }
-                        queued_rights[request.reply.token.0] += 1;
-                    }
-                    _ => return Err("channel contains wrong message shape".into()),
-                }
             }
             if let Some(typed) = &channel.typed {
                 typed.visit_queued_rights(|token| {
@@ -868,14 +858,8 @@ impl Scheduler {
             HandleKind::Receiver => {
                 self.channels[channel].receivers -= 1;
                 if self.channels[channel].receivers == 0 {
-                    while let Some(message) = self.channels[channel].queue.pop_front() {
+                    while self.channels[channel].queue.pop_front().is_some() {
                         self.stats.discarded_messages += 1;
-                        if let Message::Request(request) = message {
-                            self.close_reply_right(
-                                request.reply.token,
-                                ReplyOwner::Queue(channel),
-                            )?;
-                        }
                     }
                     while self.channels[channel]
                         .typed
@@ -1219,7 +1203,11 @@ impl Context<'_> {
                 });
             }
         };
-        if self.scheduler.channels[channel].kind != ChannelKind::Request {
+        let typed_request = self.scheduler.channels[channel]
+            .typed
+            .as_ref()
+            .is_some_and(TypedQueue::matches_request_i64);
+        if !typed_request {
             return Err(OwnedError {
                 message: "request send requires a request channel".into(),
                 resource_error: None,
@@ -1243,78 +1231,55 @@ impl Context<'_> {
                 value: request,
             });
         }
-        if self.scheduler.channels[channel].receivers == 0 {
-            return Ok(RequestSendResult::Closed(request));
-        }
-        if self.scheduler.channels[channel].queue.len() == self.scheduler.channels[channel].capacity
-        {
-            if self.wait.is_some() {
+        let reply_word = match u64::try_from(request.reply.token.0) {
+            Ok(word) => word,
+            Err(_) => {
                 return Err(OwnedError {
-                    message: "task already registered a wait in this poll".into(),
+                    message: "reply token exceeds typed message word".into(),
                     resource_error: None,
                     value: request,
                 });
             }
-            if let Err(error) = self.scheduler.channels[channel].send_waiters.try_reserve(1) {
-                return Err(OwnedError {
-                    message: error.to_string(),
-                    resource_error: Some(ResourceError::Allocation),
-                    value: request,
-                });
-            }
-            self.scheduler.channels[channel]
-                .send_waiters
-                .push_back(self.task);
-            self.wait = Some(Wait::Send(channel));
-            return Ok(RequestSendResult::Pending(request));
+        };
+        let words = [request.value as u64, reply_word];
+        match self.send_typed_words_owned(sender, REQUEST_I64_MESSAGE_TYPE_ID, &words) {
+            Ok(TypedSendResult::Sent) => Ok(RequestSendResult::Sent),
+            Ok(TypedSendResult::Pending) => Ok(RequestSendResult::Pending(request)),
+            Ok(TypedSendResult::Closed) => Ok(RequestSendResult::Closed(request)),
+            Err(error) => Err(OwnedError {
+                message: error.message,
+                resource_error: error.resource_error,
+                value: request,
+            }),
         }
-        self.scheduler.reply_rights[request.reply.token.0].owner = ReplyOwner::Queue(channel);
-        self.scheduler.channels[channel]
-            .queue
-            .push_back(Message::Request(request));
-        self.scheduler.stats.max_queued = self
-            .scheduler
-            .stats
-            .max_queued
-            .max(self.scheduler.channels[channel].queue.len());
-        self.scheduler.wake_one(channel, false);
-        Ok(RequestSendResult::Sent)
     }
 
     pub fn receive_request(&mut self, receiver: &Receiver) -> Result<RequestReceiveResult, String> {
         let channel =
             self.scheduler
                 .check_handle(self.task, receiver.token, HandleKind::Receiver)?;
-        if self.scheduler.channels[channel].kind != ChannelKind::Request {
+        if !self.scheduler.channels[channel]
+            .typed
+            .as_ref()
+            .is_some_and(TypedQueue::matches_request_i64)
+        {
             return Err("request receive requires a request channel".into());
         }
-        if let Some(message) = self.scheduler.channels[channel].queue.pop_front() {
-            let Message::Request(request) = message else {
-                unreachable!("typed request channel")
-            };
-            let right = &mut self.scheduler.reply_rights[request.reply.token.0];
-            if right.owner != ReplyOwner::Queue(channel) {
-                return Err("queued reply ownership mismatch".into());
+        let mut words = [0; 2];
+        match self.receive_typed_words(receiver, REQUEST_I64_MESSAGE_TYPE_ID, &mut words)? {
+            TypedReceiveResult::Value => {
+                let token = usize::try_from(words[1])
+                    .map_err(|_| "queued request reply token exceeds host width")?;
+                Ok(RequestReceiveResult::Value(Request {
+                    value: words[0] as i64,
+                    reply: ReplyTo {
+                        token: ReplyToken(token),
+                    },
+                }))
             }
-            right.owner = ReplyOwner::Task(self.task);
-            self.scheduler.wake_one(channel, true);
-            return Ok(RequestReceiveResult::Value(request));
+            TypedReceiveResult::Pending => Ok(RequestReceiveResult::Pending),
+            TypedReceiveResult::End => Ok(RequestReceiveResult::End),
         }
-        if self.scheduler.channels[channel].senders == 0 {
-            return Ok(RequestReceiveResult::End);
-        }
-        if self.wait.is_some() {
-            return Err("task already registered a wait in this poll".into());
-        }
-        self.scheduler.channels[channel]
-            .receive_waiters
-            .try_reserve(1)
-            .map_err(|error| error.to_string())?;
-        self.scheduler.channels[channel]
-            .receive_waiters
-            .push_back(self.task);
-        self.wait = Some(Wait::Receive(channel));
-        Ok(RequestReceiveResult::Pending)
     }
 
     pub fn yield_now(&mut self) -> Result<(), String> {
@@ -1357,7 +1322,12 @@ impl Context<'_> {
         &mut self,
         capacity: usize,
     ) -> Result<(Sender, Receiver), ResourceError> {
-        self.create_channel(capacity, ChannelKind::Request, None)
+        self.typed_right_channel(
+            capacity,
+            REQUEST_I64_MESSAGE_TYPE_ID,
+            2,
+            TypedRightPlan::ReplyTo { part: 1 },
+        )
     }
 
     /// Create a channel for a concrete, capability-free flattened type. The
@@ -1418,7 +1388,7 @@ impl Context<'_> {
                     TypedQueue::with_plan(type_id, width, capacity, plan)?
                 })
             }
-            None if kind != ChannelKind::Typed => None,
+            None if kind == ChannelKind::Scalar => None,
             _ => return Err(ResourceError::InvalidChannelCapacity),
         };
         let mut queue = VecDeque::new();
@@ -1679,9 +1649,7 @@ impl Context<'_> {
             self.wait = Some(Wait::Send(channel));
             return Ok(SendResult::Pending(message));
         }
-        self.scheduler.channels[channel]
-            .queue
-            .push_back(Message::Scalar(message));
+        self.scheduler.channels[channel].queue.push_back(message);
         self.scheduler.stats.max_queued = self
             .scheduler
             .stats
@@ -1700,27 +1668,46 @@ impl Context<'_> {
         type_id: u64,
         words: &[u64],
     ) -> Result<TypedSendResult, String> {
+        self.send_typed_words_owned(sender, type_id, words)
+            .map_err(|error| error.message)
+    }
+
+    fn send_typed_words_owned(
+        &mut self,
+        sender: &Sender,
+        type_id: u64,
+        words: &[u64],
+    ) -> Result<TypedSendResult, OwnedError<()>> {
         let channel = self
             .scheduler
-            .check_handle(self.task, sender.token, HandleKind::Sender)?;
+            .check_handle(self.task, sender.token, HandleKind::Sender)
+            .map_err(|message| typed_send_error(message, None))?;
         let typed = self.scheduler.channels[channel]
             .typed
             .as_ref()
-            .ok_or("typed send requires a typed channel")?;
+            .ok_or_else(|| typed_send_error("typed send requires a typed channel", None))?;
         if !typed.matches(type_id, words.len()) {
-            return Err("typed message identity or width mismatch".into());
+            return Err(typed_send_error(
+                "typed message identity or width mismatch",
+                None,
+            ));
         }
         if self.scheduler.channels[channel].receivers == 0 {
             return Ok(TypedSendResult::Closed);
         }
         if typed.is_full() {
             if self.wait.is_some() {
-                return Err("task already registered a wait in this poll".into());
+                return Err(typed_send_error(
+                    "task already registered a wait in this poll",
+                    None,
+                ));
             }
             self.scheduler.channels[channel]
                 .send_waiters
                 .try_reserve(1)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| {
+                    typed_send_error(error.to_string(), Some(ResourceError::Allocation))
+                })?;
             self.scheduler.channels[channel]
                 .send_waiters
                 .push_back(self.task);
@@ -1732,7 +1719,9 @@ impl Context<'_> {
                 .typed
                 .as_mut()
                 .expect("checked typed channel");
-            let rights = typed.collect_send_rights(words)?;
+            let rights = typed
+                .collect_send_rights(words)
+                .map_err(|message| typed_send_error(message, None))?;
             for token in rights {
                 if self
                     .scheduler
@@ -1741,7 +1730,10 @@ impl Context<'_> {
                     .map(|right| right.owner)
                     != Some(ReplyOwner::Task(self.task))
                 {
-                    return Err("typed reply right is closed or owned elsewhere".into());
+                    return Err(typed_send_error(
+                        "typed reply right is closed or owned elsewhere",
+                        None,
+                    ));
                 }
             }
             rights.len()
@@ -1836,10 +1828,7 @@ impl Context<'_> {
         if self.scheduler.channels[channel].kind != ChannelKind::Scalar {
             return Err("scalar receive requires an I64 channel".into());
         }
-        if let Some(message) = self.scheduler.channels[channel].queue.pop_front() {
-            let Message::Scalar(value) = message else {
-                unreachable!("typed channel queue")
-            };
+        if let Some(value) = self.scheduler.channels[channel].queue.pop_front() {
             self.scheduler.wake_one(channel, true);
             return Ok(ReceiveResult::Value(value));
         }

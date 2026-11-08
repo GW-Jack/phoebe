@@ -511,3 +511,70 @@ fn typed_reply_right_moves_from_parent_queue_to_child() {
     }
     scheduler.verify().unwrap();
 }
+
+#[test]
+fn request_adapter_uses_typed_queue_and_rejects_wrong_same_width_plan() {
+    use super::super::{
+        ChannelKind, Context, Request, RequestReceiveResult, RequestSendResult, Scheduler, TaskId,
+    };
+
+    let mut scheduler = Scheduler::new(Idle, 1, 2, 2).unwrap();
+    {
+        let mut context = Context {
+            scheduler: &mut scheduler,
+            task: TaskId(0),
+            wait: None,
+        };
+        let (wrong_sender, wrong_receiver) = context
+            .typed_words_channel(1, super::super::REQUEST_I64_MESSAGE_TYPE_ID, 2)
+            .unwrap();
+        let (wrong_right, wrong_reply_receiver) = context.reply().unwrap();
+        let token = wrong_right.token();
+        let error = context
+            .send_request_owned(
+                &wrong_sender,
+                Request {
+                    value: 1,
+                    reply: wrong_right,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.value.reply.token(), token);
+        context.close_reply_to(error.value.reply).unwrap();
+        context.cancel_reply(wrong_reply_receiver).unwrap();
+        context.close_sender(wrong_sender).unwrap();
+        context.close_receiver(wrong_receiver).unwrap();
+
+        let (sender, receiver) = context.request_channel_typed(1).unwrap();
+        let channel = context.scheduler.handles[sender.token().0].channel;
+        assert_eq!(context.scheduler.channels[channel].kind, ChannelKind::Typed);
+        assert!(
+            context.scheduler.channels[channel]
+                .typed
+                .as_ref()
+                .unwrap()
+                .matches_request_i64()
+        );
+        let (right, reply_receiver) = context.reply().unwrap();
+        assert!(matches!(
+            context.send_request_owned(
+                &sender,
+                Request {
+                    value: -5,
+                    reply: right
+                }
+            ),
+            Ok(RequestSendResult::Sent)
+        ));
+        let request = match context.receive_request(&receiver).unwrap() {
+            RequestReceiveResult::Value(request) => request,
+            _ => panic!("request channel must yield its queued message"),
+        };
+        assert_eq!(request.value, -5);
+        context.close_reply_to(request.reply).unwrap();
+        context.cancel_reply(reply_receiver).unwrap();
+        context.close_sender(sender).unwrap();
+        context.close_receiver(receiver).unwrap();
+    }
+    scheduler.verify().unwrap();
+}

@@ -1,6 +1,6 @@
 //! Preallocated fixed-width FIFO storage for concrete channel messages.
 
-use super::{ReplyToken, ResourceError};
+use super::{REQUEST_I64_MESSAGE_TYPE_ID, ReplyToken, ResourceError};
 
 /// Runtime ownership path for the first transferable typed-message right.
 /// The compiler will derive this from the ABI close plan. Closed messages use
@@ -125,6 +125,11 @@ impl TypedQueue {
 
     pub(super) fn matches(&self, type_id: u64, width: usize) -> bool {
         self.type_id == type_id && self.width == width
+    }
+
+    pub(super) fn matches_request_i64(&self) -> bool {
+        self.matches(REQUEST_I64_MESSAGE_TYPE_ID, 2)
+            && self.plan == TypedRightPlan::ReplyTo { part: 1 }
     }
 
     pub(super) fn len(&self) -> usize {

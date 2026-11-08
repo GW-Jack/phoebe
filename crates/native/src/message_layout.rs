@@ -3,7 +3,7 @@
 
 use phoebe_abi::{ClosePlan, MessageLayout};
 use phoebe_core::{DataId, Type};
-use phoebe_runtime::TypedRightPlan;
+use phoebe_runtime::{REQUEST_I64_MESSAGE_TYPE_ID, TypedRightPlan};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeMessageDescriptor {
@@ -20,7 +20,7 @@ fn type_id(ty: Type) -> Result<u64, String> {
         Type::I64 => Ok(1),
         Type::Bool => Ok(2),
         Type::Unit => Ok(3),
-        Type::RequestI64 => Ok(4),
+        Type::RequestI64 => Ok(REQUEST_I64_MESSAGE_TYPE_ID),
         Type::ReplyToI64 => Ok(5),
         Type::ResourceError => Ok(6),
         Type::Data(DataId(id)) => {
