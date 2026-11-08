@@ -142,7 +142,7 @@ fn mutable_places_and_loop_backedges_agree() {
     let program = compile(
         "fn sum_to(n: I64) -> I64 { var i = 0; var total = 0; while (i < n) { total = total + i; i = i + 1; } total }",
     );
-    assert_eq!(program.functions[0].place_types.len(), 2);
+    assert_eq!(program.functions[0].place_types.len(), 3);
     for (n, expected) in [(0, 0), (1, 0), (10, 45), (-4, 0)] {
         assert_eq!(program.interpret("sum_to", &[n]).unwrap(), expected);
         assert_eq!(native::run(&program, "sum_to", &[n]).unwrap(), expected);

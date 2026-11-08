@@ -20,7 +20,7 @@ memory instructions:
 | `check.bounds` | Check an index against a collection length | Indexed access and the absence of a range proof |
 | `task.create` | Create a child task and retained frame | Executed `spawn` |
 | `task.park` | Yield a task waiting for a channel or scope | Blocking operation that was not immediately ready |
-| `task.yield` | Voluntarily requeue the current task | Explicit source `yield;` |
+| `task.yield` | Requeue the current task | Explicit source `yield;` or a budgeted `while` backedge |
 | `channel.op` | Create, fork, send, receive, or close a channel capability | Corresponding source operation |
 | `call.indirect` | Call through a dynamic function value or generic trait dictionary | Source-level dynamic call or trait bound |
 
@@ -36,7 +36,7 @@ proposed proof boundary and its limits.
 These are logical events, not exact counts of memory instructions. A
 `copy.value` may be carried entirely in registers. The current executable
 compiler emits this event for explicit nominal copies and emits `task.yield`
-for explicit yields. Its static site ledger is available with
+for explicit yields and automatic loop checkpoints. Its static site ledger is available with
 `phoebe cost <file>`; it does not count dynamic executions.
 A `storage.grow` may reuse a reserved task-local page without an OS allocation.
 A `channel.op` may take a fast path without parking. A backend may emit several
@@ -66,8 +66,12 @@ instructions for one event or eliminate instructions when semantics allow it.
 5. Bounds checks remain where the index is not proven valid. Phoebe performs
    cheap, local range reasoning while region and collection facts are still
    visible; it does not require an SMT solver on the normal compile path.
-6. Ordinary functions use direct native calls. Only functions that may block
-   or explicitly yield need retained task state. An empty scope requires no
+6. Ordinary functions use direct native calls. Functions that may block or
+   reach a loop checkpoint need retained task state. Each source `while`
+   currently checks a loop-local budget and yields after 1,024 completed
+   backedges, including in a single-task program. This is a visible runtime
+   cost required by the current fairness rule, and the single-task overhead
+   needs measurement. An empty scope without a loop requires no
    scheduler operation. A standalone build emits only functions reachable
    from `main`; dead source functions are still checked but do not bring
    runtime objects or a runtime entry wrapper into the binary.
@@ -115,7 +119,7 @@ operation and is necessary under the initial task-local ownership model.
 
 The executable compiler emits a tab-separated static cost-site ledger on
 demand with `phoebe cost <file>`. It currently records `copy.value` and
-`task.yield`.
+`task.yield`, with a distinct reason for an automatic loop checkpoint.
 The development compiler should extend it to the remaining event kinds.
 Acceptance tests compare it with these fixtures. An IR verifier checks
 provenance and forbidden operations in tests and debug builds. Proofs of core

@@ -148,6 +148,7 @@ pub enum Terminator {
     Yield {
         resume: BlockId,
         span: Span,
+        automatic: bool,
     },
     Jump(BlockId, Vec<ValueId>),
     Branch {

@@ -469,6 +469,7 @@ impl<'a> Lowerer<'a> {
                     self.terminate(Terminator::Yield {
                         resume,
                         span: *span,
+                        automatic: false,
                     });
                     self.current = resume;
                 }
@@ -562,6 +563,15 @@ impl<'a> Lowerer<'a> {
                             "while body cannot end in a value expression; add a semicolon",
                         ));
                     }
+                    // A task running a pure CPU loop must eventually give the
+                    // scheduler a chance to observe cancellation and run its
+                    // siblings. Keep the budget local to this loop so nested
+                    // loops do not reset each other's progress.
+                    const BACKEDGE_BUDGET: i64 = 1024;
+                    let budget = self.place(Type::I64);
+                    let initial =
+                        self.emit(Operation::Const(BACKEDGE_BUDGET), Type::I64, condition.span);
+                    self.emit_effect(Operation::PlaceInit(budget, initial), condition.span);
                     let head = self.block();
                     let body_block = self.block();
                     let exit = self.block();
@@ -576,7 +586,27 @@ impl<'a> Lowerer<'a> {
                     });
                     self.current = body_block;
                     self.body(loop_body, &mut locals.clone())?;
-                    self.terminate(Terminator::Jump(head, vec![]));
+                    let remaining = self.emit(Operation::Load(budget), Type::I64, condition.span);
+                    let one = self.emit(Operation::Const(1), Type::I64, condition.span);
+                    let next = self.emit(Operation::Sub(remaining, one), Type::I64, condition.span);
+                    self.emit_effect(Operation::Store(budget, next), condition.span);
+                    let zero = self.emit(Operation::Const(0), Type::I64, condition.span);
+                    let due = self.emit(Operation::Eq(next, zero), Type::Bool, condition.span);
+                    let checkpoint = self.block();
+                    self.terminate(Terminator::Branch {
+                        condition: due,
+                        then_block: checkpoint,
+                        else_block: head,
+                    });
+                    self.current = checkpoint;
+                    let reset =
+                        self.emit(Operation::Const(BACKEDGE_BUDGET), Type::I64, condition.span);
+                    self.emit_effect(Operation::Store(budget, reset), condition.span);
+                    self.terminate(Terminator::Yield {
+                        resume: head,
+                        span: condition.span,
+                        automatic: true,
+                    });
                     self.current = exit;
                 }
                 Statement::Expr(expr) => {

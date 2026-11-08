@@ -546,6 +546,7 @@ fn request_service_parks_then_completes_parent_reply() {
                 Terminator::Yield {
                     resume: BlockId(11),
                     span: Span { start: 0, end: 0 },
+                    automatic: false,
                 },
             ),
             block(

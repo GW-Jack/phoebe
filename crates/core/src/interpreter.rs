@@ -24,7 +24,10 @@ impl Program {
                         reason: "explicit",
                     });
                 }
-                if let Terminator::Yield { span, .. } = block.terminator {
+                if let Terminator::Yield {
+                    span, automatic, ..
+                } = block.terminator
+                {
                     events.push(CostEvent {
                         function: function.name.clone(),
                         block: block_id,
@@ -32,7 +35,11 @@ impl Program {
                         span,
                         kind: "task.yield",
                         type_name: "Task".into(),
-                        reason: "explicit",
+                        reason: if automatic {
+                            "loop backedge"
+                        } else {
+                            "explicit"
+                        },
                     });
                 }
             }
@@ -832,8 +839,11 @@ impl fmt::Display for Program {
                     writeln!(f, "  @{}..{}", instruction.span.start, instruction.span.end)?;
                 }
                 match &block.terminator {
-                    Terminator::Yield { resume, .. } => {
-                        writeln!(f, "    yield resume block{}", resume.0)?
+                    Terminator::Yield {
+                        resume, automatic, ..
+                    } => {
+                        let name = if *automatic { "yield.auto" } else { "yield" };
+                        writeln!(f, "    {name} resume block{}", resume.0)?
                     }
                     Terminator::Return(value) => writeln!(f, "    return v{}", value.0)?,
                     Terminator::Jump(target, args) => {

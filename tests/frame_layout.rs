@@ -105,9 +105,11 @@ fn main() -> I64 = 0
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
     let frames = frame_layout::analyze(&program).unwrap();
     assert_eq!(frames.len(), 1);
-    assert_eq!(frames[0].points.len(), 1);
-    assert!(frames[0].points[0].values.contains(&ValueId(0)));
-    assert_eq!(frames[0].points[0].places, vec![PlaceId(0)]);
+    assert_eq!(frames[0].points.len(), 2);
+    for point in &frames[0].points {
+        assert!(point.values.contains(&ValueId(0)));
+        assert_eq!(point.places, vec![PlaceId(0), PlaceId(1)]);
+    }
 }
 
 #[test]

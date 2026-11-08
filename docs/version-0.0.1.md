@@ -271,8 +271,17 @@ Source `yield;` is an explicit cooperative checkpoint. Core records a typed
 resume edge and a source-spanned `task.yield` cost site. The interpreter and
 native poll backend requeue the task, retaining live places and capabilities;
 the standalone build uses the same runtime ABI. `examples/yield_loop.phoebe`
-has 42 executed yields from one static site. Automatic checkpoints on
-CPU-heavy backedges remain open.
+has 42 executed explicit yields from one static site. Every source `while`
+now also receives a loop-local countdown and an automatic checkpoint after
+each 1,024 completed backedges. The cost report distinguishes the automatic
+site from an explicit `yield`; the Core IR shows the counter and resume edge.
+A 2,500-iteration loop executes two automatic yields in the native scheduler,
+and interpreter, JIT, and standalone results agree. A two-child test also
+shows a quick sender overtaking a CPU-bound sibling after its checkpoint.
+This bounds uninterrupted
+iterations of a `while` body, but does not bound the work inside one body or
+prove cancellation latency in wall-clock time. The counter and retained-frame
+cost have not yet been measured against a non-checkpointed build.
 
 ## Commands
 
