@@ -1,0 +1,12 @@
+fn identity<T>(value: T) -> T = value
+
+fn choose<T>(flag: Bool, value: T) -> T = if (flag) {
+  value
+} else {
+  value
+}
+
+fn forward<T>(value: T) -> T {
+  val next = value;
+  next
+}

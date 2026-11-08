@@ -406,6 +406,7 @@ dependencies = [
  "phoebe-capability",
  "phoebe-core",
  "phoebe-frame",
+ "phoebe-generic-core",
  "phoebe-native",
  "phoebe-package",
  "phoebe-project",
@@ -446,6 +447,7 @@ name = "phoebe-generic-core"
 version = "0.0.1"
 dependencies = [
  "phoebe-capability",
+ "phoebe-syntax",
 ]
 
 [[package]]

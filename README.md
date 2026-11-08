@@ -59,7 +59,9 @@ native poll ABI work.
 shapes. `docs/generic-core.md` explains the additional proof and ABI work
 needed before generic functions can share native bodies by shape.
 The isolated `phoebe-generic-core` crate now verifies a first opaque-owner
-IR slice; generic source functions are still unimplemented.
+IR slice. `phoebe generic-ir <file>` lowers identity and simple forwarding
+definitions into printable parametric Core; generic calls and native emission
+are still unimplemented.
 
 Build and run the compiler with Buck2:
 
@@ -78,6 +80,7 @@ buck2 run //:phoebe -- run examples/capability_product.phoebe
 buck2 run //:phoebe -- run examples/with_product.phoebe
 buck2 run //:phoebe -- run examples/multi_module
 buck2 run //:phoebe -- shapes examples/product.phoebe
+buck2 run //:phoebe -- generic-ir examples/generic_identity.phoebe
 buck2 run //:phoebe -- build examples/channel_exchange.phoebe -o /tmp/phoebe-exchange
 /tmp/phoebe-exchange
 buck2 test //...

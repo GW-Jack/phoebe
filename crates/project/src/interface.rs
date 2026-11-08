@@ -1,6 +1,6 @@
 //! Exact source-level interface used to decide whether importers must rebuild.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use phoebe_syntax::syntax::{self, ParamMode, TypeName};
 use sha2::{Digest, Sha256};
@@ -22,6 +22,7 @@ pub struct DataInterface {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionInterface {
     pub name: String,
+    pub type_params: Vec<String>,
     pub params: Vec<(ParamMode, TypeName)>,
     pub return_type: TypeName,
 }
@@ -38,7 +39,7 @@ impl ModuleInterface {
             length(bytes, value.len());
             bytes.extend_from_slice(value.as_bytes());
         }
-        fn ty(bytes: &mut Vec<u8>, value: &TypeName) {
+        fn ty(bytes: &mut Vec<u8>, value: &TypeName, binders: &HashMap<&str, usize>) {
             match value {
                 TypeName::I64 => bytes.push(0),
                 TypeName::Bool => bytes.push(1),
@@ -50,22 +51,29 @@ impl ModuleInterface {
                 TypeName::RequestI64 => bytes.push(6),
                 TypeName::RequestSenderI64 => bytes.push(7),
                 TypeName::RequestReceiverI64 => bytes.push(8),
-                TypeName::Named(value) => {
-                    bytes.push(9);
-                    name(bytes, value);
-                }
+                TypeName::Named(value) => match binders.get(value.as_str()) {
+                    Some(index) => {
+                        bytes.push(13);
+                        length(bytes, *index);
+                    }
+                    None => {
+                        bytes.push(9);
+                        name(bytes, value);
+                    }
+                },
                 TypeName::Result(ok, err) => {
                     bytes.push(10);
-                    ty(bytes, ok);
-                    ty(bytes, err);
+                    ty(bytes, ok, binders);
+                    ty(bytes, err, binders);
                 }
                 TypeName::Option(value) => {
                     bytes.push(11);
-                    ty(bytes, value);
+                    ty(bytes, value, binders);
                 }
             }
         }
-        let mut bytes = b"PHOEBE-INTERFACE\0\x01".to_vec();
+        let mut bytes = b"PHOEBE-INTERFACE\0\x02".to_vec();
+        let no_binders = HashMap::new();
         name(&mut bytes, &self.name);
         length(&mut bytes, self.data.len());
         for data in &self.data {
@@ -77,7 +85,7 @@ impl ModuleInterface {
                     Some((field, field_ty)) => {
                         bytes.push(1);
                         name(&mut bytes, field);
-                        ty(&mut bytes, field_ty);
+                        ty(&mut bytes, field_ty, &no_binders);
                     }
                     None => bytes.push(0),
                 }
@@ -85,12 +93,19 @@ impl ModuleInterface {
             length(&mut bytes, data.fields.len());
             for (field, field_ty) in &data.fields {
                 name(&mut bytes, field);
-                ty(&mut bytes, field_ty);
+                ty(&mut bytes, field_ty, &no_binders);
             }
         }
         length(&mut bytes, self.functions.len());
         for function in &self.functions {
             name(&mut bytes, &function.name);
+            length(&mut bytes, function.type_params.len());
+            let binders = function
+                .type_params
+                .iter()
+                .enumerate()
+                .map(|(index, name)| (name.as_str(), index))
+                .collect::<HashMap<_, _>>();
             length(&mut bytes, function.params.len());
             for (mode, param_ty) in &function.params {
                 bytes.push(match mode {
@@ -98,9 +113,9 @@ impl ModuleInterface {
                     ParamMode::Shared => 1,
                     ParamMode::Exclusive => 2,
                 });
-                ty(&mut bytes, param_ty);
+                ty(&mut bytes, param_ty, &binders);
             }
-            ty(&mut bytes, &function.return_type);
+            ty(&mut bytes, &function.return_type, &binders);
         }
         bytes
     }
@@ -135,10 +150,15 @@ pub(super) fn from_program(name: &str, program: &syntax::Program) -> ModuleInter
         .map(|data| data.name.clone())
         .collect::<HashSet<_>>();
     for function in program.functions.iter().filter(|function| function.public) {
+        let mut function_types = HashSet::new();
         for param in &function.params {
-            collect_type(&param.ty, &mut needed);
+            collect_type(&param.ty, &mut function_types);
         }
-        collect_type(&function.return_type, &mut needed);
+        collect_type(&function.return_type, &mut function_types);
+        for (param, _) in &function.type_params {
+            function_types.remove(param);
+        }
+        needed.extend(function_types);
     }
     loop {
         let before = needed.len();
@@ -193,6 +213,11 @@ pub(super) fn from_program(name: &str, program: &syntax::Program) -> ModuleInter
             .filter(|function| function.public)
             .map(|function| FunctionInterface {
                 name: function.name.clone(),
+                type_params: function
+                    .type_params
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect(),
                 params: function
                     .params
                     .iter()
@@ -255,6 +280,7 @@ mod tests {
             data: vec![],
             functions: vec![FunctionInterface {
                 name: "c".into(),
+                type_params: vec![],
                 params: vec![],
                 return_type: TypeName::I64,
             }],
@@ -264,11 +290,22 @@ mod tests {
             data: vec![],
             functions: vec![FunctionInterface {
                 name: "bc".into(),
+                type_params: vec![],
                 params: vec![],
                 return_type: TypeName::I64,
             }],
         };
         assert_ne!(a.canonical_bytes(), b.canonical_bytes());
         assert_ne!(a.fingerprint(), b.fingerprint());
+    }
+
+    #[test]
+    fn public_generic_binders_are_alpha_normalized_but_arity_is_tracked() {
+        let before = interface("pub fn identity<T>(value: T) -> T = value");
+        let renamed = interface("pub fn identity<U>(value: U) -> U = value");
+        assert_eq!(before.fingerprint(), renamed.fingerprint());
+        assert_eq!(before.data, renamed.data);
+        let expanded = interface("pub fn identity<T, U>(value: U) -> U = value");
+        assert_ne!(before.fingerprint(), expanded.fingerprint());
     }
 }

@@ -250,6 +250,12 @@ pub fn same_function_with_shift(
     previous.name == current.name
         && previous.public == current.public
         && span(previous.name_span, current.name_span, delta)
+        && previous.type_params.len() == current.type_params.len()
+        && previous
+            .type_params
+            .iter()
+            .zip(&current.type_params)
+            .all(|((a, a_span), (b, b_span))| a == b && span(*a_span, *b_span, delta))
         && previous.return_type == current.return_type
         && previous.params.len() == current.params.len()
         && previous.params.iter().zip(&current.params).all(|(a, b)| {

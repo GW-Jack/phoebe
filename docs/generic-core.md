@@ -2,8 +2,10 @@
 
 Status: implementation contract with an executable first verifier slice in
 `crates/generic-core`. It checks opaque owners, moves, branch arguments, and
-returns without choosing a concrete type or ABI shape. Generic source
-definitions, dictionary operations, and native emission are not yet accepted.
+returns without choosing a concrete type or ABI shape. Source functions with
+explicit type binders can lower identity, `val` moves, and simple `if`
+forwarding into this IR through `phoebe generic-ir <file>`. Calls,
+dictionaries, and native emission are not yet accepted.
 
 ## The sharing rule
 
@@ -73,9 +75,10 @@ including the active tag of a sum; a trait entry carries its callable target
 and an explicit ownership signature. Dictionary layout is versioned and
 included in the body key. No dictionary is consulted for a plain move.
 
-Source interfaces record generic binders, bounds, parameter modes, and type
-terms. Their canonical encoding includes binder order but excludes local
-parameter spelling and source spans. The generic body hash is separate from
+Source interfaces now record generic binders, parameter modes, and type
+terms. Their canonical encoding includes binder order but excludes binder
+spelling, local parameter spelling, and source spans. Bounds will join that
+encoding when implemented. The generic body hash is separate from
 the public interface hash: changing a private implementation can rebuild its
 native body without forcing downstream type checking when the interface is
 unchanged. A native cache key includes the normalized body, transport and

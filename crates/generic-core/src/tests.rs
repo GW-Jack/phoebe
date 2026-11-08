@@ -165,3 +165,53 @@ fn malformed_type_binder_and_unreachable_block_are_rejected() {
             .contains("unreachable block")
     );
 }
+
+#[test]
+fn source_identity_and_branch_lower_to_checked_parametric_core() {
+    let source = r#"
+fn identity<T>(x: T) -> T = x
+fn choose<T>(flag: Bool, value: T) -> T = if (flag) { value } else { value }
+fn forwarded<T>(value: T) -> T {
+  val next = value;
+  next
+}
+"#;
+    let ast = phoebe_syntax::parse(source).unwrap();
+    let shifted = phoebe_syntax::parse(&format!("\n{source}")).unwrap();
+    assert!(phoebe_syntax::same_function_with_shift(
+        &ast.functions[0],
+        &shifted.functions[0],
+        1,
+    ));
+    assert_eq!(ast.functions.len(), 3);
+    for function in &ast.functions {
+        let lowered = crate::lower(function).unwrap();
+        verify(&lowered).unwrap();
+        assert_eq!(lowered.type_params, 1);
+        assert!(lowered.to_string().contains("-> T0 {"));
+    }
+    assert_eq!(crate::lower(&ast.functions[1]).unwrap().blocks.len(), 3);
+    assert!(
+        crate::lower(&ast.functions[1])
+            .unwrap()
+            .to_string()
+            .contains("branch v0 ? b1(v1) : b2(v1)")
+    );
+}
+
+#[test]
+fn source_generic_copy_and_unsupported_operations_get_spans() {
+    for (source, message) in [
+        (
+            "fn bad<T>(x: T) -> T { val y = copy(x); y }",
+            "cannot be copied",
+        ),
+        ("fn bad<T>(x: T) -> T = x.sender", "not implemented yet"),
+        ("fn bad<T>(x: T) -> T { val y = x; x }", "not live"),
+    ] {
+        let ast = phoebe_syntax::parse(source).unwrap();
+        let error = crate::lower(&ast.functions[0]).unwrap_err();
+        assert!(error.message.contains(message), "{error:?}");
+        assert!(error.span.end > error.span.start, "{error:?}");
+    }
+}

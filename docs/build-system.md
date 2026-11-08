@@ -5,8 +5,9 @@ one direction:
 
 `package` and `syntax` feed `project`. `syntax`, `capability`, and `runtime`
 feed `core`; `core` feeds `abi` and `frame`; `abi`, `core`, `frame`, `runtime`,
-and `syntax` feed `native`. `capability` also feeds the isolated
-`generic-core` verifier. The root facade and CLI sit atop this graph.
+and `syntax` feed `native`. `capability` and `syntax` feed the isolated
+`generic-core` verifier and source subset lowerer. The root facade and CLI
+sit atop this graph.
 
 - `phoebe-syntax`: spans, diagnostics, lexer, parser, and source AST.
 - `phoebe-package`: content-pinned local dependency graph and lockfile.

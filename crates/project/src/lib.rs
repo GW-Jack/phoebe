@@ -336,6 +336,14 @@ fn load_with_cache(
             definition.name = format!("{}.{}", module.name, definition.name);
         }
         for function in &mut module.ast.functions {
+            if !function.type_params.is_empty() {
+                return Err(source_error(
+                    path,
+                    source,
+                    function.name_span,
+                    "generic project functions are not executable yet".into(),
+                ));
+            }
             for param in &mut function.params {
                 qualify_type(
                     &mut param.ty,
@@ -790,6 +798,9 @@ fn shift_program(program: &mut syntax::Program, offset: usize) {
     }
     for function in &mut program.functions {
         shift_span(&mut function.name_span, offset);
+        for (_, span) in &mut function.type_params {
+            shift_span(span, offset);
+        }
         for param in &mut function.params {
             shift_span(&mut param.span, offset);
         }

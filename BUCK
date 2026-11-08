@@ -11,6 +11,7 @@ rust_library(
         "//crates/capability:phoebe_capability",
         "//crates/core:phoebe_core",
         "//crates/frame:phoebe_frame",
+        "//crates/generic-core:phoebe_generic_core",
         "//crates/native:phoebe_native",
         "//crates/package:phoebe_package",
         "//crates/project:phoebe_project",

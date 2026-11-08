@@ -5,8 +5,11 @@
 //! dictionary calls yet. Every type parameter is treated as affine, even
 //! when a later concrete substitution has no communication capabilities.
 
+mod display;
+mod source;
 mod verification;
 
+pub use source::lower;
 pub use verification::verify;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

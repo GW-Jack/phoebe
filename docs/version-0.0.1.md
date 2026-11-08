@@ -85,8 +85,10 @@ not a proof for every input.
 inspecting prospective generic shape classes; generic definitions and
 dictionaries remain open under `docs/generic-core.md`. An isolated
 parametric Core verifier checks opaque affine moves, block arguments, and
-returns once per definition without a concrete ABI shape. It is not yet
-connected to source or native emission. The scalar
+returns once per definition without a concrete ABI shape. Source
+`fn identity<T>(value: T) -> T = value` and simple forwarding branches lower
+through `phoebe generic-ir <file>` to printable parametric Core. Generic
+calls and native emission remain open. The scalar
 `identity`, nominal `product_identity`, `unit_identity`, and `empty_scope`
 cost fixtures are executable acceptance tests; the collection cost fixtures
 remain design sketches. `docs/performance-baseline.md` records a
@@ -476,6 +478,7 @@ buck2 run //:phoebe -- frames examples/channel_exchange.phoebe
 buck2 run //:phoebe -- cost examples/copy.phoebe
 buck2 run //:phoebe -- ir examples/hello.phoebe
 buck2 run //:phoebe -- shapes examples/product.phoebe
+buck2 run //:phoebe -- generic-ir examples/generic_identity.phoebe
 buck2 run //:phoebe -- build examples/borrow.phoebe -o /tmp/phoebe-borrow
 /tmp/phoebe-borrow
 buck2 test //...

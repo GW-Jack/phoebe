@@ -3,12 +3,12 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use phoebe::{abi, core, frame_layout, native, package, project, syntax};
+use phoebe::{abi, core, frame_layout, generic_core, native, package, project, syntax};
 
 mod build_session_cli;
 
 fn usage() -> &'static str {
-    "usage: phoebe lock <project> | phoebe deps <project> | phoebe check <file|project> | phoebe ir <file|project> | phoebe shapes <file|project> | phoebe frames <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable> [--cache-dir <directory>] | phoebe build-session <project> -o <executable>"
+    "usage: phoebe lock <project> | phoebe deps <project> | phoebe check <file|project> | phoebe ir <file|project> | phoebe generic-ir <file> | phoebe shapes <file|project> | phoebe frames <file|project> | phoebe clif <file|project> | phoebe cost <file|project> | phoebe run <file|project> [--interp] [function] [I64 args...] | phoebe build <file|project> -o <executable> [--cache-dir <directory>] | phoebe build-session <project> -o <executable>"
 }
 
 fn command() -> Result<(), String> {
@@ -20,6 +20,7 @@ fn command() -> Result<(), String> {
             | "deps"
             | "check"
             | "ir"
+            | "generic-ir"
             | "shapes"
             | "frames"
             | "clif"
@@ -54,6 +55,28 @@ fn command() -> Result<(), String> {
             return Err(usage().into());
         }
         return build_session_cli::run(Path::new(&path), Path::new(&output));
+    }
+    if action == "generic-ir" {
+        if args.next().is_some() || Path::new(&path).is_dir() || path.ends_with(".toml") {
+            return Err(usage().into());
+        }
+        let source = fs::read_to_string(&path).map_err(|error| format!("{path}: {error}"))?;
+        let ast =
+            syntax::parse(&source).map_err(|error| format!("{path}:{}", error.render(&source)))?;
+        let mut found = false;
+        for function in &ast.functions {
+            if function.type_params.is_empty() {
+                continue;
+            }
+            let lowered = generic_core::lower(function)
+                .map_err(|error| format!("{path}:{}", error.render(&source)))?;
+            println!("{lowered}");
+            found = true;
+        }
+        if !found {
+            return Err(format!("{path}: no generic definitions"));
+        }
+        return Ok(());
     }
     let program = if Path::new(&path).is_dir() || path.ends_with(".toml") {
         let loaded = project::load(Path::new(&path))?;

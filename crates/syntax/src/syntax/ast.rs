@@ -46,6 +46,7 @@ pub struct Function {
     pub name: String,
     pub public: bool,
     pub name_span: Span,
+    pub type_params: Vec<(String, Span)>,
     pub params: Vec<Param>,
     pub return_type: TypeName,
     pub body: Body,

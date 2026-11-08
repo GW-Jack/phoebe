@@ -7,3 +7,4 @@ license = "Apache-2.0"
 
 [dependencies]
 phoebe-capability = { path = "../capability" }
+phoebe-syntax = { path = "../syntax" }

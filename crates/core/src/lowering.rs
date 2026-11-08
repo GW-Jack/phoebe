@@ -285,15 +285,25 @@ fn lower_internal(
     ast: &syntax::Program,
     reuse: Option<(&syntax::Program, &Program, &[bool], &[isize])>,
 ) -> Result<(Program, usize), Diagnostic> {
-    let spawn_analysis = spawn_scan::analyze(ast);
-    let previous_spawn_analysis =
-        reuse.map(|(previous_ast, _, _, _)| spawn_scan::analyze(previous_ast));
     if let Some(import) = ast.imports.first() {
         return Err(Diagnostic::new(
             import.span,
             "imports require a phoebe.toml project manifest",
         ));
     }
+    if let Some(function) = ast
+        .functions
+        .iter()
+        .find(|function| !function.type_params.is_empty())
+    {
+        return Err(Diagnostic::new(
+            function.name_span,
+            "generic definitions are not executable yet; use `phoebe generic-ir` to inspect them",
+        ));
+    }
+    let spawn_analysis = spawn_scan::analyze(ast);
+    let previous_spawn_analysis =
+        reuse.map(|(previous_ast, _, _, _)| spawn_scan::analyze(previous_ast));
     let (data, data_names) = data::lower_data(ast)?;
     let resolve = |name: &TypeName, span: Span| -> Result<Type, Diagnostic> {
         match name {

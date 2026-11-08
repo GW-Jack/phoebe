@@ -61,6 +61,23 @@ impl Parser {
     pub(super) fn function(&mut self, public: bool) -> Result<Function, Diagnostic> {
         self.expect(&TokenKind::Fn, "fn")?;
         let (name, name_span) = self.name()?;
+        let mut type_params = Vec::new();
+        if self.eat(&TokenKind::Less).is_some() {
+            loop {
+                let (param, span) = self.name()?;
+                if type_params.iter().any(|(prior, _)| prior == &param) {
+                    return Err(Diagnostic::new(
+                        span,
+                        format!("duplicate type parameter {param}"),
+                    ));
+                }
+                type_params.push((param, span));
+                if self.eat(&TokenKind::Comma).is_none() {
+                    self.expect(&TokenKind::Greater, ">")?;
+                    break;
+                }
+            }
+        }
         self.expect(&TokenKind::LParen, "(")?;
         let mut params = Vec::new();
         if self.eat(&TokenKind::RParen).is_none() {
@@ -103,6 +120,7 @@ impl Parser {
             name,
             public,
             name_span,
+            type_params,
             params,
             return_type,
             body,
