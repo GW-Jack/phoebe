@@ -617,6 +617,18 @@ fn unrelated_data_insertion_remaps_reused_nominal_types() {
     let mut session = ProjectCompilerSession::new();
     let (before, _) = session.compile(&path).unwrap();
     let count = before.functions.len();
+    let executable = path.join("app");
+    let mut native_session = native::NativeBuildSession::new();
+    assert_eq!(
+        native_session
+            .build_executable(&before, &executable)
+            .unwrap(),
+        0
+    );
+    let direct_count = native_session
+        .build_executable(&before, &executable)
+        .unwrap();
+    assert!(direct_count > 0);
     let math = path.join("math.phoebe");
     let source = std::fs::read_to_string(&math).unwrap();
     std::fs::write(&math, format!("data Extra {{ A }}\n{source}")).unwrap();
@@ -624,11 +636,32 @@ fn unrelated_data_insertion_remaps_reused_nominal_types() {
     assert_eq!(report.reused_core_functions, count);
     assert_eq!(after.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&after, "main", &[]).unwrap(), 42);
+    assert_eq!(
+        native_session
+            .build_executable(&after, &executable)
+            .unwrap(),
+        direct_count
+    );
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
     let fresh = project::load(&path).unwrap();
     assert_eq!(
         after.to_string(),
         core::lower(&fresh.ast).unwrap().to_string()
     );
+
+    std::fs::write(&math, format!("data Extra {{ A, B }}\n{source}")).unwrap();
+    let (changed_layout, _) = session.compile(&path).unwrap();
+    assert_eq!(
+        native_session
+            .build_executable(&changed_layout, &executable)
+            .unwrap(),
+        0
+    );
+    let output = std::process::Command::new(&executable).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
     std::fs::remove_dir_all(path).unwrap();
 }
 

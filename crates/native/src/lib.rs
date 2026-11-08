@@ -335,23 +335,64 @@ struct ObjectEmission {
 
 #[derive(Clone, Default)]
 pub struct NativeBuildSession {
-    global_key: Option<String>,
+    stable_data_ids: BTreeMap<String, core::DataId>,
+    data_layouts: BTreeMap<String, String>,
     facts: BTreeMap<String, String>,
     objects: BTreeMap<String, (String, Vec<u8>)>,
+}
+
+fn canonical_type(ty: &mut Type, data_ids: &[core::DataId]) {
+    if let Type::Data(id) = ty {
+        *id = data_ids[id.0];
+    }
+}
+
+fn canonical_data_layouts(
+    program: &Program,
+    data_ids: &[core::DataId],
+) -> BTreeMap<String, String> {
+    program
+        .data
+        .iter()
+        .map(|data| {
+            let mut normalized = data.clone();
+            for ty in normalized.payloads.iter_mut().flatten() {
+                canonical_type(ty, data_ids);
+            }
+            for (_, ty) in &mut normalized.fields {
+                canonical_type(ty, data_ids);
+            }
+            (data.name.clone(), format!("{normalized:?}"))
+        })
+        .collect()
 }
 
 /// The object relocation names are stable across index shifts. Normalize
 /// call and spawn IDs in the body key to those names as well; otherwise an
 /// unrelated insertion would still make every caller appear changed.
-fn direct_function_key(program: &Program, index: usize) -> String {
+fn direct_function_key(program: &Program, index: usize, data_ids: &[core::DataId]) -> String {
     let mut function = program.functions[index].clone();
     function.for_each_source_span_mut(|span| *span = phoebe_syntax::Span { start: 0, end: 0 });
+    canonical_type(&mut function.return_type, data_ids);
+    for ty in function
+        .value_types
+        .iter_mut()
+        .chain(&mut function.place_types)
+    {
+        canonical_type(ty, data_ids);
+    }
     let mut targets = Vec::new();
     for block in &mut function.blocks {
         for instruction in &mut block.instructions {
-            if let Operation::Call(target, _) = &mut instruction.operation {
-                targets.push(program.functions[target.0].name.clone());
-                target.0 = 0;
+            match &mut instruction.operation {
+                Operation::Call(target, _) => {
+                    targets.push(program.functions[target.0].name.clone());
+                    target.0 = 0;
+                }
+                Operation::Variant(id, ..) | Operation::Product(id, ..) => {
+                    *id = data_ids[id.0];
+                }
+                _ => {}
             }
         }
         if let Terminator::Spawn { child, .. } = &mut block.terminator {
@@ -446,7 +487,22 @@ fn emit_object_with_poll_layout(
             0,
         ));
     }
-    let global_key = format!("{:?}", program.data);
+    let data_ids = if let Some(session) = cache.as_deref_mut() {
+        program
+            .data
+            .iter()
+            .map(|data| {
+                let next = core::DataId(session.stable_data_ids.len());
+                *session
+                    .stable_data_ids
+                    .entry(data.name.clone())
+                    .or_insert(next)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        (0..program.data.len()).map(core::DataId).collect()
+    };
+    let data_layouts = canonical_data_layouts(program, &data_ids);
     let mut frame_facts = vec![None; program.functions.len()];
     for frame in frame_layout::analyze(program)? {
         let function = &program.functions[frame.function.0];
@@ -456,8 +512,24 @@ fn emit_object_with_poll_layout(
                 frame.points,
                 frame.value_slots,
                 frame.place_slots,
-                &function.value_types,
-                &function.place_types,
+                function
+                    .value_types
+                    .iter()
+                    .map(|ty| {
+                        let mut ty = *ty;
+                        canonical_type(&mut ty, &data_ids);
+                        ty
+                    })
+                    .collect::<Vec<_>>(),
+                function
+                    .place_types
+                    .iter()
+                    .map(|ty| {
+                        let mut ty = *ty;
+                        canonical_type(&mut ty, &data_ids);
+                        ty
+                    })
+                    .collect::<Vec<_>>(),
             )
         ));
     }
@@ -472,11 +544,19 @@ fn emit_object_with_poll_layout(
                     "{:?}",
                     (
                         &function.param_modes,
-                        function.return_type,
+                        {
+                            let mut ty = function.return_type;
+                            canonical_type(&mut ty, &data_ids);
+                            ty
+                        },
                         function.blocks[0]
                             .params
                             .iter()
-                            .map(|id| function.value_types[id.0])
+                            .map(|id| {
+                                let mut ty = function.value_types[id.0];
+                                canonical_type(&mut ty, &data_ids);
+                                ty
+                            })
                             .collect::<Vec<_>>(),
                         context_functions[index],
                         suspendable[index],
@@ -489,7 +569,10 @@ fn emit_object_with_poll_layout(
     let mut direct_objects = Vec::new();
     let mut reused = 0;
     if let Some(session) = cache.as_deref_mut() {
-        if session.global_key.as_ref() != Some(&global_key)
+        if session
+            .data_layouts
+            .iter()
+            .any(|(name, old)| data_layouts.get(name) != Some(old))
             || session
                 .facts
                 .iter()
@@ -497,7 +580,7 @@ fn emit_object_with_poll_layout(
         {
             session.objects.clear();
         }
-        session.global_key = Some(global_key);
+        session.data_layouts = data_layouts;
         session.facts = facts;
         session
             .objects
@@ -507,7 +590,7 @@ fn emit_object_with_poll_layout(
         if !direct[index] {
             continue;
         }
-        let key = direct_function_key(program, index);
+        let key = direct_function_key(program, index, &data_ids);
         if let Some((_, object)) = cache
             .as_deref()
             .and_then(|session| session.objects.get(&program.functions[index].name))

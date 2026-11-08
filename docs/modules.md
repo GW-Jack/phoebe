@@ -88,7 +88,10 @@ the edited module. Core reruns its program-wide verifiers before publishing the 
 failed compilation preserves the old state. `CompileReport` counts reused
 functions. Cached spans are rebased to the new combined source positions.
 Adding a private helper therefore need not re-lower existing checked bodies;
-native object reuse remains governed by its separate codegen keys.
+native object reuse remains governed by its separate codegen keys. The
+in-process native session assigns stable IDs to nominal names and retains
+direct objects across unrelated data insertions. It conservatively clears
+those objects if a previously seen data layout changes or disappears.
 Core uses one traversal for every instruction and terminator source span,
 including `spawn` and `scope.join`. The native direct-object cache removes
 those spans from its function key, so moving unchanged source text does not
