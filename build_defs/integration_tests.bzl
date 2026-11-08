@@ -6,6 +6,7 @@ def integration_tests(rust_test):
             "tests/source_lexical_borrows.rs",
             "examples/lexical_borrow.phoebe",
             "examples/lexical_channel.phoebe",
+            "examples/lexical_call.phoebe",
         ],
         edition = "2024",
         deps = [":phoebe_lib"],

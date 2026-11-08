@@ -68,8 +68,8 @@ For a live scalar lexical reference at a suspension point, the spill set
 also contains its transitive `borrow.begin` root place. This makes the
 reference address point into the stable frame instead of a poll invocation's
 stack slot. Hand-built checked Core exercises this through `yield`, channel
-send, and both channel receive outcomes. Other suspension operations still
-reject live lexical loans.
+send, both channel receive outcomes, and an ordinary call to a suspendable
+callee. Other terminator suspension operations still reject live lexical loans.
 
 `phoebe frames <file|project>` prints those point-local and union sets. For
 `examples/channel_exchange.phoebe`, it shows two send points in `producer`,

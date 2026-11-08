@@ -157,9 +157,11 @@ lexical loan may cross `yield`, `channel.send`, or `channel.receive`: frame
 analysis retains the scalar root and reference value at stable addresses.
 Interpreter, JIT, and standalone tests exercise these paths. Source
 `with r = &x { ... }` or `with r = &mut x { ... }` now emits lexical scalar
-loans, including nested reborrows and reverse cleanup on `?` failure. Other
-suspension points, calls during a lexical loan, and failure unwind remain
-open. See `docs/lexical-regions.md`.
+loans, including nested reborrows and reverse cleanup on `?` failure. An
+ordinary helper call may occur under a live loan, including a suspendable
+callee receiving its alias, after root and freeze checks. Other suspension
+points, generic calls under a live loan, reborrowing incoming parameters, and
+general failure unwind remain open. See `docs/lexical-regions.md`.
 The CLI now carries an immutable `CheckedProgram` from final Core verification
 through interpreter, JIT, object emission, and the optional object cache.
 Native child emission accepts a borrowed verification token rather than

@@ -83,8 +83,10 @@ borrows cannot enter a child task or message.
 
 The 0.0.1 scalar subset spells a lexical region as `with r = &x { ... }` or
 `with r = &mut x { ... }`. The block ends the loan, including on `?` failure;
-nested blocks may reborrow an alias. Calls inside a live lexical loan and
-general inferred last-use regions remain future work.
+nested blocks may reborrow an alias. Ordinary calls inside a live lexical loan
+check argument roots and retain any borrowed local through suspension. Generic
+calls under a live lexical loan and general inferred last-use regions remain
+future work.
 
 ## 4. Tasks, scopes, and channels
 

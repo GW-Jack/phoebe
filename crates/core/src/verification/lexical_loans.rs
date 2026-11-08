@@ -257,13 +257,51 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                             function.name
                         ));
                     }
-                    Operation::Call(_, _) | Operation::GenericCall { .. }
-                        if state.active.iter().any(|live| *live) =>
-                    {
-                        // A callee may park. Until frame stability is proved for
-                        // lexical loans, keep calls outside their live interval.
+                    Operation::Call(_, args) => {
+                        let mut call_roots = Vec::new();
+                        for arg in args {
+                            let root = match arg {
+                                CallArg::Borrow(place, exclusive) => {
+                                    if conflict(&state.active, &loans, &roots, *place, *exclusive) {
+                                        return Err(format!(
+                                            "{}: call borrow conflicts with lexical loan",
+                                            function.name
+                                        ));
+                                    }
+                                    Some((*place, *exclusive))
+                                }
+                                CallArg::Ref(reference, exclusive)
+                                    if loans[reference.0].is_some() =>
+                                {
+                                    if state.frozen[reference.0] {
+                                        return Err(format!(
+                                            "{}: frozen parent cannot be forwarded to a call",
+                                            function.name
+                                        ));
+                                    }
+                                    Some((
+                                        roots[reference.0].expect("resolved lexical root"),
+                                        *exclusive,
+                                    ))
+                                }
+                                _ => None,
+                            };
+                            if let Some((place, exclusive)) = root {
+                                if call_roots.iter().any(|(other, other_exclusive)| {
+                                    *other == place && (exclusive || *other_exclusive)
+                                }) {
+                                    return Err(format!(
+                                        "{}: call arguments overlap an exclusive lexical root",
+                                        function.name
+                                    ));
+                                }
+                                call_roots.push((place, exclusive));
+                            }
+                        }
+                    }
+                    Operation::GenericCall { .. } if state.active.iter().any(|live| *live) => {
                         return Err(format!(
-                            "{}: call inside lexical loan is not yet supported",
+                            "{}: generic call inside lexical loan is not yet supported",
                             function.name
                         ));
                     }

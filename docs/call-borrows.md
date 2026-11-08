@@ -43,7 +43,10 @@ the receive. This is tested behavior, not a general proof of region safety.
 
 Call-site borrowing remains one subset. Scoped scalar reference aliases now
 use `with r = &x { ... }` or `with r = &mut x { ... }` and explicit Core begin/end
-operations. The two forms do not yet compose inside a live lexical loan:
-calls are rejected until their alias and suspension rules are checked together.
+operations. Ordinary calls can now run inside a live lexical loan. A lexical
+alias may be forwarded to a callee, including one that suspends; Core checks
+the direct and lexical argument roots and the frame retains local roots.
+Generic calls under a live loan and lexical reborrows of incoming borrowed
+parameters remain unsupported.
 Field or element borrows, region inference, and cross-task references remain
 unsupported. See `docs/lexical-regions.md` for that boundary.

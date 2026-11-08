@@ -68,7 +68,9 @@ regions; no source lifetime parameter is required initially. A borrow may
 survive a task's suspension if its root remains in that task's retained frame.
 The implemented scalar region form is `with r = &x { ... }` or
 `with r = &mut x { ... }`. Its end is the block exit; nested `with` blocks
-reborrow lexical aliases, and `?` failure ends them in reverse order.
+reborrow lexical aliases, and `?` failure ends them in reverse order. Ordinary
+calls may run inside the block and may receive its alias when root overlap and
+freeze checks permit it.
 No borrow may enter a child task or channel message. Distinct named fields may
 be borrowed separately; dynamic indices are conservatively treated as
 possibly overlapping until a cheap local proof establishes otherwise.

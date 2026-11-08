@@ -37,7 +37,7 @@ an exclusive overlap, blocks direct mutation or exclusive reads of a loaned
 root, rejects use after end or out-of-order parent end, and requires identical
 active and frozen loan states at joins.
 It requires loans to end before return, request or reply suspension, spawn,
-scope join, or a call. A loan may cross `yield`, `channel.send`, or
+or scope join. A loan may cross an ordinary call, `yield`, `channel.send`, or
 `channel.receive`: frame analysis retains both the reference value and its
 root place, and the native poll frame gives the root a stable address.
 Interpreter, JIT, and standalone tests exercise direct loans, nested loans
@@ -46,11 +46,14 @@ runs both delivered and closed outcomes. Source `with r = &x { ... }` and
 `with r = &mut x { ... }` emit these operations for scalar `val` or `var`
 owners. A nested `with` may reborrow a lexical alias. The lowerer ends loans
 in reverse order on normal and `?` exits. Source examples cover nested loans
-across yield and an exclusive loan across channel receive.
+across yield, an exclusive loan across channel receive, and an alias forwarded
+to a suspendable helper. At a call, Core compares direct and lexical argument
+roots, rejects an exclusive overlap or a frozen parent, and allows compatible
+shared borrows. A deadlocked helper under a live loan has an interpreter and
+native unwind test. Generic calls under a live lexical loan remain restricted.
 
-Next, integrate this Core parent relation with the existing call-only
-`LoanRegion` metadata so a lexical alias can be forwarded to a call and a
-borrowed parameter can be reborrowed. Ordinary ownership and
+Next, integrate the Core parent relation with incoming borrowed parameters so
+they can be reborrowed as lexical aliases. Ordinary ownership and
 capability-flow verification remain separate passes over the same explicit
 Core edges. The native frame plan must extend the stable-root check to remaining
 suspension points, and cancellation must release loans before their slots. These checks should

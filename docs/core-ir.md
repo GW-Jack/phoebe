@@ -73,7 +73,8 @@ Hand-built Core can open, reborrow, and close a scalar lexical loan with
 `borrow.begin`, `borrow.reborrow`, and `borrow.end`; its verifier tracks active
 and frozen loans across CFG edges. A live loan may cross `yield` or scalar
 channel send and receive with a stable root in the retained frame. Source
-lowering also emits these operations from scoped scalar `with` borrows. See
+lowering also emits these operations from scoped scalar `with` borrows and can
+forward a lexical alias through an ordinary call. See
 `docs/lexical-regions.md` for the implemented boundary and open rules.
 
 Nominal values are currently affine. Reading a nominal `val` for an owning

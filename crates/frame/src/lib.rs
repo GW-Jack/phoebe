@@ -393,8 +393,12 @@ fn analyze_verified(program: &Program, suspendable: &[bool]) -> Result<Vec<Funct
                 })
                 .ok_or("suspending loan has no retained call point")?;
             for root in &region.roots {
-                if let core::LoanRoot::Place(place, _) = root
-                    && !point.places.contains(place)
+                let place = match root {
+                    core::LoanRoot::Place(place, _) => Some(*place),
+                    core::LoanRoot::Forwarded(value, _) => lexical_roots[value.0],
+                };
+                if let Some(place) = place
+                    && !point.places.contains(&place)
                 {
                     return Err(format!(
                         "{}: borrowed p{} is missing from retained call frame",

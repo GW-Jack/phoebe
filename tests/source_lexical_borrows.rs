@@ -54,6 +54,102 @@ fn source_loan_survives_channel_receive() {
 }
 
 #[test]
+fn lexical_alias_can_reach_suspending_helper() {
+    let source = include_str!("../examples/lexical_call.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let ir = program.to_string();
+    assert!(ir.contains("call add_after_wait(&mut v"));
+    let frames = frame_layout::analyze(&program).unwrap();
+    let exchange_frame = frames
+        .iter()
+        .find(|frame| program.functions[frame.function.0].name == "exchange")
+        .unwrap();
+    assert!(
+        exchange_frame
+            .points
+            .iter()
+            .any(|point| point.instruction.is_some() && point.places.contains(&core::PlaceId(0)))
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, 42, "call");
+}
+
+#[test]
+fn unrelated_direct_helper_runs_inside_lexical_region() {
+    let source = "fn one() -> I64 { 1 } fn main() -> I64 { var x = 41; with r = &mut x { r = r + one(); }; x }";
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, 42, "direct-call");
+}
+
+#[test]
+fn call_cannot_reborrow_owner_around_live_lexical_alias() {
+    let source = "fn write(v: &mut I64) -> I64 { v = 2; v } fn main() -> I64 { var x = 1; with r = &x { val ignored = write(&mut x); }; x }";
+    let error = core::lower(&syntax::parse(source).unwrap()).unwrap_err();
+    assert!(
+        error
+            .message
+            .contains("call borrow conflicts with lexical loan")
+    );
+
+    let frozen = "fn write(v: &mut I64) -> I64 { v = 2; v } fn main() -> I64 { var x = 1; with outer = &mut x { with inner = &mut outer { val ignored = write(&mut outer); }; }; x }";
+    let error = core::lower(&syntax::parse(frozen).unwrap()).unwrap_err();
+    assert!(error.message.contains("frozen parent cannot be forwarded"));
+}
+
+#[test]
+fn shared_lexical_and_direct_call_borrows_can_coexist() {
+    let source = "fn add(a: &I64, b: &I64) -> I64 { a + b } fn main() -> I64 { var x = 21; with r = &x { add(&r, &x) } }";
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, 42, "shared-call");
+}
+
+#[test]
+fn deadlocked_helper_with_live_lexical_loan_unwinds_task() {
+    let source = r#"
+fn wait(value: &mut I64, receiver: Receiver<I64>) -> I64 {
+  val item = receiver.receive();
+  receiver.close();
+  value
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  var x = 41;
+  with r = &mut x {
+    val result = wait(&mut r, receiver);
+    r = result;
+  };
+  sender.close();
+  Result<I64, ResourceError>.Ok(x)
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert!(
+        program
+            .interpret("main", &[])
+            .unwrap_err()
+            .contains("scope deadlocked")
+    );
+    assert!(
+        native::run(&program, "main", &[])
+            .unwrap_err()
+            .contains("scope deadlocked")
+    );
+}
+
+#[test]
 fn shared_val_borrow_can_return_a_scalar_from_with_expression() {
     let source =
         "fn main() -> I64 { val ready = true; with r = &ready { if (r) { 42 } else { 0 } } }";
