@@ -192,7 +192,9 @@ fn write_cache(directory: &Path, key: &str, emitted: &ObjectEmission) -> Result<
         if file.metadata().map_err(|error| error.to_string())?.len() > MAX_CACHE_BYTES {
             return Err("native object cache exceeds total size limit".into());
         }
-        file.sync_all().map_err(|error| error.to_string())
+        // This is disposable cache data. Closing before the atomic rename is
+        // sufficient; a truncated entry is rejected on the next read.
+        Ok(())
     })();
     drop(file);
     let result = written.and_then(|()| {

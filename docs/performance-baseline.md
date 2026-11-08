@@ -86,6 +86,13 @@ an edited-program rebuild. The six-function difference is small; neither
 result establishes a cross-platform speedup or a persistent typed-interface
 cache.
 
+A separate generated 1,000-function direct chain on the same host had a
+169.6 ms one-shot median and a 47.5 ms warm-cache median over three runs per
+path. After removing an unnecessary durability sync, three builds into fresh
+cache directories took 397.8, 172.7, and 172.0 ms (median 172.7 ms). The
+cached executable returned `1000`. This chain stresses code emission and is
+not representative of a typical Phoebe program.
+
 ## Reachable native emission
 
 On the same 2026-11-07 debug build, a generated chain of 1,000 functions was
