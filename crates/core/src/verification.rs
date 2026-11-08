@@ -2,6 +2,7 @@ use super::*;
 
 mod capability;
 pub(crate) mod capability_layout;
+mod lexical_loans;
 mod operations;
 mod structure;
 
@@ -268,6 +269,7 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
 
 pub fn verify(program: &Program) -> Result<(), String> {
     verify_structure(program, None)?;
+    lexical_loans::verify_lexical_loans(program)?;
     super::scope_verification::verify(program)?;
     verify_ownership(program).map_err(|error| error.message)?;
     verify_capability_edges(program)
@@ -275,6 +277,7 @@ pub fn verify(program: &Program) -> Result<(), String> {
 
 pub fn verify_linked(program: &Program, generics: &CheckedModule) -> Result<(), String> {
     verify_structure(program, Some(generics))?;
+    lexical_loans::verify_lexical_loans(program)?;
     super::scope_verification::verify(program)?;
     verify_ownership(program).map_err(|error| error.message)?;
     verify_capability_edges(program)

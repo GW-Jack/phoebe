@@ -151,6 +151,11 @@ explicit place or forwarded-reference roots and a return/unwind end. Core
 checks the region against the call; frame analysis checks that place roots
 survive a suspending call. General reference lifetimes and inferred regions
 remain unimplemented.
+Hand-built Core now has explicit scalar `borrow.begin` and `borrow.end`
+operations with an exact active-loan CFG check. Direct and retained native
+code run a loan that ends before suspension or return; source syntax does not
+yet emit lexical loans. Nested reborrows and live loans across suspension
+remain open; see `docs/lexical-regions.md`.
 The CLI now carries an immutable `CheckedProgram` from final Core verification
 through interpreter, JIT, object emission, and the optional object cache.
 Native child emission accepts a borrowed verification token rather than

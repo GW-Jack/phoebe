@@ -513,6 +513,12 @@ pub(super) fn compile_functions<M: Module>(
                         }
                         Operation::Unit => Some(Vec::new()),
                         Operation::Move(value) | Operation::Copy(value) => Some(get(*value)),
+                        Operation::BorrowBegin(place, _) => Some(vec![builder.ins().stack_addr(
+                            pointer_type,
+                            places[place.0][0],
+                            0,
+                        )]),
+                        Operation::BorrowEnd(_) => None,
                         Operation::Variant(id, tag, payload) => {
                             let mut components =
                                 vec![builder.ins().iconst(types::I64, *tag as i64)];

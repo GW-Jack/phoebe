@@ -69,6 +69,10 @@ the callee uses `ref.load` and, for an exclusive loan,
 borrow to the caller's slot. Cranelift lowers places to typed stack slots and
 passes their addresses. This separation keeps reference and region rules
 attached to *places*, rather than pretending a mutable object is an SSA value.
+Hand-built Core can also open and close a scalar lexical loan with
+`borrow.begin` and `borrow.end`; its verifier tracks live loans across CFG
+edges. Source lowering still emits only call-scoped loans. See
+`docs/lexical-regions.md` for the implemented boundary and open rules.
 
 Nominal values are currently affine. Reading a nominal `val` for an owning
 use emits `move`; reading a nominal `var` emits `place.take`. A primitive

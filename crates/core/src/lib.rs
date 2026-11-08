@@ -169,6 +169,8 @@ pub enum Operation {
         type_args: Vec<Type>,
         args: Vec<ValueId>,
     },
+    BorrowBegin(PlaceId, bool),
+    BorrowEnd(ValueId),
     LoadRef(ValueId),
     StoreRef(ValueId, ValueId),
     PlaceInit(PlaceId, ValueId),

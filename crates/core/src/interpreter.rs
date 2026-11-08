@@ -497,6 +497,8 @@ impl CoreTask {
                     .take()
                     .expect("verified owned place"),
             ),
+            Operation::BorrowBegin(place, _) => Some(Value::Ref(base + place.0)),
+            Operation::BorrowEnd(_) => None,
             Operation::LoadRef(reference) => {
                 let Value::Ref(slot) = get(*reference) else {
                     unreachable!("verified reference")
@@ -1111,6 +1113,15 @@ impl fmt::Display for Program {
                         Operation::CopyPlace(place) => write!(f, "copy.value p{}", place.0)?,
                         Operation::Store(place, value) => {
                             write!(f, "place.store p{}, v{}", place.0, value.0)?
+                        }
+                        Operation::BorrowBegin(place, false) => {
+                            write!(f, "borrow.begin &p{}", place.0)?
+                        }
+                        Operation::BorrowBegin(place, true) => {
+                            write!(f, "borrow.begin &mut p{}", place.0)?
+                        }
+                        Operation::BorrowEnd(reference) => {
+                            write!(f, "borrow.end v{}", reference.0)?
                         }
                         Operation::LoadRef(reference) => write!(f, "ref.load v{}", reference.0)?,
                         Operation::StoreRef(reference, value) => {

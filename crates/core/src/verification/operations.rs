@@ -190,6 +190,29 @@ pub(super) fn op_type(
             let resolved = crate::generic_calls::instantiate(module, *callee, type_args, &actual)?;
             Ok(Some(resolved.result))
         }
+        Operation::BorrowBegin(place, exclusive) => {
+            let referent = function
+                .place_types
+                .get(place.0)
+                .copied()
+                .ok_or("invalid place ID")?;
+            Type::parameter(
+                if *exclusive {
+                    ParamMode::Exclusive
+                } else {
+                    ParamMode::Shared
+                },
+                referent,
+            )
+            .map(Some)
+            .ok_or_else(|| "borrow requires an I64 or Bool place".into())
+        }
+        Operation::BorrowEnd(reference) => {
+            if ty(*reference).referent().is_none() {
+                return Err("borrow end requires a reference".into());
+            }
+            Ok(None)
+        }
         Operation::LoadRef(reference) => match ty(*reference) {
             Type::RefI64 | Type::RefMutI64 => Ok(Some(Type::I64)),
             Type::RefBool | Type::RefMutBool => Ok(Some(Type::Bool)),
@@ -294,12 +317,14 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::Not(a)
         | Operation::PlaceInit(_, a)
         | Operation::Store(_, a)
+        | Operation::BorrowEnd(a)
         | Operation::LoadRef(a) => vec![*a],
         Operation::StoreRef(a, b) => vec![*a, *b],
         Operation::Load(_)
         | Operation::Take(_)
         | Operation::CopyPlace(_)
-        | Operation::ReadField(_, _) => vec![],
+        | Operation::ReadField(_, _)
+        | Operation::BorrowBegin(_, _) => vec![],
         Operation::Add(a, b)
         | Operation::Sub(a, b)
         | Operation::Mul(a, b)

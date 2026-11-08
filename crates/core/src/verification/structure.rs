@@ -479,6 +479,7 @@ pub(crate) fn verify_structure(
                 | Operation::Take(place)
                 | Operation::CopyPlace(place)
                 | Operation::ReadField(place, _)
+                | Operation::BorrowBegin(place, _)
                 | Operation::Store(place, _) = instruction.operation
                 {
                     check_place(place, block_id, index)?;
