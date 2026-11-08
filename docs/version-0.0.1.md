@@ -145,6 +145,9 @@ standalone tests cover a pending join and spawn-limit failure. Source
 join open scopes from inner to outer, and then return the error. A directed
 spawn-effect summary erases scopes that cannot spawn, including calls to pure
 helpers. `docs/scope-ir.md` records the invariant and remaining evidence.
+The finite Maude lexical-scope model explores a fixed root, earlier sibling,
+inner child, and grandchild with independently checked live counts. It does
+not establish a refinement from the compiler or runtime to that model.
 The Rust spawn path now atomically transfers channel handles and either reply
 capability to a child. Native reply and typed spawn shims are exercised by
 synthetic poll frames, including a receiver that parks and wakes across tasks

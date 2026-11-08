@@ -1,0 +1,96 @@
+--- Finite membership model: one root task, an earlier sibling, a child in a
+--- nested scope, and one grandchild spawned by that child. Counters model the
+--- scheduler's live ancestry counts; task status supplies an independent sum.
+mod PHOEBE-LEXICAL-SCOPES is
+  protecting BOOL .
+  protecting NAT .
+
+  sorts Phase Life Region State .
+  ops before entered waiting after rootDone rootFailed : -> Phase [ctor] .
+  ops absent live done canceled : -> Life [ctor] .
+  ops notEntered open joined canceledRegion : -> Region [ctor] .
+  op st : Phase Life Life Life Region Nat Nat -> State [ctor] .
+  op initial : -> State .
+  eq initial = st(before, absent, absent, absent, notEntered, 0, 0) .
+
+  vars P : Phase .
+  vars S C G : Life .
+  vars R : Region .
+  vars ROOT INNER : Nat .
+
+  --- The earlier sibling belongs only to root. The child and grandchild
+  --- belong to both the inner region and root.
+  rl [spawn-sibling] :
+    st(before, absent, C, G, notEntered, ROOT, 0)
+    => st(before, live, C, G, notEntered, s ROOT, 0) .
+  rl [enter] :
+    st(before, S, absent, absent, notEntered, ROOT, 0)
+    => st(entered, S, absent, absent, open, ROOT, 0) .
+  rl [spawn-child] :
+    st(entered, S, absent, G, open, ROOT, INNER)
+    => st(entered, S, live, G, open, s ROOT, s INNER) .
+  rl [spawn-grandchild] :
+    st(P, S, live, absent, open, ROOT, INNER)
+    => st(P, S, live, live, open, s ROOT, s INNER) .
+
+  rl [sibling-complete] :
+    st(P, live, C, G, R, s ROOT, INNER)
+    => st(P, done, C, G, R, ROOT, INNER) .
+  rl [child-complete] :
+    st(P, S, live, G, open, s ROOT, s INNER)
+    => st(P, S, done, G, open, ROOT, INNER) .
+  rl [grandchild-complete] :
+    st(P, S, C, live, open, s ROOT, s INNER)
+    => st(P, S, C, done, open, ROOT, INNER) .
+
+  --- A join may be requested before descendants finish, but only zero
+  --- inner-region liveness makes it ready. Root liveness is irrelevant here.
+  rl [join-pending] :
+    st(entered, S, C, G, open, ROOT, s INNER)
+    => st(waiting, S, C, G, open, ROOT, s INNER) .
+  rl [join-ready] :
+    st(entered, S, C, G, open, ROOT, 0)
+    => st(after, S, C, G, joined, ROOT, 0) .
+  rl [join-wake] :
+    st(waiting, S, C, G, open, ROOT, 0)
+    => st(after, S, C, G, joined, ROOT, 0) .
+  rl [root-complete] :
+    st(after, S, C, G, joined, 0, 0)
+    => st(rootDone, S, C, G, joined, 0, 0) .
+
+  --- A descendant fault cancels the outer runtime scope, including the
+  --- earlier sibling. Preserve absent/done status; only live tasks cancel.
+  op cancel : Life -> Life .
+  eq cancel(live) = canceled .
+  eq cancel(absent) = absent .
+  eq cancel(done) = done .
+  eq cancel(canceled) = canceled .
+  rl [child-fail] :
+    st(P, S, live, G, open, ROOT, INNER)
+    => st(rootFailed, cancel(S), canceled, cancel(G),
+          canceledRegion, 0, 0) .
+  rl [grandchild-fail] :
+    st(P, S, C, live, open, ROOT, INNER)
+    => st(rootFailed, cancel(S), cancel(C), canceled,
+          canceledRegion, 0, 0) .
+
+  op liveCount : Life -> Nat .
+  eq liveCount(live) = 1 .
+  eq liveCount(absent) = 0 .
+  eq liveCount(done) = 0 .
+  eq liveCount(canceled) = 0 .
+  op validPhase : Phase Region Nat Nat -> Bool .
+  eq validPhase(before, notEntered, ROOT, 0) = true .
+  eq validPhase(entered, open, ROOT, INNER) = true .
+  eq validPhase(waiting, open, ROOT, INNER) = true .
+  eq validPhase(after, joined, ROOT, 0) = true .
+  eq validPhase(rootDone, joined, 0, 0) = true .
+  eq validPhase(rootFailed, canceledRegion, 0, 0) = true .
+  eq validPhase(P, R, ROOT, INNER) = false [owise] .
+
+  op bad : State -> Bool .
+  eq bad(st(P, S, C, G, R, ROOT, INNER)) =
+    not ((ROOT == (liveCount(S) + liveCount(C) + liveCount(G)))
+      and (INNER == (liveCount(C) + liveCount(G)))
+      and validPhase(P, R, ROOT, INNER)) .
+endm

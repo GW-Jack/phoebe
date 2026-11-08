@@ -12,6 +12,7 @@ CASES = (
     ("check_reply_capability.maude", 1, 10),
     ("check_request_backpressure.maude", 1, 7),
     ("check_retained_borrow.maude", 1, 4),
+    ("check_lexical_scopes.maude", 2, 7),
 )
 
 

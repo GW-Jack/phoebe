@@ -81,9 +81,27 @@ Four witnesses cover parking, writing, normal return, and cleanup after a
 parked failure. A deliberately freed parent with active loans is classified
 bad.
 
+## Lexical task scope membership
+
+`lexical_scopes.maude` has one root task, an earlier sibling in the root
+scope, one child in an inner scope, and one grandchild spawned by that child.
+The model stores root and inner live counts independently of task status.
+Its 69 reachable states have no encoded counter or phase violation. A second
+unreachable search checks that the inner join cannot finish while the
+grandchild is live. Seven witnesses cover the earlier sibling, transitive
+counts, a pending join, child completion while the grandchild remains live,
+an inner join while the sibling remains live, root completion, and fault
+cancellation. A deliberately joined state with a live descendant is bad.
+
+This fixes the task set and permits at most one nested region. It abstracts
+the scheduler's ready queue, scope slot generations, frame allocation,
+channels, and native ABI. The source tests exercise the corresponding
+sibling-isolation and failure paths, but no refinement proof connects them
+to this model.
+
 ## Evidence boundary
 
-These are finite explorations of five handwritten abstract machines. The
+These are finite explorations of six handwritten abstract machines. The
 two-task model does not include regions or references; the one-task model
 does not include handle fork. Neither models multiple queued messages or
 blocking/parking. The reply model does not cover multiple reply rights,

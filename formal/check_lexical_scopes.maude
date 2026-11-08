@@ -1,0 +1,27 @@
+load lexical_scopes.maude
+
+--- Sanity: a joined region cannot retain one live descendant.
+reduce in PHOEBE-LEXICAL-SCOPES :
+  bad(st(after, live, done, live, joined, 2, 1)) .
+
+--- Exhaustive safety and explicit premature-join searches.
+search [1] in PHOEBE-LEXICAL-SCOPES : initial =>* X:State
+  such that bad(X:State) == true .
+search [1] in PHOEBE-LEXICAL-SCOPES : initial =>*
+  st(after, S:Life, C:Life, live, joined, ROOT:Nat, INNER:Nat) .
+
+--- Sibling isolation, transitive counts, pending join, and completion.
+search [1] in PHOEBE-LEXICAL-SCOPES : initial =>*
+  st(entered, live, absent, absent, open, 1, 0) .
+search [1] in PHOEBE-LEXICAL-SCOPES : initial =>*
+  st(entered, live, live, live, open, 3, 2) .
+search [1] in PHOEBE-LEXICAL-SCOPES : initial =>*
+  st(waiting, live, live, live, open, 3, 2) .
+search [1] in PHOEBE-LEXICAL-SCOPES : initial =>*
+  st(waiting, live, done, live, open, 2, 1) .
+search [1] in PHOEBE-LEXICAL-SCOPES : initial =>*
+  st(after, live, done, done, joined, 1, 0) .
+search [1] in PHOEBE-LEXICAL-SCOPES : initial =>*
+  st(rootDone, done, done, done, joined, 0, 0) .
+search [1] in PHOEBE-LEXICAL-SCOPES : initial =>*
+  st(rootFailed, canceled, canceled, canceled, canceledRegion, 0, 0) .

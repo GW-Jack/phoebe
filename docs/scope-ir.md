@@ -75,5 +75,7 @@ claiming every execution parks.
 - More frame tests for borrowed places across a pending join. Existing
   scalar and mutable-place tests show that generated code retries the join
   rather than re-entering.
-- A bounded formal model of nested scope membership and cancellation, with a
-  separate argument for the compiler's stack and backend erasure rules.
+- The finite `formal/lexical_scopes.maude` model checks transitive membership,
+  sibling isolation, and fault cancellation for four fixed tasks. A separate
+  argument is still needed for the compiler's region stack and backend erasure
+  rules, and no refinement proof links that model to generated code.
