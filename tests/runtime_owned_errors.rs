@@ -222,6 +222,7 @@ impl Task for HandleBudgetRoot {
 fn handle_budget_rejects_fork_before_changing_ownership() {
     let limits = ScopeLimits {
         tasks: 1,
+        scopes: ScopeLimits::default().scopes,
         channels: 2,
         handles: 3,
         replies: 0,
@@ -278,6 +279,7 @@ impl Task for NativeForkBudgetRoot {
 fn native_fork_budget_status_preserves_original_and_output() {
     let limits = ScopeLimits {
         tasks: 1,
+        scopes: ScopeLimits::default().scopes,
         channels: 1,
         handles: 2,
         replies: 0,

@@ -299,6 +299,9 @@ pub struct RuntimeStats {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScopeLimits {
     pub tasks: usize,
+    /// Maximum number of nested task scope slots. The root scope does not
+    /// count; closed slots can be reused.
+    pub scopes: usize,
     pub channels: usize,
     /// Maximum number of channel handles minted in this scope. Tokens are
     /// never reused, so closed handles still count against this budget.
@@ -310,6 +313,7 @@ impl Default for ScopeLimits {
     fn default() -> Self {
         Self {
             tasks: 64,
+            scopes: 64,
             channels: 64,
             handles: 256,
             replies: 64,
@@ -411,6 +415,7 @@ pub struct Scheduler {
     reply_rights: Vec<ReplyRight>,
     reply_slots: Vec<ReplySlot>,
     max_tasks: usize,
+    max_scopes: usize,
     max_channels: usize,
     max_handles: usize,
     max_replies: usize,
@@ -435,6 +440,7 @@ impl Scheduler {
             root,
             ScopeLimits {
                 tasks: max_tasks,
+                scopes: ScopeLimits::default().scopes,
                 channels: max_channels,
                 handles: max_channels
                     .saturating_mul(2)
@@ -447,6 +453,7 @@ impl Scheduler {
     pub fn with_limits(root: impl Task + 'static, limits: ScopeLimits) -> Result<Self, String> {
         let ScopeLimits {
             tasks: max_tasks,
+            scopes: max_scopes,
             channels: max_channels,
             handles: max_handles,
             replies: max_replies,
@@ -486,6 +493,7 @@ impl Scheduler {
             reply_rights: Vec::new(),
             reply_slots: Vec::new(),
             max_tasks,
+            max_scopes,
             max_channels,
             max_handles,
             max_replies,

@@ -72,6 +72,9 @@ impl Scheduler {
     }
 
     pub(super) fn verify_scopes(&self) -> Result<(), String> {
+        if self.scopes.len() - 1 > self.max_scopes {
+            return Err("task scope slot budget exceeded".into());
+        }
         let mut free = vec![false; self.scopes.len()];
         let mut cursor = self.free_scope_head;
         while let Some(slot) = cursor {
@@ -152,6 +155,9 @@ impl Context<'_> {
             };
             ScopeId { slot, generation }
         } else {
+            if self.scheduler.scopes.len() - 1 >= self.scheduler.max_scopes {
+                return Err("task scope capacity exhausted".into());
+            }
             self.scheduler
                 .scopes
                 .try_reserve(1)
@@ -226,7 +232,46 @@ mod tests {
 
     #[test]
     fn sequential_scopes_reuse_one_slot() {
-        let mut scheduler = Scheduler::new(RepeatedEmptyScopes, 1, 0, 0).unwrap();
+        let mut scheduler = Scheduler::with_limits(
+            RepeatedEmptyScopes,
+            super::super::ScopeLimits {
+                tasks: 1,
+                scopes: 1,
+                ..super::super::ScopeLimits::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(scheduler.run().unwrap(), 42);
+        assert_eq!(scheduler.scopes.len(), 2);
+        scheduler.verify().unwrap();
+    }
+
+    struct FailedNestedEntry;
+
+    impl Task for FailedNestedEntry {
+        fn poll(&mut self, context: &mut Context<'_>) -> Result<Poll<i64>, String> {
+            let outer = context.scope_enter()?;
+            assert_eq!(
+                context.scope_enter().unwrap_err(),
+                "task scope capacity exhausted"
+            );
+            assert_eq!(context.scheduler.tasks[context.task.0].current_scope, outer);
+            assert_eq!(context.scope_join(outer)?, Poll::Ready(()));
+            Ok(Poll::Ready(42))
+        }
+    }
+
+    #[test]
+    fn failed_scope_entry_does_not_publish_a_scope() {
+        let mut scheduler = Scheduler::with_limits(
+            FailedNestedEntry,
+            super::super::ScopeLimits {
+                tasks: 1,
+                scopes: 1,
+                ..super::super::ScopeLimits::default()
+            },
+        )
+        .unwrap();
         assert_eq!(scheduler.run().unwrap(), 42);
         assert_eq!(scheduler.scopes.len(), 2);
         scheduler.verify().unwrap();

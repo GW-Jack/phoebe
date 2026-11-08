@@ -38,6 +38,21 @@ fn source_scope_joins_spawned_child_in_both_backends() {
 }
 
 #[test]
+fn scope_capacity_failure_faults_both_backends() {
+    let program = lower(include_str!("../examples/scoped_spawn.phoebe"));
+    let no_scopes = ScopeLimits {
+        scopes: 0,
+        ..ScopeLimits::default()
+    };
+    assert!(
+        program
+            .interpret_with_limits("main", &[], no_scopes)
+            .is_err()
+    );
+    assert!(native::run_with_limits(&program, "main", &[], no_scopes).is_err());
+}
+
+#[test]
 fn nested_scope_failure_joins_before_returning_error() {
     let program = lower(
         r#"

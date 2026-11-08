@@ -8,9 +8,9 @@ Source syntax covers fallible `I64` channel creation, explicit endpoint
 close, task spawn, and `I64` send/receive outcomes. Native call continuations
 run in the supported poll subset; general typed messages remain open.
 
-`Scheduler` owns bounded tables of task records, channels, handles, and reply slots.
-The caller supplies all four limits. Each task has
-one retained `Task` frame and is polled until it returns `Ready` or registers a
+`Scheduler` owns bounded tables of task records, lexical scope slots,
+channels, handles, and reply slots. The caller supplies all five limits. Each
+task has one retained `Task` frame and is polled until it returns `Ready` or registers a
 wait and returns `Pending`. The scheduler runs on one OS thread. A full send
 parks the sender with the original message still in its frame; a receive of an
 empty channel parks the receiver. Queue changes wake a waiting task. A
@@ -20,9 +20,9 @@ as a blocked channel operation. Source `yield;` lowers to a retained
 continuation in the interpreter and native ABI. The compiler inserts bounded
 backedge checkpoints in source call-graph components connected to `spawn`, so
 a CPU-heavy sibling can yield without an explicit source statement.
-The default source-run scope permits 64 tasks, 64 channels, 256 total
-channel handles, and 64 reply pairs; callers can set tighter limits through
-the Rust API. Task creation
+The default source-run scope permits 64 tasks, 64 nested scope slots, 64
+channels, 256 total channel handles, and 64 reply pairs; callers can set
+tighter limits through the Rust API. Task creation
 therefore succeeds in the ordinary interpreter CLI example, while a one-task
 limit exercises the typed failure edge.
 The Rust kernel also has lexical task groups: `scope_enter()` switches the
@@ -32,14 +32,15 @@ siblings started before entry. The owner must join innermost first and cannot
 finish successfully while an entered scope remains open. Scope slots are
 reused with generation-tagged tokens, so an old token cannot join a later
 scope. The kernel checks live task counts and scope ancestry in its optional
-verifier. Source and native lowering have not yet exposed these operations;
-this is the runtime boundary for that integration.
+verifier. A scope entry at capacity faults before changing the task's current
+scope. Closed slots can be reused at the limit. Source `scope { ... }` lowers
+through these operations when its body may spawn.
 The native archive exports `phoebe_rt_v1_scope_enter` and
 `phoebe_rt_v1_scope_join`. Join returns Ready or Pending and is retried after
 the scheduler wakes the task. A synthetic native poll task exercises entry,
 spawn, park, and join through those calls; an unmatched join faults. Scope
-record allocation failure currently faults the task. Generated Core still
-needs balanced scope operations and source spans before using this ABI.
+record allocation failure currently faults the task. Core checks balanced
+scope operations and carries source spans through entry and join.
 The versioned `phoebe_rt_v1_main_poll` entry runs a native poll function with
 a stable word-array frame: program counter in word 0, result in word 1, and
 generated payload afterward. Status `0` means Ready, `1` Pending, and `255`

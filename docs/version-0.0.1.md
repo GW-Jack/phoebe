@@ -147,6 +147,10 @@ standalone tests cover a pending join and spawn-limit failure. Source
 join open scopes from inner to outer, and then return the error. A directed
 spawn-effect summary erases scopes that cannot spawn, including calls to pure
 helpers. `docs/scope-ir.md` records the invariant and remaining evidence.
+Nested scope slots have a caller-settable budget, with 64 slots by default;
+the root does not count and closed slots are reused. Source interpreter and
+JIT tests exercise a zero-slot fault, while runtime tests check that failed
+entry leaves the current scope unchanged.
 The source differential suite also retains a mutable caller place through a
 borrowed callee's pending scope join, then checks the task-limit error path.
 The finite Maude lexical-scope model explores a fixed root, earlier sibling,
