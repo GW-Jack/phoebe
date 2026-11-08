@@ -312,20 +312,9 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                 }
             }
             if state.active.iter().any(|live| *live)
-                && matches!(
-                    block.terminator,
-                    Terminator::Return(_)
-                        | Terminator::ScopeJoin { .. }
-                        | Terminator::RequestSend { .. }
-                        | Terminator::RequestReceive { .. }
-                        | Terminator::ReplyReceive { .. }
-                        | Terminator::Spawn { .. }
-                )
+                && matches!(block.terminator, Terminator::Return(_))
             {
-                return Err(format!(
-                    "{}: lexical loan crosses exit or suspension",
-                    function.name
-                ));
+                return Err(format!("{}: lexical loan crosses return", function.name));
             }
             for target in successors(&block.terminator) {
                 match &incoming[target.0] {

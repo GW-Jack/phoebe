@@ -1,3 +1,5 @@
+use phoebe::runtime::ScopeLimits;
+use phoebe::runtime::{NativePollTask, Scheduler};
 use phoebe::{core, frame_layout, native, syntax};
 use std::process::Command;
 
@@ -51,6 +53,153 @@ fn source_loan_survives_channel_receive() {
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
     assert_standalone(&program, 42, "channel");
+}
+
+#[test]
+fn source_loan_survives_reply_receive_on_delivery_and_end() {
+    let source = r#"
+fn worker(right: ReplyTo<I64>) -> I64 {
+  right.complete(1);
+  0
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (right, receiver) = reply<I64>()?;
+  spawn worker(right)?;
+  var total = 41;
+  with borrowed = &mut total {
+    val answer = receiver.receive();
+    borrowed = borrowed + when (answer) {
+      Reply<I64>.Value(value) -> { value },
+      Reply<I64>.End -> { 0 }
+    };
+  };
+  Result<I64, ResourceError>.Ok(total)
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#;
+    for (worker, expected, label) in [
+        ("right.complete(1);", 42, "reply-delivery"),
+        ("yield; right.close();", 41, "reply-end"),
+    ] {
+        let source = source.replace("right.complete(1);", worker);
+        let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+        let frames = frame_layout::analyze(&program).unwrap();
+        let exchange = frames
+            .iter()
+            .find(|frame| program.functions[frame.function.0].name == "exchange")
+            .unwrap();
+        assert!(exchange.points.iter().any(|point| {
+            point.instruction.is_none() && point.places.contains(&core::PlaceId(0))
+        }));
+        assert_eq!(program.interpret("main", &[]).unwrap(), expected);
+        assert_eq!(native::run(&program, "main", &[]).unwrap(), expected);
+        assert_standalone(&program, expected, label);
+    }
+}
+
+#[test]
+fn source_loan_survives_spawn_and_scope_join() {
+    let source = r#"
+fn child() -> I64 { yield; 1 }
+
+fn start() -> Result<I64, ResourceError> {
+  var x = 41;
+  with borrowed = &mut x {
+    scope { spawn child()?; }
+    borrowed = borrowed + 1;
+  };
+  Result<I64, ResourceError>.Ok(x)
+}
+
+fn main() -> I64 {
+  when (start()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, 42, "scope-join");
+    let limited = ScopeLimits {
+        tasks: 1,
+        ..ScopeLimits::default()
+    };
+    assert_eq!(
+        program.interpret_with_limits("main", &[], limited).unwrap(),
+        0
+    );
+    assert_eq!(
+        native::run_with_limits(&program, "main", &[], limited).unwrap(),
+        0
+    );
+}
+
+#[test]
+fn lexical_loans_survive_request_send_and_receive() {
+    let source = include_str!("../examples/lexical_request.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let frames = frame_layout::analyze(&program).unwrap();
+    let service = frames
+        .iter()
+        .find(|frame| program.functions[frame.function.0].name == "service")
+        .unwrap();
+    assert!(service.points.iter().any(|point| {
+        point.instruction.is_none()
+            && matches!(
+                program.functions[service.function.0].blocks[point.block.0].terminator,
+                core::Terminator::RequestReceive { .. }
+            )
+            && point.places.contains(&core::PlaceId(0))
+    }));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, 42, "request");
+}
+
+#[test]
+fn lexical_loan_survives_full_request_queue() {
+    let source = include_str!("../examples/request_backpressure.phoebe")
+        .replace(
+            "  val second = request(22, second_right);\n  when (sender.send(second)) {",
+            "  var total = 41;\n  val second = request(22, second_right);\n  with borrowed = &mut total {\n    when (sender.send(second)) {",
+        )
+        .replace(
+            "  sender.close();\n  val first_value",
+            "    borrowed = borrowed + 1;\n  };\n  sender.close();\n  val first_value",
+        );
+    let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+    let frames = frame_layout::analyze(&program).unwrap();
+    let exchange = frames
+        .iter()
+        .find(|frame| program.functions[frame.function.0].name == "exchange")
+        .unwrap();
+    assert!(exchange.points.iter().any(|point| {
+        point.instruction.is_none()
+            && matches!(
+                program.functions[exchange.function.0].blocks[point.block.0].terminator,
+                core::Terminator::RequestSend { .. }
+            )
+            && point.places.contains(&core::PlaceId(0))
+    }));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, 42, "request-backpressure");
+    let executable = native::compile_poll_jit(&program, "main").unwrap();
+    let root = unsafe { NativePollTask::new(executable.entry(), executable.layout().total_words) }
+        .unwrap();
+    let mut scheduler = Scheduler::new(root, 2, 1, 2).unwrap();
+    assert_eq!(scheduler.run().unwrap(), 42);
+    assert!(scheduler.stats().parks >= 2);
+    scheduler.verify().unwrap();
 }
 
 #[test]

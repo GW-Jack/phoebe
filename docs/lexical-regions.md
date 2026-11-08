@@ -38,10 +38,10 @@ grant a shared child. The verifier permits concurrent shared loans, rejects
 an exclusive overlap, blocks direct mutation or exclusive reads of a loaned
 root, rejects use after end or out-of-order parent end, and requires identical
 active and frozen loan states at joins.
-It requires loans to end before return, request or reply suspension, spawn,
-or scope join. A loan may cross an ordinary call, `yield`, `channel.send`, or
-`channel.receive`: frame analysis retains both the reference value and its
-root place, and the native poll frame gives the root a stable address.
+It requires loans to end before return. A loan may cross an ordinary call,
+`yield`, channel, request, or reply traffic, spawn, and scope join. Frame
+analysis retains the reference value and any task-local root place at each
+suspension point; the native poll frame gives that root a stable address.
 Interpreter, JIT, and standalone tests exercise direct loans, nested loans
 spanning yield, and loans spanning channel send and receive. The receive test
 runs both delivered and closed outcomes. Source `with r = &x { ... }` and
@@ -52,7 +52,10 @@ across yield, an exclusive loan across channel receive, and an alias forwarded
 to a suspendable helper. At a call, Core compares direct and lexical argument
 roots, rejects an exclusive overlap or a frozen parent, and allows compatible
 shared borrows. A deadlocked helper under a live loan has an interpreter and
-native unwind test. An owned-argument generic call can run under a live loan;
+native unwind test. Reply receive tests cover delivered and closed outcomes;
+request tests cover a pending receive and a full send queue. A scoped spawn
+test covers a pending join and task-limit failure with the loan still live.
+An owned-argument generic call can run under a live loan;
 the current generic body subset cannot suspend or accept borrowed arguments.
 An incoming borrowed scalar parameter can parent a shorter
 lexical loan. The verifier gives it an external root identity, freezes an
@@ -61,13 +64,12 @@ that identity. Across suspension, the caller retains the place and the callee
 retains its reference value.
 
 Ordinary ownership and capability-flow verification remain separate passes over the same explicit
-Core edges. The native frame plan must extend the stable-root check to remaining
-suspension points, and cancellation must release loans before their slots. These checks should
+Core edges. Cancellation must release loans before their slots. These checks should
 remain linear in Core size apart from the existing CFG fixed point, with no
 optimization search during compilation.
 
-Before adding source-level nominal or field borrows, implement all remaining
-suspension and failure unwind paths for live loans, with forged-IR
+Before adding source-level nominal or field borrows, finish failure unwind
+coverage for live loans, with forged-IR
 rejection and interpreter/native differential cases. Product fields are
 currently stored in separate native slots, so nominal borrowing also needs
 a stable aggregate address or an explicit multi-address view. The Maude

@@ -163,8 +163,11 @@ callee receiving its alias, after root and freeze checks. Incoming borrowed
 scalar parameters can be reborrowed in a shorter lexical region; the verifier
 tracks their external root and freezes an exclusive parent until its child
 ends. Owned-argument generic calls can run under a live loan; generic bodies
-still cannot suspend or borrow. Other suspension points and general failure
-unwind remain open. See `docs/lexical-regions.md`.
+still cannot suspend or borrow. Lexical scalar loans now cross all current
+suspension terminators, including request and reply traffic and scope join;
+tests cover pending receive, full-queue send retry, reply delivery and close,
+and a pending join. General failure unwind remains open. See
+`docs/lexical-regions.md`.
 The CLI now carries an immutable `CheckedProgram` from final Core verification
 through interpreter, JIT, object emission, and the optional object cache.
 Native child emission accepts a borrowed verification token rather than

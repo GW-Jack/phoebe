@@ -1,0 +1,44 @@
+fn service(receiver: RequestReceiver<I64>) -> I64 {
+  var total = 41;
+  with borrowed = &mut total {
+    when (receiver.receive()) {
+      ReceiveRequest.Value(incoming) -> {
+        val (value, right) = incoming.unpack();
+        borrowed = borrowed + value;
+        right.complete(borrowed);
+        0
+      },
+      ReceiveRequest.End -> { 0 }
+    };
+  };
+  receiver.close();
+  total
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = request_channel<I64>(1)?;
+  val (right, answer) = reply<I64>()?;
+  spawn service(receiver)?;
+  yield;
+  var total = 41;
+  with borrowed = &mut total {
+    val outgoing = request(1, right);
+    when (sender.send(outgoing)) {
+      SendRequest.Sent -> { 0 },
+      SendRequest.Closed(rejected) -> { rejected.close(); 0 }
+    };
+    borrowed = borrowed + 1;
+  };
+  sender.close();
+  when (answer.receive()) {
+    Reply<I64>.Value(value) -> { Result<I64, ResourceError>.Ok(value) },
+    Reply<I64>.End -> { Result<I64, ResourceError>.Ok(0) }
+  }
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { 0 }
+  }
+}

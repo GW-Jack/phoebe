@@ -97,7 +97,11 @@ fn lexical_loan_rejects_escape_reuse_and_overlap() {
     let valid = lexical_write();
     let mut escaped = valid.clone();
     escaped.functions[0].blocks[0].instructions.pop();
-    assert!(core::verify(&escaped).unwrap_err().contains("crosses exit"));
+    assert!(
+        core::verify(&escaped)
+            .unwrap_err()
+            .contains("crosses return")
+    );
 
     let mut reused = valid.clone();
     let end = reused.functions[0].blocks[0].instructions.pop().unwrap();
@@ -176,7 +180,7 @@ fn lexical_reference_cannot_lose_identity_through_block_parameter() {
 }
 
 #[test]
-fn lexical_loan_requires_matching_cfg_join_and_ends_before_suspension() {
+fn lexical_loan_requires_matching_cfg_join_and_ends_before_return() {
     let mut branch = core::lower(
         &syntax::parse("fn main() -> I64 { var x = 41; if (true) { x } else { x } }").unwrap(),
     )
@@ -210,7 +214,7 @@ fn lexical_loan_requires_matching_cfg_join_and_ends_before_suspension() {
     assert!(
         core::verify(&suspended)
             .unwrap_err()
-            .contains("crosses exit or suspension")
+            .contains("crosses return")
     );
 }
 

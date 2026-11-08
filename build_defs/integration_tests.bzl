@@ -8,6 +8,8 @@ def integration_tests(rust_test):
             "examples/lexical_channel.phoebe",
             "examples/lexical_call.phoebe",
             "examples/lexical_parameter.phoebe",
+            "examples/lexical_request.phoebe",
+            "examples/request_backpressure.phoebe",
         ],
         edition = "2024",
         deps = [":phoebe_lib"],
