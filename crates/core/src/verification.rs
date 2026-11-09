@@ -153,6 +153,17 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                         }
                         state.places[place.0] = false;
                     }
+                    Operation::DestTakeField(place, _) => {
+                        if !state.places[place.0] {
+                            return Err(OwnershipError {
+                                span,
+                                message: format!(
+                                    "{}: destination p{} is not live",
+                                    function.name, place.0
+                                ),
+                            });
+                        }
+                    }
                     Operation::Take(place) => {
                         if !state.places[place.0] {
                             return Err(OwnershipError {

@@ -490,6 +490,13 @@ impl CoreTask {
             Operation::DestField(_, _, _) | Operation::DestPublish(_) => {
                 unreachable!("handled destination above")
             }
+            Operation::DestTakeField(place, index) => {
+                let Some(Value::UnpublishedProduct(_, fields)) = &mut self.stores[base + place.0]
+                else {
+                    unreachable!("verified destination field take")
+                };
+                Some(fields[*index].take().expect("verified initialized field"))
+            }
             Operation::ArrayI64(elements) => Some(Value::ArrayI64(
                 elements.iter().map(|value| as_i64(get(*value))).collect(),
             )),
@@ -1323,6 +1330,9 @@ impl fmt::Display for Program {
                             write!(f, "dest.field p{}, {}, v{}", place.0, index, value.0)?
                         }
                         Operation::DestPublish(place) => write!(f, "dest.publish p{}", place.0)?,
+                        Operation::DestTakeField(place, index) => {
+                            write!(f, "dest.take.field p{}, {}", place.0, index)?
+                        }
                         Operation::Field(owner, index) => {
                             write!(f, "field v{}, {}", owner.0, index)?
                         }

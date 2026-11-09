@@ -35,6 +35,13 @@ struct CleanupSites {
     task_returns: Vec<(BlockId, Vec<(TaskScopeId, Span)>)>,
 }
 
+#[derive(Clone, Copy)]
+struct ActiveDestination {
+    place: PlaceId,
+    data: DataId,
+    initialized: usize,
+}
+
 struct LoweringEnvironment<'a> {
     functions: &'a HashMap<String, FunctionSignature>,
     generics: Option<&'a CheckedModule>,
@@ -61,6 +68,7 @@ struct Lowerer<'a> {
     task_scope_stack: Vec<(TaskScopeId, Span)>,
     task_scope_returns: Vec<(BlockId, Vec<(TaskScopeId, Span)>)>,
     lexical_loans: Vec<ValueId>,
+    active_destinations: Vec<ActiveDestination>,
     next_task_scope: usize,
     automatic_checkpoints: bool,
 }
@@ -94,6 +102,7 @@ impl<'a> Lowerer<'a> {
             task_scope_stack: Vec::new(),
             task_scope_returns: Vec::new(),
             lexical_loans: Vec::new(),
+            active_destinations: Vec::new(),
             next_task_scope: 0,
             automatic_checkpoints,
         };
@@ -157,6 +166,16 @@ impl<'a> Lowerer<'a> {
     }
 
     fn implicit_return(&mut self, value: ValueId, span: Span) {
+        for destination in self.active_destinations.clone().into_iter().rev() {
+            for index in (0..destination.initialized).rev() {
+                let ty = self.data[destination.data.0].fields[index].1;
+                if self.capability_layout.leaves(ty) > 0 {
+                    let taken =
+                        self.emit(Operation::DestTakeField(destination.place, index), ty, span);
+                    self.emit_effect(cleanup::close_operation(taken, ty), span);
+                }
+            }
+        }
         for index in (0..self.lexical_loans.len()).rev() {
             let reference = self.lexical_loans[index];
             self.emit_effect(Operation::BorrowEnd(reference), span);
