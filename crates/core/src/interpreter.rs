@@ -423,6 +423,12 @@ impl CoreTask {
                 };
                 Some(Value::I64(words.len() as i64))
             }
+            Operation::ArrayGetPlace(place, index) => {
+                let Some(Value::ArrayI64(words)) = &self.stores[base + place.0] else {
+                    unreachable!("verified array place")
+                };
+                Some(Value::I64(words[*index]))
+            }
             Operation::Move(value) | Operation::Copy(value) | Operation::InferredCopy(value) => {
                 Some(get(*value))
             }
@@ -1185,6 +1191,9 @@ impl fmt::Display for Program {
                         }
                         Operation::ReadField(place, index) => {
                             write!(f, "place.field p{}, {}", place.0, index)?
+                        }
+                        Operation::ArrayGetPlace(place, index) => {
+                            write!(f, "place.array.get p{}, {}", place.0, index)?
                         }
                         Operation::Neg(a) => write!(f, "neg v{}", a.0)?,
                         Operation::Not(a) => write!(f, "not v{}", a.0)?,

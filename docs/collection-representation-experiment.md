@@ -7,10 +7,12 @@ slice, 2026-11-08.
 and selects by constant-size rule logic; it is not yet fed by Phoebe source or
 Core IR. `crates/collection-storage` exercises selected fixed and contiguous
 layouts, but is not yet Phoebe's interpreter or native runtime.
-Checked Core supports inline `[I64; N]` for `N <= 32`, constant indexed reads,
-and length. The direct and retained Cranelift paths and interpreter execute the
-same Core program. Source syntax, dynamic indexing, larger fixed storage, and
-source-use inference remain open.
+Checked Core supports inline `[I64; N]` for `N <= 32`, literal indexed reads,
+and length. Source accepts local literals such as `[40, 2]`, `array[0]`, and
+`array.len`. Both `val` and `var` element reads select one component; the
+direct and retained Cranelift paths and interpreter execute the same program.
+Array types in source signatures, dynamic indexing, element mutation, larger
+fixed storage, and source-use inference remain open.
 This document does not amend Decision 0003.
 
 ## The semantic boundary

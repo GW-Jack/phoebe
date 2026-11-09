@@ -21,6 +21,8 @@ pub(crate) fn expr_height(expr: &Expr) -> usize {
         | ExprKind::Name(_)
         | ExprKind::Borrow { .. }
         | ExprKind::Member(_, _) => 0,
+        ExprKind::FixedArray(elements) => elements.iter().map(expr_height).max().unwrap_or(0),
+        ExprKind::FixedIndex(array, _) => expr_height(array),
         ExprKind::Copy(value)
         | ExprKind::Neg(value)
         | ExprKind::Not(value)

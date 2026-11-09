@@ -1,5 +1,14 @@
 def integration_tests(rust_test):
     rust_test(
+        name = "source_fixed_arrays_tests",
+        crate_root = "tests/source_fixed_arrays.rs",
+        srcs = ["tests/source_fixed_arrays.rs"],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
         name = "typed_no_alloc_tests",
         crate_root = "tests/typed_no_alloc.rs",
         srcs = ["tests/typed_no_alloc.rs"],

@@ -90,6 +90,8 @@ pub(super) fn body_can_spawn(body: &Body, effects: &HashMap<String, bool>) -> bo
             | ExprKind::Name(_)
             | ExprKind::Borrow { .. }
             | ExprKind::Member(_, _) => false,
+            ExprKind::FixedArray(elements) => elements.iter().any(|value| expr(value, effects)),
+            ExprKind::FixedIndex(array, _) => expr(array, effects),
             ExprKind::Copy(value)
             | ExprKind::Neg(value)
             | ExprKind::Not(value)
@@ -214,6 +216,12 @@ impl Scan<'_> {
             | ExprKind::Name(_)
             | ExprKind::Borrow { .. }
             | ExprKind::Member(_, _) => {}
+            ExprKind::FixedArray(elements) => {
+                for value in elements {
+                    self.expr(value);
+                }
+            }
+            ExprKind::FixedIndex(array, _) => self.expr(array),
             ExprKind::Copy(value)
             | ExprKind::Neg(value)
             | ExprKind::Not(value)

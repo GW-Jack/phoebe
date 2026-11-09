@@ -529,6 +529,7 @@ pub(crate) fn verify_structure(
                 | Operation::CopyPlace(place)
                 | Operation::InferredCopyPlace(place)
                 | Operation::ReadField(place, _)
+                | Operation::ArrayGetPlace(place, _)
                 | Operation::BorrowBegin(place, _)
                 | Operation::Store(place, _) = instruction.operation
                 {

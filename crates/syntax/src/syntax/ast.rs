@@ -190,6 +190,8 @@ pub struct Expr {
 pub enum ExprKind {
     Int(i64),
     Bool(bool),
+    FixedArray(Vec<Expr>),
+    FixedIndex(Box<Expr>, usize),
     Name(String),
     Borrow {
         name: String,

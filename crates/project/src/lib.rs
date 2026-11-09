@@ -679,6 +679,12 @@ fn rewrite_expr(
     };
     match &mut expr.kind {
         ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Borrow { .. } => {}
+        ExprKind::FixedArray(elements) => {
+            for element in elements {
+                nested(element)?;
+            }
+        }
+        ExprKind::FixedIndex(array, _) => nested(array)?,
         ExprKind::Copy(inner)
         | ExprKind::Neg(inner)
         | ExprKind::Not(inner)
@@ -932,6 +938,12 @@ fn shift_expr(expr: &mut Expr, offset: usize) {
         | ExprKind::Name(_)
         | ExprKind::Borrow { .. }
         | ExprKind::Member(_, _) => {}
+        ExprKind::FixedArray(elements) => {
+            for element in elements {
+                shift_expr(element, offset);
+            }
+        }
+        ExprKind::FixedIndex(array, _) => shift_expr(array, offset),
         ExprKind::Copy(value)
         | ExprKind::Neg(value)
         | ExprKind::Not(value)

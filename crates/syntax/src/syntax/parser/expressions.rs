@@ -49,6 +49,35 @@ impl Parser {
                 }
             }
             Token {
+                kind: TokenKind::LBracket,
+                span,
+            } => {
+                self.pos += 1;
+                let mut elements = Vec::new();
+                if self.current().kind != TokenKind::RBracket {
+                    loop {
+                        if elements.len() == 32 {
+                            return Err(Diagnostic::new(
+                                self.current().span,
+                                "inline I64 array exceeds 32 elements",
+                            ));
+                        }
+                        elements.push(self.expr(0)?);
+                        if self.eat(&TokenKind::Comma).is_none() {
+                            break;
+                        }
+                        if self.current().kind == TokenKind::RBracket {
+                            break;
+                        }
+                    }
+                }
+                let end = self.expect(&TokenKind::RBracket, "]")?.span;
+                Expr {
+                    kind: ExprKind::FixedArray(elements),
+                    span: span.join(end),
+                }
+            }
+            Token {
                 kind: TokenKind::True,
                 span,
             } => {
@@ -277,6 +306,35 @@ impl Parser {
 
         let mut chain = 0;
         loop {
+            if self.current().kind == TokenKind::LBracket && min_bp <= 12 {
+                if chain == MAX_PARSE_DEPTH {
+                    return Err(Diagnostic::new(
+                        self.current().span,
+                        "expression chain exceeds compiler limit",
+                    ));
+                }
+                chain += 1;
+                self.pos += 1;
+                let Token {
+                    kind: TokenKind::Int(index),
+                    span,
+                } = self.current().clone()
+                else {
+                    return Err(Diagnostic::new(
+                        self.current().span,
+                        "fixed array index must be a constant nonnegative integer",
+                    ));
+                };
+                let index = usize::try_from(index)
+                    .map_err(|_| Diagnostic::new(span, "fixed array index exceeds target size"))?;
+                self.pos += 1;
+                let end = self.expect(&TokenKind::RBracket, "]")?.span;
+                lhs = Expr {
+                    span: lhs.span.join(end),
+                    kind: ExprKind::FixedIndex(Box::new(lhs), index),
+                };
+                continue;
+            }
             if self.current().kind == TokenKind::Question && min_bp <= 13 {
                 if chain == MAX_PARSE_DEPTH {
                     return Err(Diagnostic::new(

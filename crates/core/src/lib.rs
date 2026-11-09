@@ -114,6 +114,7 @@ pub enum Operation {
     Product(DataId, Vec<ValueId>),
     Field(ValueId, usize),
     ReadField(PlaceId, usize),
+    ArrayGetPlace(PlaceId, usize),
     Neg(ValueId),
     Not(ValueId),
     Add(ValueId, ValueId),

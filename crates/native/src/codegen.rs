@@ -541,6 +541,14 @@ pub(super) fn compile_functions<M: Module>(
                             Some(elements.iter().map(|element| one(*element)).collect())
                         }
                         Operation::ArrayGet(array, index) => Some(vec![get(*array)[*index]]),
+                        Operation::ArrayGetPlace(place, index) => {
+                            Some(vec![builder.ins().stack_load(
+                                pointer_type,
+                                types::I64,
+                                places[place.0][*index],
+                                0,
+                            )])
+                        }
                         Operation::ArrayLen(array) => {
                             let Type::ArrayI64(len) = function.value_types[array.0] else {
                                 unreachable!("verified array length")
