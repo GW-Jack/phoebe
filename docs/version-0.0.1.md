@@ -93,8 +93,10 @@ transfer is rejected while a right field is missing. A mutable product binding
 can assign a top-level field with `record.field = value`; a right-bearing field
 must be empty before it can receive a new owner. When every right-bearing field
 is present again, whole-record transfer is available. The same assignment on a
-`val` product remains rejected. Moving rights from a scoped `with` product
-binding remains unsupported.
+`val` product remains rejected. A scoped `with` product can also move its
+top-level right fields; scope exit closes each right still present, while a
+right transferred out remains with its new owner. A private place is created
+only when the scoped body projects a right-bearing field.
 Checked Core and source support bounded `[I64; N]` values
 for `N <= 256`: `[40, 2]`, `array[0]`, and `array.len`. Owning function
 parameters and returns, product fields, variant payloads, and module interfaces

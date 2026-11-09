@@ -110,8 +110,9 @@ actual Phoebe Core now preserves closed nominal name and field reads, scalar
 field loans, and top-level right-field moves from owned `val` and `var`
 products. The source and Core now also permit reinitializing an empty top-level
 right field of a mutable product, restoring whole-record transfer once all
-rights are present. The prototype's deeper nested partial moves remain separate.
-Its `Right` closes via a Rust `Drop`
+rights are present. A scoped `with` product can move top-level rights, and its
+exit closes only the fields it still owns. The prototype's deeper nested
+partial moves remain separate. Its `Right` closes via a Rust `Drop`
 counter, not the Phoebe runtime.
 
 The current source rule permits a partially moved owned record to read closed
