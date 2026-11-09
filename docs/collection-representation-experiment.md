@@ -1,10 +1,12 @@
 # Collection representation experiment — draft 0.3
 
-Status: exploratory design, isolated Rust benchmark, and pure requirement
-planner, 2026-11-08. `crates/collection-plan` infers requirements from a
-supplied checked-use graph and selects by constant-size rule logic; it is not
-yet fed by Phoebe source or Core IR.
-No Phoebe collection syntax, collection operation, or runtime is implemented.
+Status: exploratory design, isolated Rust benchmark, pure requirement
+planner, and host-side scalar storage kernel, 2026-11-08.
+`crates/collection-plan` infers requirements from a supplied checked-use graph
+and selects by constant-size rule logic; it is not yet fed by Phoebe source or
+Core IR. `crates/collection-storage` exercises selected fixed and contiguous
+layouts, but is not yet Phoebe's interpreter or native runtime.
+No Phoebe collection syntax or Core collection operation is implemented.
 This document does not amend Decision 0003.
 
 ## The semantic boundary
@@ -164,6 +166,18 @@ escaping an unknown ABI boundary. Tests cover these cases in Cargo and Buck2.
 The upstream source/Core use extraction, loan analysis, call summaries, and
 representation implementations are still required; these tests do not prove
 their claims.
+
+The first storage kernel accepts a checked `Plan` with extent and element size
+attached. `FixedInlineI64<N>` stores exactly `N` scalar words with no heap
+allocation or growth method. `FixedRegionI64` allocates once before copying
+its initial values and exposes no growth method. `AppendI64` uses fallible
+reserve before each push, returns the intact scalar on allocation failure,
+and consumes itself into `FrozenI64` without moving its elements. These are
+distinct Rust types, so ordinary reads do not dispatch on a representation
+tag. The host `FixedRegionI64` retains Rust `Vec` metadata; an eventual native
+fixed layout should carry only the extent and storage required by its ABI.
+Segmented and linked representations, task-local region integration, general
+element ownership, and source-to-Core lowering remain open.
 
 The first pass obligations are mechanical: inferred requirements must be a
 sound over-approximation of every reachable use; the selected layout must

@@ -207,6 +207,8 @@ pub struct Effects {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Plan {
     pub representation: Representation,
+    pub extent: Extent,
+    pub element_bytes: usize,
     pub effects: Effects,
     /// A validated freeze permits growth in the build phase, never afterward.
     pub frozen_after_build: bool,
@@ -283,6 +285,8 @@ pub fn select(
     };
     Ok(Plan {
         representation,
+        extent: requirements.extent,
+        element_bytes: constraints.element_bytes,
         effects,
         frozen_after_build: requirements.frozen_after_build,
     })
