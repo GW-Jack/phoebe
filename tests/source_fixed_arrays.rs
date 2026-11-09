@@ -138,6 +138,30 @@ fn indexed_array_update_preserves_prior_values_across_backends() {
 }
 
 #[test]
+fn shared_size_array_update_preserves_prior_value_across_backends() {
+    let elements = std::iter::once("40")
+        .chain(std::iter::repeat_n("0", 30))
+        .chain(std::iter::once("2"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let source = format!(
+        "fn main() -> I64 {{ var a = [{elements}]; val prior = a; a[0] = 0; prior[0] + a[31] }}"
+    );
+    let program = lower(&source);
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!(
+        "phoebe-shared-size-array-update-{}",
+        std::process::id()
+    ));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
 fn indexed_array_update_checks_mutability_bounds_and_element_type() {
     for (source, message) in [
         (
