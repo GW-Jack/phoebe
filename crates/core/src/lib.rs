@@ -3,6 +3,8 @@ use std::fmt;
 use std::sync::Arc;
 use std::task::Poll;
 
+pub mod path_language;
+
 use phoebe_capability::{self as capability_flow, Action as CapAction, Target as CapTarget};
 use phoebe_generic_core::CheckedModule;
 pub use phoebe_layout::{DataDef, DataId, MessageType, Type};
