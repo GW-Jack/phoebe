@@ -1,5 +1,5 @@
 use phoebe::core::Operation;
-use phoebe::runtime::ScopeLimits;
+use phoebe::runtime::{NativePollTask, Scheduler, ScopeLimits};
 use phoebe::{core, native, syntax};
 use std::process::Command;
 
@@ -259,4 +259,53 @@ fn main() -> I64 = when (work()) {
         native::run_with_limits(&program, "main", &[], no_child).unwrap(),
         0
     );
+}
+
+#[test]
+fn child_failure_cancels_parent_with_partially_moved_product() {
+    let source = r#"
+data Pair { sender: Sender<I64>, receiver: Receiver<I64> }
+
+fn grandchild() -> I64 { yield; 0 }
+fn build() -> Result<I64, ResourceError> {
+  spawn grandchild()?;
+  Result<I64, ResourceError>.Ok(0)
+}
+fn child() -> I64 {
+  scope { val unused = build(); }
+  0
+}
+fn start() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  with pair = Pair(sender, receiver) {
+    val moved = pair.sender;
+    scope { spawn child()?; yield; }
+    moved.close();
+  }
+  Result<I64, ResourceError>.Ok(42)
+}
+fn main() -> I64 = when (start()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    core::verify(&program).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    let limits = ScopeLimits {
+        tasks: 3,
+        scopes: 1,
+        ..ScopeLimits::default()
+    };
+    assert!(program.interpret_with_limits("main", &[], limits).is_err());
+    let native_error = native::run_with_limits(&program, "main", &[], limits).unwrap_err();
+    assert!(native_error.contains("task 1 failed"), "{native_error}");
+
+    let executable = native::compile_poll_jit(&program, "main").unwrap();
+    let root = unsafe { NativePollTask::new(executable.entry(), executable.layout().total_words) }
+        .unwrap();
+    let mut scheduler = Scheduler::with_limits(root, limits).unwrap();
+    assert_eq!(scheduler.run().unwrap_err(), native_error);
+    assert_eq!(scheduler.open_handles(), 0);
+    scheduler.verify().unwrap();
 }
