@@ -228,6 +228,38 @@ latency or throughput figure. These local timings are a reproducible baseline
 for this one workload, not a claim of OCaml-like compilation or general native
 runtime speed.
 
+## Scalar and nominal typed channel comparison
+
+On 2026-11-08, an optimized macOS ARM64 build sent one million values through
+a one-slot channel from a child to its parent. The scalar fixture uses `I64`;
+the typed fixture wraps the same number in `Number { value: I64 }`. Both
+executables printed `499999500000`. The benchmark script expands the checked
+10,000-message source fixtures to the requested count, builds standalone
+executables, warms each three times, and alternates run order for 30 measured
+runs per executable:
+
+```sh
+cargo build --release --locked -p phoebe -p phoebe-runtime
+python3 examples/bench_compare_channels.py --messages 1000000 --runs 30
+```
+
+The same script and fixtures ran with compiler revision `5a772b7` and with a
+worktree that skips ownership-plan traversal when the typed queue's plan is
+`Empty`. Each revision built its own runtime archive and standalone programs.
+
+| Revision | Scalar median | Nominal typed median | Typed range |
+| --- | ---: | ---: | ---: |
+| `5a772b7` | 31.023 ms | 38.624 ms | 38.062–39.466 ms |
+| Empty-plan bypass | 31.087 ms | 34.076 ms | 33.469–38.290 ms |
+
+This one-host result suggests the bypass removes about 4.5 ms over a million
+messages on this fixture. The numbers include process startup, scheduler
+traffic, and output, so they are not per-send latency or a general speed
+claim. The typed path still checks message identity and width, copies the
+value into and out of the bounded queue, and preserves the existing
+reply-right path when a plan is present. The differential test executes both
+10,000-message fixtures in interpreter, JIT, and standalone modes.
+
 ## Core dominance verification on a long block chain
 
 On 2026-11-08, `examples/bench_core_verify.rs` constructed a synthetic,

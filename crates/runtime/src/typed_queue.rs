@@ -136,6 +136,10 @@ impl TypedQueue {
             && self.plan == TypedRightPlan::ReplyTo { part: 1 }
     }
 
+    pub(super) fn has_right_plan(&self) -> bool {
+        !matches!(self.plan, TypedRightPlan::Empty)
+    }
+
     pub(super) fn len(&self) -> usize {
         self.len
     }

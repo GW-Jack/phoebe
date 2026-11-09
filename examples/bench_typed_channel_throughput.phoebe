@@ -1,0 +1,47 @@
+data Number { value: I64 }
+
+fn producer(sender: Sender<Number>, count: I64) -> I64 {
+  var index = 0;
+  var rejected = 0;
+  while (index < count) {
+    when (sender.send(Number(index))) {
+      Send<Number>.Sent -> { 0 },
+      Send<Number>.Closed(value) -> {
+        rejected = rejected + value.value;
+        0
+      }
+    };
+    index = index + 1;
+  }
+  sender.close();
+  rejected
+}
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<Number>(capacity = 1)?;
+  spawn producer(sender, 10000)?;
+  var index = 0;
+  var total = 0;
+  while (index < 10000) {
+    when (receiver.receive()) {
+      Receive<Number>.Value(value) -> {
+        total = total + value.value;
+        index = index + 1;
+        0
+      },
+      Receive<Number>.End -> {
+        index = 10000;
+        0
+      }
+    };
+  }
+  receiver.close();
+  Result<I64, ResourceError>.Ok(total)
+}
+
+fn main() -> I64 {
+  when (exchange()) {
+    Result<I64, ResourceError>.Ok(value) -> { value },
+    Result<I64, ResourceError>.Err(error) -> { -1 }
+  }
+}

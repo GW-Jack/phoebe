@@ -1777,24 +1777,28 @@ impl Context<'_> {
                 .typed
                 .as_mut()
                 .expect("checked typed channel");
-            let rights = typed
-                .collect_send_rights(words)
-                .map_err(|message| typed_send_error(message, None))?;
-            for token in rights {
-                if self
-                    .scheduler
-                    .reply_rights
-                    .get(token.0)
-                    .map(|right| right.owner)
-                    != Some(ReplyOwner::Task(self.task))
-                {
-                    return Err(typed_send_error(
-                        "typed reply right is closed or owned elsewhere",
-                        None,
-                    ));
+            if typed.has_right_plan() {
+                let rights = typed
+                    .collect_send_rights(words)
+                    .map_err(|message| typed_send_error(message, None))?;
+                for token in rights {
+                    if self
+                        .scheduler
+                        .reply_rights
+                        .get(token.0)
+                        .map(|right| right.owner)
+                        != Some(ReplyOwner::Task(self.task))
+                    {
+                        return Err(typed_send_error(
+                            "typed reply right is closed or owned elsewhere",
+                            None,
+                        ));
+                    }
                 }
+                rights.len()
+            } else {
+                0
             }
-            rights.len()
         };
         for index in 0..right_count {
             let token = self.scheduler.channels[channel]
@@ -1832,19 +1836,23 @@ impl Context<'_> {
         }
         if typed.len() != 0 {
             let right_count = {
-                let rights = typed.collect_front_rights()?;
-                for token in rights {
-                    if self
-                        .scheduler
-                        .reply_rights
-                        .get(token.0)
-                        .map(|right| right.owner)
-                        != Some(ReplyOwner::Queue(channel))
-                    {
-                        return Err("queued typed reply ownership mismatch".into());
+                if typed.has_right_plan() {
+                    let rights = typed.collect_front_rights()?;
+                    for token in rights {
+                        if self
+                            .scheduler
+                            .reply_rights
+                            .get(token.0)
+                            .map(|right| right.owner)
+                            != Some(ReplyOwner::Queue(channel))
+                        {
+                            return Err("queued typed reply ownership mismatch".into());
+                        }
                     }
+                    rights.len()
+                } else {
+                    0
                 }
-                rights.len()
             };
             for index in 0..right_count {
                 let token = self.scheduler.channels[channel]

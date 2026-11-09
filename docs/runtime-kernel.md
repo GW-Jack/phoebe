@@ -20,6 +20,10 @@ before changing any owner; dequeue returns those rights to the receiving task.
 A full or closed send leaves the caller's words and rights untouched. Closing
 the last receiver structurally closes queued rights. Tests cover multiple
 rights, tagged inactive payloads, rejection, discard, and two-task parking.
+For an `Empty` right plan, successful typed send and receive skip the
+right-collection walk; type identity, width, capacity, and queue order checks
+still apply. `docs/performance-baseline.md` records a local scalar/typed
+comparison before and after that path was introduced.
 The existing checked Core `Request<I64>` operations now use the typed queue
 through the request runtime adapters, including in JIT and standalone output.
 Descriptor generation for a checked ABI layout is available in
