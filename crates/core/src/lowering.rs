@@ -770,7 +770,7 @@ fn lower_internal(
                 .map_err(|message| Diagnostic::new(span, message))?;
                 for owner in live_owners {
                     match owner {
-                        verification::SlotOwner::Value(value) => {
+                        cleanup::LiveOwner::Whole(verification::SlotOwner::Value(value)) => {
                             function.blocks[exit.block].instructions.push(Instruction {
                                 result: None,
                                 operation: cleanup::close_operation(
@@ -780,13 +780,31 @@ fn lower_internal(
                                 span,
                             });
                         }
-                        verification::SlotOwner::Place(place) => {
+                        cleanup::LiveOwner::Whole(verification::SlotOwner::Place(place)) => {
                             let ty = function.place_types[place.0];
                             let taken = ValueId(function.value_types.len());
                             function.value_types.push(ty);
                             function.blocks[exit.block].instructions.push(Instruction {
                                 result: Some(taken),
                                 operation: Operation::Take(place),
+                                span,
+                            });
+                            function.blocks[exit.block].instructions.push(Instruction {
+                                result: None,
+                                operation: cleanup::close_operation(taken, ty),
+                                span,
+                            });
+                        }
+                        cleanup::LiveOwner::PlaceField(place, field) => {
+                            let Type::Data(id) = function.place_types[place.0] else {
+                                unreachable!("partial cleanup needs a product place")
+                            };
+                            let ty = program.data[id.0].fields[field].1;
+                            let taken = ValueId(function.value_types.len());
+                            function.value_types.push(ty);
+                            function.blocks[exit.block].instructions.push(Instruction {
+                                result: Some(taken),
+                                operation: Operation::TakeField(place, field),
                                 span,
                             });
                             function.blocks[exit.block].instructions.push(Instruction {

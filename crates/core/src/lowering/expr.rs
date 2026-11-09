@@ -105,15 +105,17 @@ impl Lowerer<'_> {
                             Diagnostic::new(expr.span, format!("unknown field {variant}"))
                         })?;
                     let field_type = self.data[id.0].fields[index].1;
-                    if self.capability_layout.leaves(field_type) > 0 {
-                        return Err(Diagnostic::new(
-                            expr.span,
-                            "capability field requires whole-product unpack",
-                        ));
-                    }
+                    let owns_right = self.capability_layout.leaves(field_type) > 0;
                     let operation = match binding {
-                        Binding::Val(value) => Operation::Field(value, index),
+                        Binding::Val(value) if !owns_right => Operation::Field(value, index),
+                        Binding::Var(place) if owns_right => Operation::TakeField(place, index),
                         Binding::Var(place) => Operation::ReadField(place, index),
+                        Binding::Val(_) => {
+                            return Err(Diagnostic::new(
+                                expr.span,
+                                "capability field move requires a var product binding",
+                            ));
+                        }
                         Binding::Ref(_, _) => unreachable!("data reference is unsupported"),
                     };
                     (operation, field_type)

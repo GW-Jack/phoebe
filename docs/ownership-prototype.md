@@ -105,15 +105,17 @@ disjoint.
 On failed result construction, a caller-owned destination containing a
 retained payload and the moved right closes that right once; the source has
 an empty right slot and does not close it again. This is model behavior. The
-actual Phoebe Core now preserves closed nominal name and field reads but does
-not support these field loans or fieldwise right-transfer semantics. The model's
-`Right` closes via a Rust `Drop` counter, not the Phoebe runtime.
+actual Phoebe Core now preserves closed nominal name and field reads, scalar
+field loans, and top-level right-field moves from mutable products. The
+prototype's deeper nested partial moves and field reinitialization remain
+separate. Its `Right` closes via a Rust `Drop` counter, not the Phoebe runtime.
 
-Two implementation choices remain: whether partially moved records are legal
-source values, and whether the compiler can automatically rebuild them when
-an owning call needs the complete record. In either case, the checker needs
-per-field initialization and capability ownership at CFG joins, and a public
-API cannot make transfer depend on a callee's private body.
+The current source rule permits a partially moved `var` record to read closed
+siblings and move other live right fields. Whole-record transfer requires all
+rights to be present. Reinitializing an empty field and automatically rebuilding
+a complete record for an owning call remain open. The checker needs exact
+per-field capability state at CFG joins, and a public API cannot make transfer
+depend on a callee's private body.
 
 ## Compatibility decisions before source adoption
 

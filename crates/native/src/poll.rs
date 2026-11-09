@@ -849,7 +849,8 @@ fn compile_poll_module<M: Module>(
                                 })
                                 .collect(),
                         ),
-                        Operation::DestTakeField(place, index) => {
+                        Operation::DestTakeField(place, index)
+                        | Operation::TakeField(place, index) => {
                             let Type::Data(id) = function.place_types[place.0] else {
                                 unreachable!("verified destination type")
                             };
@@ -2017,6 +2018,7 @@ fn validate_poll_function(
                     | Operation::DestField(_, _, _)
                     | Operation::DestPublish(_)
                     | Operation::DestTakeField(_, _)
+                    | Operation::TakeField(_, _)
                     | Operation::Field(_, _)
                     | Operation::Neg(_)
                     | Operation::Not(_)

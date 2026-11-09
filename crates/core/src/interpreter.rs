@@ -83,6 +83,11 @@ fn close_caps(value: Value, context: &mut Option<&mut Context<'_>>) -> Result<()
                 close_caps(field, context)?;
             }
         }
+        Value::PartialProduct(_, fields) => {
+            for field in fields.into_iter().rev().flatten() {
+                close_caps(field, context)?;
+            }
+        }
         Value::Data(_, _, Some(payload)) => close_caps(*payload, context)?,
         Value::Sender(token) => context
             .as_deref_mut()
@@ -501,6 +506,21 @@ impl CoreTask {
                 };
                 Some(fields[*index].take().expect("verified initialized field"))
             }
+            Operation::TakeField(place, index) => {
+                let stored = self.stores[base + place.0]
+                    .as_mut()
+                    .expect("verified product place");
+                if let Value::Product(id, fields) = stored {
+                    *stored = Value::PartialProduct(
+                        *id,
+                        std::mem::take(fields).into_iter().map(Some).collect(),
+                    );
+                }
+                let Value::PartialProduct(_, fields) = stored else {
+                    unreachable!("verified product field take")
+                };
+                Some(fields[*index].take().expect("verified live field"))
+            }
             Operation::ArrayI64(elements) => {
                 let mut words = [0; 32];
                 for (slot, element) in words.iter_mut().zip(elements) {
@@ -548,12 +568,14 @@ impl CoreTask {
                 };
                 Some(fields[*index].clone())
             }
-            Operation::ReadField(place, index) => {
-                let Some(Value::Product(_, fields)) = &self.stores[base + place.0] else {
-                    unreachable!("verified product place")
-                };
-                Some(fields[*index].clone())
-            }
+            Operation::ReadField(place, index) => Some(match &self.stores[base + place.0] {
+                Some(Value::Product(_, fields)) => fields[*index].clone(),
+                Some(Value::PartialProduct(_, fields)) => fields[*index]
+                    .as_ref()
+                    .expect("verified live field")
+                    .clone(),
+                _ => unreachable!("verified product place"),
+            }),
             Operation::Neg(a) => Some(Value::I64(as_i64(get(*a)).wrapping_neg())),
             Operation::Not(a) => Some(Value::Bool(!as_bool(get(*a)))),
             Operation::Add(a, b) => Some(Value::I64(as_i64(get(*a)).wrapping_add(as_i64(get(*b))))),
@@ -1180,20 +1202,22 @@ impl Task for CoreTask {
 
 fn field_at<'a>(mut value: &'a Value, path: &[usize]) -> &'a Value {
     for &index in path {
-        let Value::Product(_, fields) = value else {
-            unreachable!("verified product field path")
+        value = match value {
+            Value::Product(_, fields) => &fields[index],
+            Value::PartialProduct(_, fields) => fields[index].as_ref().expect("live field path"),
+            _ => unreachable!("verified product field path"),
         };
-        value = &fields[index];
     }
     value
 }
 
 fn field_at_mut<'a>(mut value: &'a mut Value, path: &[usize]) -> &'a mut Value {
     for &index in path {
-        let Value::Product(_, fields) = value else {
-            unreachable!("verified product field path")
+        value = match value {
+            Value::Product(_, fields) => &mut fields[index],
+            Value::PartialProduct(_, fields) => fields[index].as_mut().expect("live field path"),
+            _ => unreachable!("verified product field path"),
         };
-        value = &mut fields[index];
     }
     value
 }
@@ -1206,6 +1230,7 @@ fn as_i64(value: Value) -> i64 {
         | Value::ArrayI64(_)
         | Value::Data(_, _, _)
         | Value::Product(_, _)
+        | Value::PartialProduct(_, _)
         | Value::UnpublishedProduct(_, _)
         | Value::Ref(_)
         | Value::RefPath(_, _)
@@ -1228,6 +1253,7 @@ fn as_bool(value: Value) -> bool {
         | Value::ArrayI64(_)
         | Value::Data(_, _, _)
         | Value::Product(_, _)
+        | Value::PartialProduct(_, _)
         | Value::UnpublishedProduct(_, _)
         | Value::Ref(_)
         | Value::RefPath(_, _)
@@ -1348,6 +1374,9 @@ impl fmt::Display for Program {
                         }
                         Operation::ReadField(place, index) => {
                             write!(f, "place.field p{}, {}", place.0, index)?
+                        }
+                        Operation::TakeField(place, index) => {
+                            write!(f, "place.take.field p{}, {}", place.0, index)?
                         }
                         Operation::ArrayGetPlace(place, index) => {
                             write!(f, "place.array.get p{}, {}", place.0, index)?

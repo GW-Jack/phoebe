@@ -193,7 +193,7 @@ fn main() -> I64 = 0
                 "  pair.close_caps();",
                 "  pair.sender;\n  pair.close_caps();",
             ),
-            "whole-product unpack",
+            "var product binding",
         ),
     ] {
         let error = core::lower(&syntax::parse(&changed).unwrap()).unwrap_err();
@@ -226,7 +226,7 @@ fn main() -> I64 = 0
         ),
         (
             overwrite.replace("  saved = second;", "  saved.sender;"),
-            "whole-product unpack",
+            "not live",
         ),
     ] {
         let error = core::lower(&syntax::parse(&source).unwrap()).unwrap_err();

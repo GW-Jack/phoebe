@@ -3,6 +3,12 @@
 use super::*;
 use std::collections::HashMap;
 
+#[derive(Debug)]
+pub(super) enum LiveOwner {
+    Whole(verification::SlotOwner),
+    PlaceField(PlaceId, usize),
+}
+
 pub(super) fn close_operation(value: ValueId, ty: Type) -> Operation {
     match ty {
         Type::Data(_) => Operation::CloseCaps(value),
@@ -18,7 +24,7 @@ pub(super) fn live_owners(
     layout: &verification::capability_layout::Layout,
     slot_owners: &[verification::SlotOwner],
     live: &[capability_flow::Slot],
-) -> Result<Vec<verification::SlotOwner>, String> {
+) -> Result<Vec<LiveOwner>, String> {
     let mut owners = Vec::new();
     let mut counts = HashMap::new();
     for slot in live {
@@ -31,21 +37,49 @@ pub(super) fn live_owners(
         });
         *count += 1;
     }
-    owners
-        .into_iter()
-        .map(|owner| {
-            let ty = match owner {
-                verification::SlotOwner::Value(value) => value_types[value.0],
-                verification::SlotOwner::Place(place) => place_types[place.0],
-            };
-            if counts[&owner] != layout.leaves(ty) {
+    let live_slots = live
+        .iter()
+        .map(|slot| slot.0)
+        .collect::<std::collections::HashSet<_>>();
+    let mut cleanup = Vec::new();
+    for owner in owners {
+        let ty = match owner {
+            verification::SlotOwner::Value(value) => value_types[value.0],
+            verification::SlotOwner::Place(place) => place_types[place.0],
+        };
+        if counts[&owner] == layout.leaves(ty) {
+            cleanup.push(LiveOwner::Whole(owner));
+            continue;
+        }
+        let (verification::SlotOwner::Place(place), Type::Data(id)) = (owner, ty) else {
+            return Err(format!(
+                "partial ownership of capability owner {owner:?} at cleanup"
+            ));
+        };
+        let base = slot_owners
+            .iter()
+            .position(|candidate| *candidate == owner)
+            .ok_or("live place has no capability slots")?;
+        for field in (0..layout.field_count(id)).rev() {
+            let leaves = layout.field_leaves(id, field);
+            let width = leaves.len();
+            if width == 0 {
+                continue;
+            }
+            let present = (leaves.start..leaves.end)
+                .filter(|offset| live_slots.contains(&(base + offset)))
+                .count();
+            if present == width {
+                cleanup.push(LiveOwner::PlaceField(place, field));
+            } else if present != 0 {
                 return Err(format!(
-                    "partial ownership of capability owner {owner:?} at cleanup"
+                    "partial ownership inside field {field} of p{} at cleanup",
+                    place.0
                 ));
             }
-            Ok(owner)
-        })
-        .collect()
+        }
+    }
+    Ok(cleanup)
 }
 
 #[cfg(test)]
@@ -80,8 +114,8 @@ mod tests {
                 .unwrap()
                 .as_slice(),
             [
-                verification::SlotOwner::Value(ValueId(0)),
-                verification::SlotOwner::Value(ValueId(1))
+                LiveOwner::Whole(verification::SlotOwner::Value(ValueId(0))),
+                LiveOwner::Whole(verification::SlotOwner::Value(ValueId(1)))
             ]
         ));
         assert!(

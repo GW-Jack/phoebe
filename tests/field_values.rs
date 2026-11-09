@@ -68,6 +68,6 @@ fn main() -> I64 = when (acquire()) {
     assert!(
         error
             .message
-            .contains("capability field requires whole-product unpack")
+            .contains("capability field move requires a var product binding")
     );
 }

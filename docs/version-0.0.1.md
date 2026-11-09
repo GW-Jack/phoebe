@@ -63,8 +63,10 @@ Scalar `I64` and `Bool` fields of mutable product locals support nested
 overlapping loans and whole-place mutation while a field loan is live are
 rejected. Field loans survive `yield` with stable retained storage. Immutable
 product bindings can supply shared field borrows through scalar projection.
-Whole-product references and field loans into mutable capability-bearing
-records remain outside this executable slice.
+Scalar sibling loans from mutable capability-bearing records are supported,
+including after a different top-level right field moves. Whole-product
+references and loans of right-bearing fields remain outside this executable
+slice.
 Boolean operators require `Bool` on both sides even when the right side is
 skipped at runtime. Their precedence is `||` below `&&`, below comparisons;
 the right side is a separate Core CFG branch and may contain `?`.
@@ -79,8 +81,12 @@ are not implemented. `copy(x)` still requests an explicit independent value. The
 cost ledger distinguishes explicit copies, inferred name uses, and inferred
 nominal field values. Capability-bearing values remain affine: whole-value
 transfers consume the source, and CFG joins reject reuse after a move. Products
-with rights permit independent reads of closed sibling fields, while moving a
-right field still requires whole-product unpack.
+with rights permit independent reads of closed sibling fields. A `var` product
+permits a top-level capability field to move out once; closed siblings remain
+readable, other right fields can move independently, and an early `?` closes
+rights still present in the partial record. Whole-record transfer is rejected
+while a right field is missing. Reinitializing an empty field and moving rights
+from a `val` product remain unsupported.
 Checked Core and source support bounded inline `[I64; N]` values
 for `N <= 32`: `[40, 2]`, `array[0]`, and `array.len`. Owning function
 parameters and returns, product fields, variant payloads, and module interfaces

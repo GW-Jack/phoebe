@@ -140,6 +140,17 @@ pub(crate) fn capability_graph(
                         actions.push(CapAction::MoveGroup(moves));
                     }
                 }
+                Operation::TakeField(place, field) => {
+                    let Type::Data(id) = function.place_types[place.0] else {
+                        unreachable!("verified product place")
+                    };
+                    let leaves = layout.field_leaves(id, *field);
+                    let source = (places[place.0].start + leaves.start)
+                        ..(places[place.0].start + leaves.end);
+                    let taken = instruction.result.expect("verified field take result");
+                    let moves = move_ranges(source, slots[taken.0].clone());
+                    actions.push(CapAction::MoveGroup(moves));
+                }
                 Operation::Take(place) => {
                     let taken = instruction.result.expect("verified take has result");
                     let moves = move_ranges(places[place.0].clone(), slots[taken.0].clone());
@@ -147,13 +158,7 @@ pub(crate) fn capability_graph(
                         actions.push(CapAction::MoveGroup(moves));
                     }
                 }
-                Operation::ReadField(place, _) => {
-                    actions.extend(
-                        places[place.0]
-                            .clone()
-                            .map(|slot| CapAction::Require(capability_flow::Slot(slot))),
-                    );
-                }
+                Operation::ReadField(_, _) => {}
                 Operation::Variant(_, _, payload) => {
                     let sum = instruction.result.expect("verified variant has result");
                     if let Some(envelope) = slots[sum.0].clone().next() {
