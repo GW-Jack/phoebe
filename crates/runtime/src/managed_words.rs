@@ -45,6 +45,23 @@ unsafe fn data(pointer: NonNull<ManagedWords>) -> *mut i64 {
 /// an independent copy; mutation of a sole owner writes in place.
 pub struct SharedWords(NonNull<ManagedWords>);
 
+impl std::fmt::Debug for SharedWords {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("SharedWords")
+            .field(&self.as_slice())
+            .finish()
+    }
+}
+
+impl PartialEq for SharedWords {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl Eq for SharedWords {}
+
 // SAFETY: all shared reads are immutable, reference counts are atomic, and a
 // mutable write needs &mut SharedWords plus a sole owner count.
 unsafe impl Send for SharedWords {}

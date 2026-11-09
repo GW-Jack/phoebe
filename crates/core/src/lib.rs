@@ -40,7 +40,7 @@ pub enum Value {
     I64(i64),
     Bool(bool),
     Unit,
-    ArrayI64(Vec<i64>),
+    ArrayI64(ArrayValue),
     Data(DataId, usize, Option<Box<Value>>),
     Product(DataId, Vec<Value>),
     UnpublishedProduct(DataId, Vec<Option<Value>>),
@@ -52,6 +52,48 @@ pub enum Value {
     ReplyReceiver(ReplyReceiverToken),
     Request(i64, ReplyToken),
     ResourceError(ResourceError),
+}
+
+/// Interpreter storage for a fixed array. The source value has the same
+/// semantics in either representation; larger arrays can share immutable
+/// storage until a place is written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ArrayValue {
+    Inline(Vec<i64>),
+    Shared(runtime::SharedWords),
+}
+
+impl ArrayValue {
+    pub fn from_slice(words: &[i64]) -> Result<Self, String> {
+        if words.len() < 16 {
+            Ok(Self::Inline(words.to_vec()))
+        } else {
+            runtime::SharedWords::try_new(words)
+                .map(Self::Shared)
+                .map_err(|error| format!("array allocation failed: {error:?}"))
+        }
+    }
+
+    pub fn as_slice(&self) -> &[i64] {
+        match self {
+            Self::Inline(words) => words,
+            Self::Shared(words) => words.as_slice(),
+        }
+    }
+
+    pub fn set(&mut self, index: usize, value: i64) -> Result<(), String> {
+        match self {
+            Self::Inline(words) => {
+                let slot = words.get_mut(index).ok_or("array index is out of bounds")?;
+                *slot = value;
+                Ok(())
+            }
+            Self::Shared(words) => words
+                .try_set(index, value)
+                .map(|_| ())
+                .map_err(|error| format!("array update failed: {error:?}")),
+        }
+    }
 }
 
 type TypedValue = (ValueId, Type);

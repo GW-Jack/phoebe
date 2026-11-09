@@ -378,8 +378,12 @@ impl CoreTask {
     }
 
     fn value(&self, id: ValueId) -> Value {
+        self.peek_value(id).clone()
+    }
+
+    fn peek_value(&self, id: ValueId) -> &Value {
         self.frames.last().expect("active frame").values[id.0]
-            .clone()
+            .as_ref()
             .expect("verified value is defined")
     }
 
@@ -497,33 +501,39 @@ impl CoreTask {
                 };
                 Some(fields[*index].take().expect("verified initialized field"))
             }
-            Operation::ArrayI64(elements) => Some(Value::ArrayI64(
-                elements.iter().map(|value| as_i64(get(*value))).collect(),
-            )),
+            Operation::ArrayI64(elements) => {
+                let mut words = [0; 32];
+                for (slot, element) in words.iter_mut().zip(elements) {
+                    *slot = as_i64(get(*element));
+                }
+                Some(Value::ArrayI64(ArrayValue::from_slice(
+                    &words[..elements.len()],
+                )?))
+            }
             Operation::ArrayGet(array, index) => {
-                let Value::ArrayI64(words) = get(*array) else {
+                let Value::ArrayI64(words) = self.peek_value(*array) else {
                     unreachable!("verified array get")
                 };
-                Some(Value::I64(words[*index]))
+                Some(Value::I64(words.as_slice()[*index]))
             }
             Operation::ArrayLen(array) => {
-                let Value::ArrayI64(words) = get(*array) else {
+                let Value::ArrayI64(words) = self.peek_value(*array) else {
                     unreachable!("verified array length")
                 };
-                Some(Value::I64(words.len() as i64))
+                Some(Value::I64(words.as_slice().len() as i64))
             }
             Operation::ArrayGetPlace(place, index) => {
                 let Some(Value::ArrayI64(words)) = &self.stores[base + place.0] else {
                     unreachable!("verified array place")
                 };
-                Some(Value::I64(words[*index]))
+                Some(Value::I64(words.as_slice()[*index]))
             }
             Operation::ArraySetPlace(place, index, value) => {
                 let value = as_i64(get(*value));
                 let Some(Value::ArrayI64(words)) = &mut self.stores[base + place.0] else {
                     unreachable!("verified array place")
                 };
-                words[*index] = value;
+                words.set(*index, value)?;
                 None
             }
             Operation::Move(_)

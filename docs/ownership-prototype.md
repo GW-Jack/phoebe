@@ -25,10 +25,11 @@ destination or regular expression is exposed.
 
 Decision 0006 makes that value behavior part of the language contract. The
 current compiler realizes it with fixed-size component copies on name use and
-CFG-aware last-use transfers for SSA values and `var` places; it does not yet infer borrow versus retain or
-use shared storage. The runtime now has a separate managed-word kernel with
-retain, release, and failure-atomic copy-on-write; `managed-storage.md` records
-its ABI and the remaining compiler integration.
+CFG-aware last-use transfers for SSA values and `var` places. The interpreter
+uses managed shared storage for arrays of 16 to 32 words; native execution
+still copies inline components. Checked Core does not yet select physical
+retain/release actions or report their costs. `managed-storage.md` records the
+kernel ABI and the remaining compiler integration.
 
 ## Executable artifacts
 
@@ -80,7 +81,7 @@ Phoebe scheduler.
 
 | Mechanism | What the prototype establishes | Required Phoebe integration |
 | --- | --- | --- |
-| Inferred use | A read can borrow; a last owning use moves; an owning use with a later use retains closed data; a capability cannot be retained. | Source value semantics, closed/right distinction, and CFG-aware last-use moves are implemented. Add borrow/retain selection, retain/release costs, and shared representation. |
+| Inferred use | A read can borrow; a last owning use moves; an owning use with a later use retains closed data; a capability cannot be retained. | Source value semantics, closed/right distinction, CFG-aware last-use moves, and interpreter-only managed arrays are implemented. Add checked borrow/retain selection, native shared representation, and physical cost sites. |
 | Destination construction | A write-once field cannot be filled twice; a result with a missing field cannot be published; dropping an incomplete destination drops initialized fields. | Checked local destinations now cover two-field products whose later field directly uses `?`, including nested rights and suspension. Other products retain SSA construction. Extend to caller storage, sums, and owned closed storage cleanup. |
 | Regex paths | Named left/right fields are disjoint; a call result summarized as any subfield conservatively overlaps either; nested paths can be distinguished. | Add field loans and path roots to Core, implement exact terminating regex/automaton checks and CFG joins, prove or validate the checker, check actual native address and cleanup rules. |
 
