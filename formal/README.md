@@ -120,6 +120,25 @@ It does not model source lowering, CFG joins, native storage addresses, or a
 refinement relation to executable Core. `docs/lexical-regions.md` states the
 intended general invariant and the proposed Core boundary.
 
+## Field-path loan authority
+
+`field_path_loans.maude` gives one owner five symbolic paths: the root, two
+fields, and two children of the left field. Either of two loan slots can hold
+a shared or exclusive loan at any path. Field writes and whole-owner transfer
+are enabled only when their target paths do not conflict with active loans.
+The exhaustive search visits 142 states without overlapping exclusive loans
+or a moved owner with a live loan. Witnesses reach disjoint exclusive sibling
+loans, overlapping shared parent/child loans, a write to the left field while
+the right field is shared, and a transfer after both loans end. Two negative
+searches exclude an overlapping exclusive parent/child pair and transfer with
+a live loan. Deliberately invalid states are classified bad.
+
+This checks the finite authority transition model, not the executable Core
+verifier or native address calculation. The general prefix-overlap argument
+is in `docs/field-path-loans.md`; its Rust implementation has a separate
+bounded comparison against explicit language membership. Whole-product
+references and partial capability-bearing records remain unimplemented.
+
 ## Lexical task scope membership
 
 `lexical_scopes.maude` has one root task, an earlier sibling in the root

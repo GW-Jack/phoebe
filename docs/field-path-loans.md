@@ -35,6 +35,11 @@ the general property for the represented language. Neither is a proof that
 source lowering chooses the correct storage roots or that native addresses
 match those paths.
 
+`formal/field_path_loans.maude` separately checks a finite authority machine
+with two loan slots and nested fields. It explores all enabled transitions
+for shared/exclusive parent and sibling loans, field writes, and whole-owner
+transfer. This is a design-model check, not a refinement proof for Core.
+
 The verifier now carries paths on lexical and call loans. Source `&record.meta.id`
 and `&mut record.meta.id` work for scalar `I64` and `Bool` leaves of `var`
 products, including across suspension. The interpreter resolves the nested

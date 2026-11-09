@@ -13,6 +13,7 @@ CASES = (
     ("check_request_backpressure.maude", 1, 7, 1),
     ("check_retained_borrow.maude", 1, 4, 1),
     ("check_lexical_borrows.maude", 4, 8, 2),
+    ("check_field_path_loans.maude", 3, 4, 2),
     ("check_lexical_scopes.maude", 2, 7, 1),
     ("check_product_capabilities.maude", 2, 12, 1),
     ("check_sum_capabilities.maude", 4, 22, 3),
