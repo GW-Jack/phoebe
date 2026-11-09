@@ -7,11 +7,15 @@ use phoebe_collection_plan::{Extent, Plan, Representation};
 pub enum StorageError {
     UnsupportedRepresentation,
     InvalidPlan,
+    Limit,
     Allocation,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct PushError(pub i64);
+pub enum PushError {
+    Limit(i64),
+    Allocation(i64),
+}
 
 pub trait ReadI64 {
     fn as_slice(&self) -> &[i64];
@@ -64,6 +68,14 @@ pub struct FixedRegionI64 {
 
 impl FixedRegionI64 {
     pub fn from_values(plan: Plan, values: &[i64]) -> Result<Self, StorageError> {
+        Self::from_values_bounded(plan, values, usize::MAX)
+    }
+
+    pub fn from_values_bounded(
+        plan: Plan,
+        values: &[i64],
+        max_elements: usize,
+    ) -> Result<Self, StorageError> {
         if plan.representation != Representation::FixedRegion
             || plan.element_bytes != std::mem::size_of::<i64>()
             || matches!(plan.extent, Extent::Static(count) if count != values.len())
@@ -75,6 +87,9 @@ impl FixedRegionI64 {
             || plan.frozen_after_build
         {
             return Err(StorageError::InvalidPlan);
+        }
+        if values.len() > max_elements {
+            return Err(StorageError::Limit);
         }
         let mut words = Vec::new();
         words
@@ -115,7 +130,16 @@ impl AppendI64 {
     }
 
     pub fn push(&mut self, value: i64) -> Result<(), PushError> {
-        self.words.try_reserve(1).map_err(|_| PushError(value))?;
+        self.push_bounded(value, usize::MAX)
+    }
+
+    pub fn push_bounded(&mut self, value: i64, max_elements: usize) -> Result<(), PushError> {
+        if self.words.len() >= max_elements {
+            return Err(PushError::Limit(value));
+        }
+        self.words
+            .try_reserve(1)
+            .map_err(|_| PushError::Allocation(value))?;
         self.words.push(value);
         Ok(())
     }
@@ -220,6 +244,26 @@ mod tests {
         assert_eq!(
             FixedRegionI64::from_values(region, &[1, 2]).unwrap_err(),
             StorageError::InvalidPlan
+        );
+    }
+
+    #[test]
+    fn bounded_growth_rejects_before_changing_owned_values() {
+        let uses = summarize_path(Extent::Static(0), &[Use::Append]).unwrap();
+        let plan = select(uses, LOCAL).unwrap();
+        let mut values = AppendI64::new(plan).unwrap();
+        values.push_bounded(7, 2).unwrap();
+        values.push_bounded(11, 2).unwrap();
+        assert_eq!(values.push_bounded(13, 2), Err(PushError::Limit(13)));
+        assert_eq!(values.as_slice(), &[7, 11]);
+        assert_eq!(
+            FixedRegionI64::from_values_bounded(
+                select(Requirements::new(Extent::Runtime), LOCAL).unwrap(),
+                &[7, 11],
+                1
+            )
+            .unwrap_err(),
+            StorageError::Limit
         );
     }
 }

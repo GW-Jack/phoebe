@@ -172,8 +172,10 @@ attached. `FixedInlineI64<N>` stores exactly `N` scalar words with no heap
 allocation or growth method. `FixedRegionI64` allocates once before copying
 its initial values and exposes no growth method. `AppendI64` uses fallible
 reserve before each push, returns the intact scalar on allocation failure,
-and consumes itself into `FrozenI64` without moving its elements. These are
-distinct Rust types, so ordinary reads do not dispatch on a representation
+and consumes itself into `FrozenI64` without moving its elements. A bounded
+push rejects at the element limit before attempting reserve or changing the
+sequence. Fixed-region construction checks the same limit before allocation.
+These are distinct Rust types, so ordinary reads do not dispatch on a representation
 tag. The host `FixedRegionI64` retains Rust `Vec` metadata; an eventual native
 fixed layout should carry only the extent and storage required by its ABI.
 Segmented and linked representations, task-local region integration, general
