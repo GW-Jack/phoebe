@@ -5,6 +5,7 @@ mod cleanup;
 mod communication;
 mod data;
 mod expr;
+mod field_move_scan;
 mod lexical_borrow;
 mod request;
 mod reuse;
@@ -60,6 +61,8 @@ struct Lowerer<'a> {
     blocks: Vec<DraftBlock>,
     value_types: Vec<Type>,
     place_types: Vec<Type>,
+    immutable_places: Vec<bool>,
+    projected_fields: std::collections::HashSet<(String, String)>,
     param_modes: Vec<ParamMode>,
     return_type: Type,
     current: BlockId,
@@ -79,6 +82,7 @@ impl<'a> Lowerer<'a> {
         params: Vec<(ParamMode, Type)>,
         return_type: Type,
         automatic_checkpoints: bool,
+        projected_fields: std::collections::HashSet<(String, String)>,
     ) -> Self {
         let mut lowerer = Self {
             functions: environment.functions,
@@ -94,6 +98,8 @@ impl<'a> Lowerer<'a> {
             }],
             value_types: Vec::new(),
             place_types: Vec::new(),
+            immutable_places: Vec::new(),
+            projected_fields,
             param_modes: params.iter().map(|(mode, _)| *mode).collect(),
             return_type,
             current: BlockId(0),
@@ -157,7 +163,26 @@ impl<'a> Lowerer<'a> {
     fn place(&mut self, ty: Type) -> PlaceId {
         let id = PlaceId(self.place_types.len());
         self.place_types.push(ty);
+        self.immutable_places.push(false);
         id
+    }
+
+    fn owned_binding(&mut self, name: &str, value: ValueId, ty: Type, span: Span) -> Binding {
+        if let Type::Data(id) = ty
+            && self.data[id.0].fields.iter().any(|(field, field_ty)| {
+                self.capability_layout.leaves(*field_ty) > 0
+                    && self
+                        .projected_fields
+                        .contains(&(name.to_owned(), field.clone()))
+            })
+        {
+            let place = self.place(ty);
+            self.immutable_places[place.0] = true;
+            self.emit_effect(Operation::PlaceInit(place, value), span);
+            Binding::Var(place)
+        } else {
+            Binding::Val(value)
+        }
     }
 
     fn terminate(&mut self, terminator: Terminator) {
@@ -635,11 +660,16 @@ fn lower_internal(
                 .collect::<Result<Vec<_>, Diagnostic>>()?,
             resolve(&function.return_type, function.name_span)?,
             spawn_analysis.checkpointed[index],
+            field_move_scan::projected_fields(&function.body),
         );
         let mut locals = HashMap::new();
         for (index, param) in function.params.iter().enumerate() {
             let binding = match param.mode {
-                ParamMode::Own => Binding::Val(ValueId(index)),
+                ParamMode::Own => {
+                    let value = ValueId(index);
+                    let ty = lowerer.value_types[index];
+                    lowerer.owned_binding(&param.name, value, ty, param.span)
+                }
                 mode => Binding::Ref(ValueId(index), mode),
             };
             if locals.insert(param.name.clone(), binding).is_some() {

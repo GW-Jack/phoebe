@@ -81,12 +81,15 @@ are not implemented. `copy(x)` still requests an explicit independent value. The
 cost ledger distinguishes explicit copies, inferred name uses, and inferred
 nominal field values. Capability-bearing values remain affine: whole-value
 transfers consume the source, and CFG joins reject reuse after a move. Products
-with rights permit independent reads of closed sibling fields. A `var` product
-permits a top-level capability field to move out once; closed siblings remain
-readable, other right fields can move independently, and an early `?` closes
-rights still present in the partial record. Whole-record transfer is rejected
-while a right field is missing. Reinitializing an empty field and moving rights
-from a `val` product remain unsupported.
+with rights permit independent reads of closed sibling fields. Owned `val`
+and `var` products permit a top-level capability field to move out once;
+closed siblings remain readable, other right fields can move independently,
+and an early `?` closes rights still present in the partial record. Owned
+product parameters have the same field behavior. Lowering materializes a
+private place for a `val` product only when a right field is projected;
+assignment and exclusive borrows of that `val` remain rejected. Whole-record
+transfer is rejected while a right field is missing. Reinitializing an empty
+field and moving rights from a scoped `with` product binding remain unsupported.
 Checked Core and source support bounded inline `[I64; N]` values
 for `N <= 32`: `[40, 2]`, `array[0]`, and `array.len`. Owning function
 parameters and returns, product fields, variant payloads, and module interfaces

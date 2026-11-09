@@ -113,7 +113,7 @@ impl Lowerer<'_> {
                         Binding::Val(_) => {
                             return Err(Diagnostic::new(
                                 expr.span,
-                                "capability field move requires a var product binding",
+                                "capability field move is unavailable from this scoped binding",
                             ));
                         }
                         Binding::Ref(_, _) => unreachable!("data reference is unsupported"),
@@ -648,6 +648,12 @@ impl Lowerer<'_> {
                             })?;
                             let call_arg = match binding {
                                 Binding::Var(place) => {
+                                    if *mutable && self.immutable_places[place.0] {
+                                        return Err(Diagnostic::new(
+                                            *span,
+                                            "cannot mutably borrow a val binding",
+                                        ));
+                                    }
                                     let (indices, actual) = self.resolve_borrow_path(
                                         self.place_types[place.0],
                                         path,
