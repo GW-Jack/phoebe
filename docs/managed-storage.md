@@ -17,9 +17,11 @@ payload while an owner or call-scoped borrow keeps it live. Mutation uses
 `words_set`, which updates a unique buffer or performs copy-on-write.
 
 `StoragePlan` selects managed storage only for a 256-word array type with a
-checked copy site, and only when every function has direct return/jump/branch/match
-control and no data declaration embeds an array. This includes an early `?`
-return through a `Result` match. Other programs use inline
+checked copy site, and only when each function that carries that array has
+direct return/jump/branch/match control and calls only direct functions. This
+includes an early `?` return through a `Result` match. An unrelated retained
+function no longer blocks selection. No data declaration may embed an array.
+Other programs use inline
 components in all backends. The narrow threshold follows the local
 benchmark: 32-word sharing lost badly and 128 words was near parity. The
 planner also recognizes one read-only array parameter whose uses are limited

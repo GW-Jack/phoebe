@@ -161,3 +161,46 @@ fn managed_arrays_release_on_early_result_return() {
         assert_eq!(output.stdout, format!("{expected}\n").as_bytes());
     }
 }
+
+#[test]
+fn direct_managed_array_helper_runs_beneath_retained_caller() {
+    let _guard = ALLOCATION_COUNTER_TEST
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let baseline = runtime::debug_live_word_allocations();
+    let source = format!(
+        "fn helper() -> I64 {{ var a = [{}]; val prior = a; a[0] = 0; \
+         prior[0] + a[255] }}\n\
+         fn main() -> I64 {{ yield; helper() }}",
+        words()
+    );
+    let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+    assert!(core::StoragePlan::for_program(&program).shares_array(256));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(runtime::debug_live_word_allocations(), baseline);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_eq!(runtime::debug_live_word_allocations(), baseline);
+    let path = std::env::temp_dir().join(format!(
+        "phoebe-managed-direct-helper-{}",
+        std::process::id()
+    ));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn caller_of_retained_helper_keeps_inline_array() {
+    let source = format!(
+        "fn pause() -> I64 {{ yield; 0 }}\n\
+         fn main() -> I64 {{ val a = [{}]; val prior = a; \
+         pause() + prior[0] + a[255] }}",
+        words()
+    );
+    let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+    assert!(!core::StoragePlan::for_program(&program).has_shared_arrays());
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}

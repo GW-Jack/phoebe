@@ -17,21 +17,54 @@ impl StoragePlan {
         // frames. Matches may select an early return, including `?`; every
         // return releases the owners still held by that frame. Data payloads
         // and retained task frames keep their inline ABI.
-        let simple_control = program.functions.iter().all(|function| {
-            function.blocks.iter().all(|block| {
-                matches!(
-                    block.terminator,
-                    Terminator::Return(_)
-                        | Terminator::Jump(_, _)
-                        | Terminator::Branch { .. }
-                        | Terminator::Match { .. }
-                ) && block.instructions.iter().all(|instruction| {
-                    !matches!(
-                        instruction.operation,
-                        Operation::ScopeEnter(_) | Operation::GenericCall { .. }
-                    )
+        let mut direct = program
+            .functions
+            .iter()
+            .map(|function| {
+                function.blocks.iter().all(|block| {
+                    matches!(
+                        block.terminator,
+                        Terminator::Return(_)
+                            | Terminator::Jump(_, _)
+                            | Terminator::Branch { .. }
+                            | Terminator::Match { .. }
+                    ) && block.instructions.iter().all(|instruction| {
+                        !matches!(
+                            instruction.operation,
+                            Operation::ScopeEnter(_) | Operation::GenericCall { .. }
+                        )
+                    })
                 })
             })
+            .collect::<Vec<_>>();
+        // A caller of a retained function is retained too. Compute the
+        // conservative direct-call closure before selecting a pointer ABI.
+        loop {
+            let mut changed = false;
+            for (id, function) in program.functions.iter().enumerate() {
+                if direct[id]
+                    && function.blocks.iter().flat_map(|block| &block.instructions).any(
+                        |instruction| {
+                            matches!(instruction.operation, Operation::Call(target, _) if !direct[target.0])
+                        },
+                    )
+                {
+                    direct[id] = false;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let array_frames_direct = program.functions.iter().enumerate().all(|(id, function)| {
+            direct[id]
+                || !function
+                    .value_types
+                    .iter()
+                    .chain(&function.place_types)
+                    .chain(std::iter::once(&function.return_type))
+                    .any(|ty| matches!(ty, Type::ArrayI64(256)))
         });
         let bare_arrays = program.data.iter().all(|definition| {
             definition
@@ -41,7 +74,7 @@ impl StoragePlan {
                 .chain(definition.payloads.iter().flatten())
                 .all(|ty| !matches!(ty, Type::ArrayI64(_)))
         });
-        if simple_control && bare_arrays {
+        if array_frames_direct && bare_arrays {
             for function in &program.functions {
                 for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
                     let copied = match instruction.operation {
