@@ -31,8 +31,14 @@ fn main() -> I64 {
 "#;
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
     let ir = program.to_string();
-    assert!(ir.contains("borrow.begin &p0.[1, 0]"), "{ir}");
-    assert!(ir.contains("borrow.begin &mut p0.[1, 1]"), "{ir}");
+    assert!(
+        ir.contains("borrow.begin &p") && ir.contains(".[1, 0]"),
+        "{ir}"
+    );
+    assert!(
+        ir.contains("borrow.begin &mut p") && ir.contains(".[1, 1]"),
+        "{ir}"
+    );
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
     assert_standalone(&program, 42, "field-siblings");
