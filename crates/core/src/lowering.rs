@@ -1,5 +1,4 @@
 use super::*;
-use std::collections::HashSet;
 
 mod body;
 mod cleanup;
@@ -10,6 +9,7 @@ mod lexical_borrow;
 mod request;
 mod reuse;
 mod spawn_scan;
+mod value_liveness;
 
 use reuse::{
     compatible_data_ids, rebase_function, remap_function_data, remap_function_targets,
@@ -215,24 +215,7 @@ impl<'a> Lowerer<'a> {
                 terminator,
             });
         }
-        // On a return path, a closed SSA value's final use can transfer its
-        // components. Walk backward so prior uses still retain their copy.
-        for block in &mut blocks {
-            if let Terminator::Return(result) = block.terminator {
-                let mut live = HashSet::from([result]);
-                for instruction in block.instructions.iter_mut().rev() {
-                    if let Some(result) = instruction.result {
-                        live.remove(&result);
-                    }
-                    if let Operation::InferredCopy(source) = instruction.operation
-                        && !live.contains(&source)
-                    {
-                        instruction.operation = Operation::Move(source);
-                    }
-                    live.extend(verification::operands(&instruction.operation));
-                }
-            }
-        }
+        value_liveness::infer_last_closed_uses(&mut blocks);
         let mut loan_regions = Vec::new();
         for (block_id, block) in blocks.iter().enumerate() {
             for (instruction_id, instruction) in block.instructions.iter().enumerate() {

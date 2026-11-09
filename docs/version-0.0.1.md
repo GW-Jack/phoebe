@@ -65,7 +65,7 @@ Comparison operands evaluate left to right; each comparison is one typed Core
 operation and one Cranelift integer comparison.
 Closed nominal values now remain usable across ordinary `T` calls and field
 projections. Source lowering emits an inferred value copy for repeated uses;
-the last closed SSA use on a return path uses a move instead. These are
+CFG liveness turns a final closed SSA use into a move. These are
 currently fixed-size component copies, not reference-counted sharing or
 copy-on-write. `copy(x)` still requests an explicit independent value. The
 cost ledger distinguishes explicit copies, inferred name uses, and inferred

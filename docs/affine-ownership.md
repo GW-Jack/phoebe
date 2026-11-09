@@ -17,8 +17,7 @@ its flattened components; `phoebe cost` marks this as an inferred field value.
 Closed fields of capability-bearing products can also be read while the right
 stays in its parent. Extracting a right still requires whole-product unpack.
 An ordinary closed nominal name use emits `inferred.copy` or
-`inferred.copy.place`; the last SSA use on a return path instead moves the
-source. `copy(x)`
+`inferred.copy.place`; CFG liveness turns a final SSA use into a move. `copy(x)`
 explicitly creates a second closed value and leaves `x` live; a scalar
 `copy(x)` is an identity use. Inferred and explicit copies appear as
 `copy.value` cost sites with distinct reasons. These are currently fixed-size

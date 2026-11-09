@@ -79,7 +79,7 @@ forward a lexical alias through an ordinary call. See
 
 Closed nominal source values may be reused. Reading a closed nominal `val`
 emits `inferred.copy`; reading a closed nominal `var` emits
-`inferred.copy.place`. A final SSA use on a return path can emit `move` instead. Explicit
+`inferred.copy.place`. CFG liveness turns a final SSA use into `move`. Explicit
 `copy(x)` emits `copy.value` and preserves the source. Each copy kind has a
 distinct static cost reason. A product field read uses `field` on a live SSA
 owner or `place.field` on a live place and preserves the parent, including

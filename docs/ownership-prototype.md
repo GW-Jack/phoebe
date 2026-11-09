@@ -23,7 +23,7 @@ destination or regular expression is exposed.
 
 Decision 0006 makes that value behavior part of the language contract. The
 current compiler realizes it with fixed-size component copies on name use and
-last-use moves on return paths; it does not yet infer borrow versus retain or
+CFG-aware last-use moves; it does not yet infer borrow versus retain or
 use shared storage.
 
 ## Executable artifacts
@@ -76,7 +76,7 @@ Phoebe scheduler.
 
 | Mechanism | What the prototype establishes | Required Phoebe integration |
 | --- | --- | --- |
-| Inferred use | A read can borrow; a last owning use moves; an owning use with a later use retains closed data; a capability cannot be retained. | Source value semantics and closed/right distinction are adopted. Extend liveness beyond return paths, then add retain/release costs and a real shared representation. |
+| Inferred use | A read can borrow; a last owning use moves; an owning use with a later use retains closed data; a capability cannot be retained. | Source value semantics, closed/right distinction, and CFG-aware last-use moves are implemented. Add borrow/retain selection, retain/release costs, and shared representation. |
 | Destination construction | A write-once field cannot be filled twice; a result with a missing field cannot be published; dropping an incomplete destination drops initialized fields. | Add typed destination and initialization state to Core, select caller storage, verify all return and failure edges, handle sums and rights, keep destinations stable across suspension. |
 | Regex paths | Named left/right fields are disjoint; a call result summarized as any subfield conservatively overlaps either; nested paths can be distinguished. | Add field loans and path roots to Core, implement exact terminating regex/automaton checks and CFG joins, prove or validate the checker, check actual native address and cleanup rules. |
 
@@ -133,7 +133,7 @@ API cannot make transfer depend on a callee's private body.
 
 ## Next integration gate
 
-Replace eager inferred component copies with CFG-aware borrow/move/retain
+Replace remaining eager inferred component copies with borrow/retain
 selection and a real immutable shared representation, with source-attributed
 retain, release, and copy-on-write costs. Add typed destination initialization
 to Core for a two-field product, including success and `?` cleanup. Then add
