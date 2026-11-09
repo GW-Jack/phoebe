@@ -116,12 +116,12 @@ fn infer_last_closed_place_uses(blocks: &mut [Block]) {
             break;
         }
     }
-    for block_id in 0..blocks.len() {
-        let mut live = successors(&blocks[block_id].terminator)
+    for block in blocks.iter_mut() {
+        let mut live = successors(&block.terminator)
             .into_iter()
             .flat_map(|next| incoming[next.0].iter().copied())
             .collect::<HashSet<_>>();
-        for instruction in blocks[block_id].instructions.iter_mut().rev() {
+        for instruction in block.instructions.iter_mut().rev() {
             if let Operation::InferredCopyPlace(place) = instruction.operation
                 && !live.contains(&place)
                 && !borrowed.contains(&place)
