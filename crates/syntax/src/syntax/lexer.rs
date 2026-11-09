@@ -24,6 +24,8 @@ pub(super) enum TokenKind {
     Int(u64),
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     LBrace,
     RBrace,
     Comma,
@@ -117,6 +119,14 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             b')' => {
                 i += 1;
                 TokenKind::RParen
+            }
+            b'[' => {
+                i += 1;
+                TokenKind::LBracket
+            }
+            b']' => {
+                i += 1;
+                TokenKind::RBracket
             }
             b'{' => {
                 i += 1;

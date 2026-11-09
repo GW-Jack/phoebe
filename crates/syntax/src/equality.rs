@@ -195,6 +195,10 @@ fn expr(a: &Expr, b: &Expr, delta: isize) -> bool {
     match (&a.kind, &b.kind) {
         (ExprKind::Int(a), ExprKind::Int(b)) => a == b,
         (ExprKind::Bool(a), ExprKind::Bool(b)) => a == b,
+        (ExprKind::FixedArray(a), ExprKind::FixedArray(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| expr(a, b, delta))
+        }
+        (ExprKind::FixedIndex(a, ai), ExprKind::FixedIndex(b, bi)) => ai == bi && expr(a, b, delta),
         (ExprKind::Name(a), ExprKind::Name(b)) => a == b,
         (
             ExprKind::Borrow {

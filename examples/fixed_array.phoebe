@@ -1,0 +1,4 @@
+fn main() -> I64 {
+  val offsets = [40, 2];
+  offsets[0] + offsets.len
+}

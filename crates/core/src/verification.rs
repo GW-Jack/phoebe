@@ -48,7 +48,10 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
             places: vec![false; function.place_types.len()],
         };
         for param in &function.blocks[0].params {
-            if matches!(function.value_types[param.0], Type::Data(_)) {
+            if matches!(
+                function.value_types[param.0],
+                Type::Data(_) | Type::ArrayI64(_)
+            ) {
                 entry.values[param.0] = true;
             }
         }
@@ -59,7 +62,10 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
             let block = &function.blocks[block_id];
             let mut state = incoming[block_id].clone().expect("queued block has state");
             for param in &block.params {
-                if matches!(function.value_types[param.0], Type::Data(_)) {
+                if matches!(
+                    function.value_types[param.0],
+                    Type::Data(_) | Type::ArrayI64(_)
+                ) {
                     state.values[param.0] = true;
                 }
             }
@@ -67,7 +73,10 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                              value: ValueId,
                              consume: bool,
                              span: Span| {
-                if matches!(function.value_types[value.0], Type::Data(_)) {
+                if matches!(
+                    function.value_types[value.0],
+                    Type::Data(_) | Type::ArrayI64(_)
+                ) {
                     if !state.values[value.0] {
                         return Err(OwnershipError {
                             span,
@@ -90,7 +99,7 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                             value_use(&mut state, *value, true, span)?;
                         }
                     }
-                    Operation::Product(_, fields) => {
+                    Operation::Product(_, fields) | Operation::ArrayI64(fields) => {
                         for field in fields {
                             value_use(&mut state, *field, true, span)?;
                         }
@@ -109,8 +118,10 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                     }
                     Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
                         value_use(&mut state, *value, true, span)?;
-                        if matches!(function.place_types[place.0], Type::Data(_))
-                            || capability_layout::Layout::bare_right(function.place_types[place.0])
+                        if matches!(
+                            function.place_types[place.0],
+                            Type::Data(_) | Type::ArrayI64(_)
+                        ) || capability_layout::Layout::bare_right(function.place_types[place.0])
                         {
                             state.places[place.0] = true;
                         }
@@ -128,6 +139,7 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                         state.places[place.0] = false;
                     }
                     Operation::ReadField(place, _)
+                    | Operation::ArrayGetPlace(place, _)
                     | Operation::CopyPlace(place)
                     | Operation::InferredCopyPlace(place) => {
                         if !state.places[place.0] {
@@ -148,7 +160,10 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                     }
                 }
                 if let Some(result) = instruction.result
-                    && matches!(function.value_types[result.0], Type::Data(_))
+                    && matches!(
+                        function.value_types[result.0],
+                        Type::Data(_) | Type::ArrayI64(_)
+                    )
                 {
                     state.values[result.0] = true;
                 }

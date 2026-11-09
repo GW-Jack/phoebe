@@ -15,14 +15,44 @@ pub(super) fn op_type(
         Operation::Const(_) => Ok(Some(Type::I64)),
         Operation::Bool(_) => Ok(Some(Type::Bool)),
         Operation::Unit => Ok(Some(Type::Unit)),
+        Operation::ArrayI64(elements) => {
+            if elements.len() > 32 || elements.iter().any(|value| ty(*value) != Type::I64) {
+                return Err("inline I64 array expects at most 32 I64 elements".into());
+            }
+            Ok(Some(Type::ArrayI64(elements.len())))
+        }
+        Operation::ArrayGet(array, index) => {
+            let Type::ArrayI64(len) = ty(*array) else {
+                return Err("array.get requires an I64 array".into());
+            };
+            if *index >= len {
+                return Err("constant array index is out of bounds".into());
+            }
+            Ok(Some(Type::I64))
+        }
+        Operation::ArrayLen(array) => {
+            if !matches!(ty(*array), Type::ArrayI64(_)) {
+                return Err("array.len requires an I64 array".into());
+            }
+            Ok(Some(Type::I64))
+        }
+        Operation::ArrayGetPlace(place, index) => {
+            let Some(Type::ArrayI64(len)) = function.place_types.get(place.0) else {
+                return Err("place array.get requires an I64 array".into());
+            };
+            if *index >= *len {
+                return Err("constant array index is out of bounds".into());
+            }
+            Ok(Some(Type::I64))
+        }
         Operation::Move(value) => {
-            if !matches!(ty(*value), Type::Data(_)) {
+            if !matches!(ty(*value), Type::Data(_) | Type::ArrayI64(_)) {
                 return Err("move requires a nominal value".into());
             }
             Ok(Some(ty(*value)))
         }
         Operation::Copy(value) | Operation::InferredCopy(value) => {
-            if !matches!(ty(*value), Type::Data(_)) {
+            if !matches!(ty(*value), Type::Data(_) | Type::ArrayI64(_)) {
                 return Err("copy requires a nominal value".into());
             }
             if layout.leaves(ty(*value)) > 0 {
@@ -299,7 +329,8 @@ pub(super) fn op_type(
         },
         Operation::Take(place) => match function.place_types.get(place.0) {
             Some(ty)
-                if matches!(ty, Type::Data(_)) || capability_layout::Layout::bare_right(*ty) =>
+                if matches!(ty, Type::Data(_) | Type::ArrayI64(_))
+                    || capability_layout::Layout::bare_right(*ty) =>
             {
                 Ok(Some(*ty))
             }
@@ -310,7 +341,9 @@ pub(super) fn op_type(
             .place_types
             .get(place.0)
         {
-            Some(ty @ Type::Data(_)) if layout.leaves(*ty) == 0 => Ok(Some(*ty)),
+            Some(ty @ (Type::Data(_) | Type::ArrayI64(_))) if layout.leaves(*ty) == 0 => {
+                Ok(Some(*ty))
+            }
             Some(Type::Data(_)) => Err("copy cannot duplicate communication capabilities".into()),
             Some(_) => Err("copy requires a nominal place".into()),
             None => Err("invalid place ID".into()),
@@ -328,8 +361,10 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
             vec![*value]
         }
         Operation::Variant(_, _, payload) => payload.iter().copied().collect(),
-        Operation::Product(_, fields) => fields.clone(),
-        Operation::Field(value, _) => vec![*value],
+        Operation::Product(_, fields) | Operation::ArrayI64(fields) => fields.clone(),
+        Operation::Field(value, _) | Operation::ArrayGet(value, _) | Operation::ArrayLen(value) => {
+            vec![*value]
+        }
         Operation::PackRequest { value, right } => vec![*value, *right],
         Operation::CloseHandle(a)
         | Operation::CloseReply(a)
@@ -348,6 +383,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::CopyPlace(_)
         | Operation::InferredCopyPlace(_)
         | Operation::ReadField(_, _)
+        | Operation::ArrayGetPlace(_, _)
         | Operation::BorrowBegin(_, _) => vec![],
         Operation::Add(a, b)
         | Operation::Sub(a, b)

@@ -408,6 +408,27 @@ impl CoreTask {
             Operation::Const(x) => Some(Value::I64(*x)),
             Operation::Bool(x) => Some(Value::Bool(*x)),
             Operation::Unit => Some(Value::Unit),
+            Operation::ArrayI64(elements) => Some(Value::ArrayI64(
+                elements.iter().map(|value| as_i64(get(*value))).collect(),
+            )),
+            Operation::ArrayGet(array, index) => {
+                let Value::ArrayI64(words) = get(*array) else {
+                    unreachable!("verified array get")
+                };
+                Some(Value::I64(words[*index]))
+            }
+            Operation::ArrayLen(array) => {
+                let Value::ArrayI64(words) = get(*array) else {
+                    unreachable!("verified array length")
+                };
+                Some(Value::I64(words.len() as i64))
+            }
+            Operation::ArrayGetPlace(place, index) => {
+                let Some(Value::ArrayI64(words)) = &self.stores[base + place.0] else {
+                    unreachable!("verified array place")
+                };
+                Some(Value::I64(words[*index]))
+            }
             Operation::Move(value) | Operation::Copy(value) | Operation::InferredCopy(value) => {
                 Some(get(*value))
             }
@@ -1041,6 +1062,7 @@ fn as_i64(value: Value) -> i64 {
         Value::I64(x) => x,
         Value::Bool(_)
         | Value::Unit
+        | Value::ArrayI64(_)
         | Value::Data(_, _, _)
         | Value::Product(_, _)
         | Value::Ref(_)
@@ -1060,6 +1082,7 @@ fn as_bool(value: Value) -> bool {
         Value::Bool(x) => x,
         Value::I64(_)
         | Value::Unit
+        | Value::ArrayI64(_)
         | Value::Data(_, _, _)
         | Value::Product(_, _)
         | Value::Ref(_)
@@ -1127,6 +1150,20 @@ impl fmt::Display for Program {
                         Operation::Const(x) => write!(f, "const {x}")?,
                         Operation::Bool(x) => write!(f, "bool {x}")?,
                         Operation::Unit => write!(f, "unit")?,
+                        Operation::ArrayI64(elements) => {
+                            write!(f, "array.i64(")?;
+                            for (index, element) in elements.iter().enumerate() {
+                                if index > 0 {
+                                    write!(f, ", ")?;
+                                }
+                                write!(f, "v{}", element.0)?;
+                            }
+                            write!(f, ")")?;
+                        }
+                        Operation::ArrayGet(array, index) => {
+                            write!(f, "array.get v{}, {}", array.0, index)?
+                        }
+                        Operation::ArrayLen(array) => write!(f, "array.len v{}", array.0)?,
                         Operation::Move(value) => write!(f, "move v{}", value.0)?,
                         Operation::Copy(value) => write!(f, "copy.value v{}", value.0)?,
                         Operation::InferredCopy(value) => write!(f, "copy.inferred v{}", value.0)?,
@@ -1154,6 +1191,9 @@ impl fmt::Display for Program {
                         }
                         Operation::ReadField(place, index) => {
                             write!(f, "place.field p{}, {}", place.0, index)?
+                        }
+                        Operation::ArrayGetPlace(place, index) => {
+                            write!(f, "place.array.get p{}, {}", place.0, index)?
                         }
                         Operation::Neg(a) => write!(f, "neg v{}", a.0)?,
                         Operation::Not(a) => write!(f, "not v{}", a.0)?,

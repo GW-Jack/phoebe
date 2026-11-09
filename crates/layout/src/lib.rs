@@ -37,6 +37,8 @@ pub enum Type {
     I64,
     Bool,
     Unit,
+    /// An inline, fixed-size scalar array. Larger arrays need region storage.
+    ArrayI64(usize),
     Data(DataId),
     RefI64,
     RefMutI64,
@@ -93,6 +95,8 @@ pub enum Part {
     Word,
     Address,
 }
+
+const INLINE_ARRAY_WORDS: [Part; 32] = [Part::Word; 32];
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Shape {
@@ -319,7 +323,8 @@ impl Shapes {
             | Type::RefMutI64
             | Type::RefBool
             | Type::RefMutBool
-            | Type::ReplyReceiverI64 => false,
+            | Type::ReplyReceiverI64
+            | Type::ArrayI64(_) => false,
             Type::Data(id) => self.sendable.get(id.0).copied().unwrap_or(false),
             _ => true,
         }
@@ -386,6 +391,8 @@ impl Shapes {
             Type::I64 => Ok(WORD),
             Type::Bool => Ok(BYTE),
             Type::Unit => Ok(EMPTY),
+            Type::ArrayI64(len) if len <= 32 => Ok(&INLINE_ARRAY_WORDS[..len]),
+            Type::ArrayI64(_) => Err("inline I64 array exceeds 32 elements".into()),
             Type::Data(id) => self
                 .data
                 .get(id.0)

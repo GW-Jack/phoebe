@@ -518,7 +518,8 @@ fn instruction_live(live: &mut Live, operation: &Operation, result: Option<Value
         Operation::Load(place)
         | Operation::CopyPlace(place)
         | Operation::InferredCopyPlace(place)
-        | Operation::ReadField(place, _) => {
+        | Operation::ReadField(place, _)
+        | Operation::ArrayGetPlace(place, _) => {
             live.places[place.0] = true;
         }
         Operation::Call(_, args) => {

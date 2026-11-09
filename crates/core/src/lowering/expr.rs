@@ -22,6 +22,60 @@ impl Lowerer<'_> {
         let (operation, ty) = match &expr.kind {
             ExprKind::Int(value) => (Operation::Const(*value), Type::I64),
             ExprKind::Bool(value) => (Operation::Bool(*value), Type::Bool),
+            ExprKind::FixedArray(elements) => {
+                let mut values = Vec::with_capacity(elements.len());
+                for element in elements {
+                    let (value, ty) = self.expr(element, locals)?;
+                    self.require(ty, Type::I64, element.span)?;
+                    values.push(value);
+                }
+                (Operation::ArrayI64(values), Type::ArrayI64(elements.len()))
+            }
+            ExprKind::FixedIndex(array, index) => {
+                let (value, ty) = if let ExprKind::Name(name) = &array.kind {
+                    match locals.get(name).copied() {
+                        Some(Binding::Val(value)) => (value, self.value_types[value.0]),
+                        Some(Binding::Var(place)) => {
+                            let Type::ArrayI64(len) = self.place_types[place.0] else {
+                                return Err(Diagnostic::new(
+                                    array.span,
+                                    "indexing requires a fixed I64 array",
+                                ));
+                            };
+                            if *index >= len {
+                                return Err(Diagnostic::new(
+                                    expr.span,
+                                    "constant array index is out of bounds",
+                                ));
+                            }
+                            return Ok((
+                                self.emit(
+                                    Operation::ArrayGetPlace(place, *index),
+                                    Type::I64,
+                                    expr.span,
+                                ),
+                                Type::I64,
+                            ));
+                        }
+                        _ => self.expr(array, locals)?,
+                    }
+                } else {
+                    self.expr(array, locals)?
+                };
+                let Type::ArrayI64(len) = ty else {
+                    return Err(Diagnostic::new(
+                        array.span,
+                        "indexing requires a fixed I64 array",
+                    ));
+                };
+                if *index >= len {
+                    return Err(Diagnostic::new(
+                        expr.span,
+                        "constant array index is out of bounds",
+                    ));
+                }
+                (Operation::ArrayGet(value, *index), Type::I64)
+            }
             ExprKind::Member(name, variant) => {
                 if let Some(binding) = locals.get(name).copied() {
                     let ty = match binding {
@@ -29,6 +83,14 @@ impl Lowerer<'_> {
                         Binding::Var(place) => self.place_types[place.0],
                         Binding::Ref(value, _) => self.value_types[value.0],
                     };
+                    if let Type::ArrayI64(len) = ty
+                        && variant == "len"
+                    {
+                        return Ok((
+                            self.emit(Operation::Const(len as i64), Type::I64, expr.span),
+                            Type::I64,
+                        ));
+                    }
                     let Type::Data(id) = ty else {
                         return Err(Diagnostic::new(
                             expr.span,
@@ -225,7 +287,7 @@ impl Lowerer<'_> {
                 return Ok(match binding {
                     Binding::Val(id) => {
                         let ty = self.value_types[id.0];
-                        if matches!(ty, Type::Data(_)) {
+                        if matches!(ty, Type::Data(_) | Type::ArrayI64(_)) {
                             let operation = if self.capability_layout.leaves(ty) == 0 {
                                 Operation::InferredCopy(id)
                             } else {
@@ -238,7 +300,7 @@ impl Lowerer<'_> {
                     }
                     Binding::Var(place) => {
                         let ty = self.place_types[place.0];
-                        let operation = if matches!(ty, Type::Data(_))
+                        let operation = if matches!(ty, Type::Data(_) | Type::ArrayI64(_))
                             || self.capability_layout.leaves(ty) > 0
                         {
                             if self.capability_layout.leaves(ty) == 0 {
@@ -272,7 +334,10 @@ impl Lowerer<'_> {
                     })?;
                     match binding {
                         Binding::Val(value)
-                            if matches!(self.value_types[value.0], Type::Data(_)) =>
+                            if matches!(
+                                self.value_types[value.0],
+                                Type::Data(_) | Type::ArrayI64(_)
+                            ) =>
                         {
                             let ty = self.value_types[value.0];
                             if self.capability_layout.leaves(ty) > 0 {
@@ -284,7 +349,10 @@ impl Lowerer<'_> {
                             return Ok((self.emit(Operation::Copy(value), ty, expr.span), ty));
                         }
                         Binding::Var(place)
-                            if matches!(self.place_types[place.0], Type::Data(_)) =>
+                            if matches!(
+                                self.place_types[place.0],
+                                Type::Data(_) | Type::ArrayI64(_)
+                            ) =>
                         {
                             let ty = self.place_types[place.0];
                             if self.capability_layout.leaves(ty) > 0 {
@@ -299,7 +367,7 @@ impl Lowerer<'_> {
                     }
                 }
                 let (value, ty) = self.expr(inner, locals)?;
-                if matches!(ty, Type::Data(_)) {
+                if matches!(ty, Type::Data(_) | Type::ArrayI64(_)) {
                     if self.capability_layout.leaves(ty) > 0 {
                         return Err(Diagnostic::new(
                             expr.span,

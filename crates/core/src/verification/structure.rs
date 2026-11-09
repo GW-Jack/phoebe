@@ -115,6 +115,7 @@ pub(crate) fn verify_structure(
         }
         if definition.payloads.iter().flatten().any(|ty| match ty {
             Type::I64 | Type::Bool | Type::Unit => false,
+            Type::ArrayI64(len) => *len > 32,
             Type::Data(id) => id.0 >= index,
             Type::ResourceError => false,
             Type::RefI64 | Type::RefMutI64 | Type::RefBool | Type::RefMutBool => true,
@@ -133,6 +134,7 @@ pub(crate) fn verify_structure(
             if !fields.insert(name)
                 || match ty {
                     Type::I64 | Type::Bool | Type::Unit => false,
+                    Type::ArrayI64(len) => *len > 32,
                     Type::Data(id) => id.0 >= index,
                     Type::ResourceError => false,
                     Type::RefI64 | Type::RefMutI64 | Type::RefBool | Type::RefMutBool => true,
@@ -161,6 +163,12 @@ pub(crate) fn verify_structure(
             .chain(&function.place_types)
             .chain(std::iter::once(&function.return_type))
         {
+            if matches!(ty, Type::ArrayI64(len) if *len > 32) {
+                return Err(format!(
+                    "{}: inline I64 array exceeds 32 elements",
+                    function.name
+                ));
+            }
             if let Type::Data(id) = ty
                 && id.0 >= program.data.len()
             {
@@ -184,7 +192,7 @@ pub(crate) fn verify_structure(
         }
         if !matches!(
             function.return_type,
-            Type::I64 | Type::Bool | Type::Unit | Type::Data(_)
+            Type::I64 | Type::Bool | Type::Unit | Type::ArrayI64(_) | Type::Data(_)
         ) {
             return Err(format!("{}: invalid return type", function.name));
         }
@@ -202,8 +210,10 @@ pub(crate) fn verify_structure(
         }
         verify_loan_regions(function)?;
         if function.place_types.iter().any(|ty| {
-            !matches!(ty, Type::I64 | Type::Bool | Type::Unit | Type::Data(_))
-                && !capability_layout::Layout::bare_right(*ty)
+            !matches!(
+                ty,
+                Type::I64 | Type::Bool | Type::Unit | Type::ArrayI64(_) | Type::Data(_)
+            ) && !capability_layout::Layout::bare_right(*ty)
         }) {
             return Err(format!(
                 "{}: references cannot be stored in places",
@@ -229,6 +239,7 @@ pub(crate) fn verify_structure(
                             Type::I64
                                 | Type::Bool
                                 | Type::Unit
+                                | Type::ArrayI64(_)
                                 | Type::Data(_)
                                 | Type::SenderI64
                                 | Type::ReceiverI64
@@ -518,6 +529,7 @@ pub(crate) fn verify_structure(
                 | Operation::CopyPlace(place)
                 | Operation::InferredCopyPlace(place)
                 | Operation::ReadField(place, _)
+                | Operation::ArrayGetPlace(place, _)
                 | Operation::BorrowBegin(place, _)
                 | Operation::Store(place, _) = instruction.operation
                 {
