@@ -1155,5 +1155,16 @@
     "payload_json": "{\"added_by\":null,\"at_cut\":null,\"basis\":null,\"basis_fingerprint\":null,\"kind\":\"cuts\",\"note\":null,\"reference\":\"intent(e2124f7d36edff2c192f80f993e01eda482186fae60063228ab1ecfd6374eb4a)\"}",
     "actor": null,
     "created_at": "2026-11-09 11:20:31"
+  },
+  {
+    "event_id": "b538eb62543314950d1c9bba50d93ad8f8096625f1b1bc73864b63a9b446ed30",
+    "parents": [
+      "2f95873a2ca09761e3cce0650b8c1106ce359d6bb2aa9ecc59604c04c271187a"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"Trunk CI run 42608302007 failed in tests/native_managed_array_leaks.rs:26: debug_live_word_allocations observed 1 while expecting baseline 0. The two tests in that file run concurrently and both sample a process-global allocation counter; PR #22 checks passed, so this appears to be test interference. Your current WS-1 worktree already edits that test file; please serialize the allocation-counting tests or use a per-test counter before publishing that slice. I left your uncommitted file untouched.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:23:08"
   }
 ]
