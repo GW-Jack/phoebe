@@ -98,11 +98,11 @@ indefinitely.
 User-declared sums and products may contain earlier nominal types and finite
 concrete `Result` and `Option` applications. Their shapes remain finite because
 the verifier rejects a reference to the current or a later data declaration. A
-nominal product field projection consumes its owner; a primitive field read
-leaves the owner live. Products with rights require whole-product `unpack()`;
-partial field projection and `copy(x)` are rejected. Closed nominal values
-can be duplicated only with explicit `copy(x)`, which appears in the cost
-ledger. Sum payloads are accessed through `when` bindings.
+closed nominal field projection preserves its owner, as does a primitive
+field read. A closed sibling field may be read from a product with rights;
+moving a right out still requires whole-product `unpack()`. Closed nominal
+uses may be copied by the compiler and appear in the cost ledger. Explicit
+`copy(x)` remains available. Sum payloads are accessed through `when` bindings.
 
 This flattening is a compiler-internal calling convention. The external
 entrypoint remains a scalar I64 function, and the standalone C wrapper only

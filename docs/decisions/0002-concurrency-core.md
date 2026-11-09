@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-11-06. This fixes the design direction; precise syntax,
 runtime representation, and a general proof remain future work.
+Decision 0006 refines closed message values to preserve source-level value
+semantics; communication capabilities still transfer exactly once.
 
 ## Decision
 

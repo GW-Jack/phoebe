@@ -515,7 +515,10 @@ fn instruction_live(live: &mut Live, operation: &Operation, result: Option<Value
             // A store replaces the prior value; a take consumes it.
             live.places[place.0] = matches!(operation, Operation::Take(_));
         }
-        Operation::Load(place) | Operation::CopyPlace(place) | Operation::ReadField(place, _) => {
+        Operation::Load(place)
+        | Operation::CopyPlace(place)
+        | Operation::InferredCopyPlace(place)
+        | Operation::ReadField(place, _) => {
             live.places[place.0] = true;
         }
         Operation::Call(_, args) => {

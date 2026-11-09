@@ -63,11 +63,16 @@ skipped at runtime. Their precedence is `||` below `&&`, below comparisons;
 the right side is a separate Core CFG branch and may contain `?`.
 Comparison operands evaluate left to right; each comparison is one typed Core
 operation and one Cranelift integer comparison.
-Nominal values have affine move checking:
-owning uses and nominal field projections consume them; primitive product
-field reads preserve them. CFG joins reject later reuse when any incoming path
-has moved the owner. `copy(x)` makes
-an explicit independent nominal copy and records a `copy.value` cost site.
+Closed nominal values now remain usable across ordinary `T` calls and field
+projections. Source lowering emits an inferred value copy for repeated uses;
+the last closed SSA use on a return path uses a move instead. These are
+currently fixed-size component copies, not reference-counted sharing or
+copy-on-write. `copy(x)` still requests an explicit independent value. The
+cost ledger distinguishes explicit copies, inferred name uses, and inferred
+nominal field values. Capability-bearing values remain affine: whole-value
+transfers consume the source, and CFG joins reject reuse after a move. Products
+with rights permit independent reads of closed sibling fields, while moving a
+right field still requires whole-product unpack.
 Source `spawn` records a `task.create` cost site with its source span; this
 ledger identifies static sites rather than counting successful creations.
 Recursion is rejected until task stacks have safe growth limits. Arithmetic

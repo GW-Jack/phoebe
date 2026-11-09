@@ -408,7 +408,9 @@ impl CoreTask {
             Operation::Const(x) => Some(Value::I64(*x)),
             Operation::Bool(x) => Some(Value::Bool(*x)),
             Operation::Unit => Some(Value::Unit),
-            Operation::Move(value) | Operation::Copy(value) => Some(get(*value)),
+            Operation::Move(value) | Operation::Copy(value) | Operation::InferredCopy(value) => {
+                Some(get(*value))
+            }
             Operation::Variant(id, tag, payload) => Some(Value::Data(
                 *id,
                 *tag,
@@ -453,7 +455,9 @@ impl CoreTask {
                 self.stores[base + place.0] = Some(value);
                 None
             }
-            Operation::Load(place) | Operation::CopyPlace(place) => {
+            Operation::Load(place)
+            | Operation::CopyPlace(place)
+            | Operation::InferredCopyPlace(place) => {
                 Some(self.stores[base + place.0].clone().expect("verified place"))
             }
             Operation::Take(place) => Some(
@@ -1125,6 +1129,7 @@ impl fmt::Display for Program {
                         Operation::Unit => write!(f, "unit")?,
                         Operation::Move(value) => write!(f, "move v{}", value.0)?,
                         Operation::Copy(value) => write!(f, "copy.value v{}", value.0)?,
+                        Operation::InferredCopy(value) => write!(f, "copy.inferred v{}", value.0)?,
                         Operation::Variant(id, tag, payload) => write!(
                             f,
                             "variant {}.{}",
@@ -1197,6 +1202,9 @@ impl fmt::Display for Program {
                         Operation::Load(place) => write!(f, "place.load p{}", place.0)?,
                         Operation::Take(place) => write!(f, "place.take p{}", place.0)?,
                         Operation::CopyPlace(place) => write!(f, "copy.value p{}", place.0)?,
+                        Operation::InferredCopyPlace(place) => {
+                            write!(f, "copy.inferred p{}", place.0)?
+                        }
                         Operation::Store(place, value) => {
                             write!(f, "place.store p{}, v{}", place.0, value.0)?
                         }

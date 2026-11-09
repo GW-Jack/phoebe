@@ -21,7 +21,7 @@ pub(super) fn op_type(
             }
             Ok(Some(ty(*value)))
         }
-        Operation::Copy(value) => {
+        Operation::Copy(value) | Operation::InferredCopy(value) => {
             if !matches!(ty(*value), Type::Data(_)) {
                 return Err("copy requires a nominal value".into());
             }
@@ -59,15 +59,16 @@ pub(super) fn op_type(
             let Type::Data(id) = ty(*value) else {
                 return Err("field access requires a product".into());
             };
-            if layout.leaves(ty(*value)) > 0 {
-                return Err("capability product requires whole-product unpack".into());
-            }
-            program
+            let field = program
                 .data
                 .get(id.0)
                 .and_then(|definition| definition.fields.get(*index))
-                .map(|(_, ty)| Some(*ty))
-                .ok_or_else(|| "invalid field access".into())
+                .map(|(_, ty)| *ty)
+                .ok_or_else(|| "invalid field access".to_owned())?;
+            if layout.leaves(field) > 0 {
+                return Err("capability field requires whole-product unpack".into());
+            }
+            Ok(Some(field))
         }
         Operation::ReadField(place, index) => {
             let Type::Data(id) = *function
@@ -82,9 +83,6 @@ pub(super) fn op_type(
                 .get(*index)
                 .map(|(_, ty)| *ty)
                 .ok_or_else(|| "invalid place field access".to_owned())?;
-            if matches!(field_type, Type::Data(_)) {
-                return Err("nominal place field requires an owning projection".into());
-            }
             if layout.leaves(field_type) > 0 {
                 return Err("capability place field requires whole-product unpack".into());
             }
@@ -308,7 +306,10 @@ pub(super) fn op_type(
             Some(_) => Err("take requires an owned place".into()),
             None => Err("invalid place ID".into()),
         },
-        Operation::CopyPlace(place) => match function.place_types.get(place.0) {
+        Operation::CopyPlace(place) | Operation::InferredCopyPlace(place) => match function
+            .place_types
+            .get(place.0)
+        {
             Some(ty @ Type::Data(_)) if layout.leaves(*ty) == 0 => Ok(Some(*ty)),
             Some(Type::Data(_)) => Err("copy cannot duplicate communication capabilities".into()),
             Some(_) => Err("copy requires a nominal place".into()),
@@ -323,7 +324,9 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         Operation::Const(_) | Operation::Bool(_) | Operation::Unit | Operation::ScopeEnter(_) => {
             vec![]
         }
-        Operation::Move(value) | Operation::Copy(value) => vec![*value],
+        Operation::Move(value) | Operation::Copy(value) | Operation::InferredCopy(value) => {
+            vec![*value]
+        }
         Operation::Variant(_, _, payload) => payload.iter().copied().collect(),
         Operation::Product(_, fields) => fields.clone(),
         Operation::Field(value, _) => vec![*value],
@@ -343,6 +346,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         Operation::Load(_)
         | Operation::Take(_)
         | Operation::CopyPlace(_)
+        | Operation::InferredCopyPlace(_)
         | Operation::ReadField(_, _)
         | Operation::BorrowBegin(_, _) => vec![],
         Operation::Add(a, b)
@@ -370,7 +374,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn capability_product_cannot_be_copied_or_partially_projected() {
+    fn capability_product_exposes_closed_sibling_but_not_right_field() {
         let program = Program {
             data: vec![DataDef {
                 name: "Envelope".into(),
@@ -404,11 +408,21 @@ mod tests {
             op_type(
                 &program,
                 &function,
+                &Operation::Field(ValueId(0), 0),
+                &layout,
+                None
+            ),
+            Err("capability field requires whole-product unpack".into())
+        );
+        assert_eq!(
+            op_type(
+                &program,
+                &function,
                 &Operation::Field(ValueId(0), 1),
                 &layout,
                 None
             ),
-            Err("capability product requires whole-product unpack".into())
+            Ok(Some(Type::I64))
         );
     }
 }

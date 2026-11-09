@@ -257,6 +257,7 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                     Operation::Load(place)
                     | Operation::ReadField(place, _)
                     | Operation::CopyPlace(place)
+                    | Operation::InferredCopyPlace(place)
                         if conflict(&state.active, &loans, &roots, *place, false) =>
                     {
                         return Err(format!(

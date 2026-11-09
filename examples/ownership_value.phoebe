@@ -1,0 +1,18 @@
+// Closed data remains usable after value calls without source-level copy.
+data Record { left: I64, right: I64 }
+data Wide { a: I64, b: I64, c: I64, d: I64, e: I64, f: I64, g: I64, h: I64, i: I64 }
+
+fn inspect(record: Record) -> I64 = record.left + record.right
+
+fn revise(record: Record) -> Record = Record(record.left + 1, record.right)
+
+fn make_wide(seed: I64) -> Wide = Wide(seed, 0, 0, 0, 0, 0, 0, 0, 0)
+
+fn main() -> I64 {
+  val current = Record(19, 22);
+  val first = inspect(current);
+  val next = revise(current);
+  val last = inspect(current);
+  val wide = make_wide(first + last - 82);
+  next.left + next.right + wide.a
+}

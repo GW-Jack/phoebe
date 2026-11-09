@@ -44,9 +44,10 @@ and products with primitive, earlier nominal, or communication capability fields
 request rights after an owned call.
 It supports arithmetic, conditions, exhaustive `when`, mutable locals, loops,
 concrete `Option<T>` values, call-site and scoped scalar borrows, and `?` on concrete
-`Result<T, E>` applications with finite payloads. Nominal values have affine move
-checking across branches and loops, and `copy(x)` records an explicit
-fixed-size copy cost. The compiler then
+`Result<T, E>` applications with finite payloads. Closed nominal values can be
+reused across calls and field reads; capability-bearing values retain affine
+move checking. The cost ledger distinguishes inferred closed-value use from
+explicit `copy(x)`. The compiler then
 lowers them to checked Core IR. Programs run
 through an interpreter or Cranelift JIT. The compiler can also
 build a standalone executable for a zero-argument `main` using Cranelift
@@ -138,7 +139,11 @@ cargo build -p phoebe-runtime --lib
 principles. `docs/decisions/0002-concurrency-core.md` adopts scoped tasks and
 channels with move-only communication capabilities in messages, and actors as
 an abstraction over that core. `docs/pony-actors.md` explores the actor details.
-`docs/decisions/0003-language-baseline.md` records the agreed type, borrow,
+`docs/decisions/0006-value-and-field-ownership.md` records the adopted value
+semantics and field-sensitive resource-ownership direction. Closed nominal
+reuse across calls and field projection is implemented; fieldwise capability
+transfer, general use inference, and shared storage remain in progress.
+`docs/decisions/0003-language-baseline.md` records the earlier type, borrow,
 error, module, and ABI-shape generic policies; `docs/language-features.md`
 develops them and lists the next questions.
 `docs/decisions/0004-structural-capability-cleanup.md` specifies cleanup of

@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-11-06. Exact grammar, ABI shape classes, standard
 library APIs, and implementation proofs remain open.
+Decision 0006 supersedes the ownership and copy rule below for ordinary
+closed data; communication capabilities retain explicit transfer and cleanup.
 
 Phoebe starts with nominal product and sum types, exhaustive matching,
 parametric generics, coherent traits, `Option` and `Result`, and no implicit

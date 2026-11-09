@@ -810,9 +810,9 @@ fn compile_poll_module<M: Module>(
                             Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
                         }
                         Operation::Unit => Some(Vec::new()),
-                        Operation::Move(value) | Operation::Copy(value) => {
-                            Some(get(*value, &mut builder))
-                        }
+                        Operation::Move(value)
+                        | Operation::Copy(value)
+                        | Operation::InferredCopy(value) => Some(get(*value, &mut builder)),
                         Operation::BorrowBegin(place, _) => Some(vec![places[place.0][0]]),
                         Operation::BorrowReborrow(parent, _) => Some(get(*parent, &mut builder)),
                         Operation::BorrowEnd(_) => None,
@@ -828,7 +828,8 @@ fn compile_poll_module<M: Module>(
                         }
                         Operation::Load(place)
                         | Operation::Take(place)
-                        | Operation::CopyPlace(place) => Some(
+                        | Operation::CopyPlace(place)
+                        | Operation::InferredCopyPlace(place) => Some(
                             shapes
                                 .types(function.place_types[place.0])
                                 .into_iter()
@@ -1877,6 +1878,7 @@ fn validate_poll_function(
                     | Operation::Unit
                     | Operation::Move(_)
                     | Operation::Copy(_)
+                    | Operation::InferredCopy(_)
                     | Operation::BorrowBegin(_, _)
                     | Operation::BorrowReborrow(_, _)
                     | Operation::BorrowEnd(_)
@@ -1884,6 +1886,7 @@ fn validate_poll_function(
                     | Operation::Load(_)
                     | Operation::Take(_)
                     | Operation::CopyPlace(_)
+                    | Operation::InferredCopyPlace(_)
                     | Operation::Store(_, _)
                     | Operation::ReadField(_, _)
                     | Operation::Variant(_, _, _)

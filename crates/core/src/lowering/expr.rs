@@ -35,12 +35,6 @@ impl Lowerer<'_> {
                             "field access requires a product",
                         ));
                     };
-                    if self.capability_layout.leaves(ty) > 0 {
-                        return Err(Diagnostic::new(
-                            expr.span,
-                            "capability product requires whole-product unpack",
-                        ));
-                    }
                     let index = self.data[id.0]
                         .fields
                         .iter()
@@ -49,12 +43,14 @@ impl Lowerer<'_> {
                             Diagnostic::new(expr.span, format!("unknown field {variant}"))
                         })?;
                     let field_type = self.data[id.0].fields[index].1;
+                    if self.capability_layout.leaves(field_type) > 0 {
+                        return Err(Diagnostic::new(
+                            expr.span,
+                            "capability field requires whole-product unpack",
+                        ));
+                    }
                     let operation = match binding {
                         Binding::Val(value) => Operation::Field(value, index),
-                        Binding::Var(place) if matches!(field_type, Type::Data(_)) => {
-                            let whole = self.emit(Operation::Take(place), ty, expr.span);
-                            Operation::Field(whole, index)
-                        }
                         Binding::Var(place) => Operation::ReadField(place, index),
                         Binding::Ref(_, _) => unreachable!("data reference is unsupported"),
                     };
@@ -230,7 +226,12 @@ impl Lowerer<'_> {
                     Binding::Val(id) => {
                         let ty = self.value_types[id.0];
                         if matches!(ty, Type::Data(_)) {
-                            (self.emit(Operation::Move(id), ty, expr.span), ty)
+                            let operation = if self.capability_layout.leaves(ty) == 0 {
+                                Operation::InferredCopy(id)
+                            } else {
+                                Operation::Move(id)
+                            };
+                            (self.emit(operation, ty, expr.span), ty)
                         } else {
                             (id, ty)
                         }
@@ -240,7 +241,11 @@ impl Lowerer<'_> {
                         let operation = if matches!(ty, Type::Data(_))
                             || self.capability_layout.leaves(ty) > 0
                         {
-                            Operation::Take(place)
+                            if self.capability_layout.leaves(ty) == 0 {
+                                Operation::InferredCopyPlace(place)
+                            } else {
+                                Operation::Take(place)
+                            }
                         } else {
                             Operation::Load(place)
                         };

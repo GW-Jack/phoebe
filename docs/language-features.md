@@ -57,13 +57,13 @@ Function parameters show the ownership transition:
 
 | Parameter | Meaning |
 | --- | --- |
-| `x: T` | Callee owns `T`; a linear or large value moves. Small `Copy` values copy. |
+| `x: T` | Callee receives a closed value without invalidating the caller's binding; contained linear rights transfer. |
 | `x: &T` | Read-only borrow rooted in the caller's region. |
 | `x: &mut T` | Exclusive mutable borrow rooted in the caller's region. |
 
-Call sites write `&x` or `&mut x` for borrows. `copy(x)` requests an independent
-copy and is required for a large closed value if the caller must keep it after
-an owning call. Borrow lifetimes are inferred from use and constrained by
+Call sites write `&x` or `&mut x` for explicit borrows. `copy(x)` requests
+independent storage; ordinary closed-value reuse does not require it. Borrow
+lifetimes are inferred from use and constrained by
 regions; no source lifetime parameter is required initially. A borrow may
 survive a task's suspension if its root remains in that task's retained frame.
 The implemented scalar region form is `with r = &x { ... }` or
@@ -241,8 +241,8 @@ The checked IR needs explicit `borrow_shared`, `borrow_exclusive`, `move`,
 a lexical cleanup region carries the required closes. For an owning place
 `p`, its abstract state is exactly one of `Owned`, `Moved`, or `Closed` at each
 program point; active shared or exclusive loans are tracked separately.
-An owned nominal aggregate in `var` must be taken before another owner is
-assigned to that place. A `?` exit structurally closes a live owner
+An aggregate with communication rights in `var` must be taken before another
+owner is assigned to that place. A `?` exit structurally closes a live owner
 held by a place.
 Joins reject incompatible states unless control flow resolves them
 explicitly. A mutable borrow excludes all

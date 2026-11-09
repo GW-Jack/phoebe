@@ -22,8 +22,12 @@ impl Program {
                         });
                     }
                     let copy_ty = match instruction.operation {
-                        Operation::Copy(value) => Some(function.value_types[value.0]),
-                        Operation::CopyPlace(place) => Some(function.place_types[place.0]),
+                        Operation::Copy(value) | Operation::InferredCopy(value) => {
+                            Some(function.value_types[value.0])
+                        }
+                        Operation::CopyPlace(place) | Operation::InferredCopyPlace(place) => {
+                            Some(function.place_types[place.0])
+                        }
                         _ => None,
                     };
                     if let Some(Type::Data(id)) = copy_ty {
@@ -34,7 +38,36 @@ impl Program {
                             span: instruction.span,
                             kind: "copy.value",
                             type_name: self.data[id.0].name.clone(),
-                            reason: "explicit",
+                            reason: if matches!(
+                                instruction.operation,
+                                Operation::InferredCopy(_) | Operation::InferredCopyPlace(_)
+                            ) {
+                                "inferred value use"
+                            } else {
+                                "explicit"
+                            },
+                        });
+                    }
+                    let projected_ty = match instruction.operation {
+                        Operation::Field(owner, index) => match function.value_types[owner.0] {
+                            Type::Data(id) => self.data[id.0].fields.get(index).map(|(_, ty)| *ty),
+                            _ => None,
+                        },
+                        Operation::ReadField(place, index) => match function.place_types[place.0] {
+                            Type::Data(id) => self.data[id.0].fields.get(index).map(|(_, ty)| *ty),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(Type::Data(id)) = projected_ty {
+                        events.push(CostEvent {
+                            function: function.name.clone(),
+                            block: block_id,
+                            instruction: instruction_id,
+                            span: instruction.span,
+                            kind: "copy.value",
+                            type_name: self.data[id.0].name.clone(),
+                            reason: "inferred field value",
                         });
                     }
                     let close = match instruction.operation {

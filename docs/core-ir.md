@@ -77,19 +77,21 @@ lowering also emits these operations from scoped scalar `with` borrows and can
 forward a lexical alias through an ordinary call. See
 `docs/lexical-regions.md` for the implemented boundary and open rules.
 
-Nominal values are currently affine. Reading a nominal `val` for an owning
-use emits `move`; reading a nominal `var` emits `place.take`. A primitive
-`copy(x)` emits `copy.value` for a nominal owner and preserves the source.
-That IR operation is also an on-demand static cost event. A primitive
-product field read uses `field` on a live SSA owner or `place.field` on a live
-place, leaving the owner available. A nominal product field uses an owning
-`field` projection; a `var` first emits `place.take`. The other closed fields
-are discarded. The ownership verifier propagates live
+Closed nominal source values may be reused. Reading a closed nominal `val`
+emits `inferred.copy`; reading a closed nominal `var` emits
+`inferred.copy.place`. A final SSA use on a return path can emit `move` instead. Explicit
+`copy(x)` emits `copy.value` and preserves the source. Each copy kind has a
+distinct static cost reason. A product field read uses `field` on a live SSA
+owner or `place.field` on a live place and preserves the parent, including
+closed nominal fields. A value containing a communication right still emits
+`move` or `place.take` for an owning name use. Its closed sibling fields can be
+read independently, while extracting a right requires whole-product unpack.
+The ownership verifier propagates live
 value and place states through the CFG, consumes them at owning calls,
 constructions, jumps, returns, and matches, and intersects them at joins.
 Using an owner after a move receives a source-located diagnostic. The native
 `move` reuses the same scalar components; `place.field` loads only the selected
-primitive component. The interpreter's boxed values remain a reference implementation,
+component. The interpreter's boxed values remain a reference implementation,
 not a native allocation model. `affine-ownership.md` gives the abstract
 transition rules and their evidence boundary.
 
@@ -118,7 +120,7 @@ that lowering is correct. Differential tests compare interpreter and JIT results
 programs. The Maude models cover different bounded abstract machines; they
 do not model this executable IR.
 
-The current nominal-value check is affine: unused closed values may be dropped.
+The Core nominal-value check still permits unused closed values to be dropped.
 Replacing an owned `var` currently discards the old closed value, and `match`
 may discard a payload. The communication capability check has exact
 disposition at return, but nested capabilities still need structural cleanup

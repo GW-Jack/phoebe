@@ -58,8 +58,9 @@ concurrency surface yet.
 
 ## 3. Storage and references
 
-Each task owns its mutable program storage. Objects have stable identity during
-their lifetime. Storage may be reused only after the object is dead. A reference
+Each task owns its mutable program storage. Borrowed mutable objects have stable
+identity during their lifetime; closed data values have no observable storage
+identity. Storage may be reused only after its live references end. A reference
 has a target type and an inferred root region; it cannot be dereferenced after
 that region ends or while its target has a different type. No source-level
 lifetime annotations are required.
@@ -78,12 +79,14 @@ Safe code cannot construct arbitrary pointers, reinterpret object types, or
 send task-local references to another task. Allocation failure stops a task
 safely without exposing invalid storage.
 
-Function parameters use `T` for ownership, `&T` for a shared borrow, and
-`&mut T` for an exclusive borrow. Small `Copy` values copy by value; a larger
-value moves into an owning parameter. An independent large copy is explicit
-as `copy(x)`. A `val` owner may mutate its object through an exclusive borrow
-without rebinding its name. Borrow roots and last uses are inferred, but
-borrows cannot enter a child task or message.
+Decision 0006 supersedes the earlier closed-data ownership rule: an ordinary
+`T` argument has value semantics, so a caller may use its closed value after
+the call. The compiler selects borrowing, transfer, or sharing under that
+source contract. A `T` containing a communication capability still transfers
+its rights. `&T` is a shared borrow and `&mut T` is an exclusive borrow;
+`copy(x)` requests independent storage. A `val` owner may mutate its object
+through an exclusive borrow without rebinding its name. Borrow roots and last
+uses are inferred, but borrows cannot enter a child task or message.
 
 The 0.0.1 scalar subset spells a lexical region as `with r = &x { ... }` or
 `with r = &mut x { ... }`. The block ends the loan, including on `?` failure;
@@ -94,11 +97,9 @@ future work.
 
 ## 4. Tasks, scopes, and channels
 
-`spawn` starts a lightweight task. Scalars and small fixed-size closed
-arguments copy by value. A variable-size or large fixed-size closed
-argument requires explicit `copy(x)` at the call site; linear capabilities
-transfer ownership. The threshold for a small fixed-size aggregate remains
-open and will be specified independently of backend accident. A child cannot
+`spawn` starts a lightweight task. Closed arguments have value semantics;
+the compiler must preserve any parent value used after the spawn. Linear
+capabilities transfer ownership. A child cannot
 outlive its enclosing `scope`; scope completion waits for all children and
 reports any failure. Blocking channel operations park a task, not an OS thread.
 

@@ -14,8 +14,8 @@ memory instructions:
 
 | Event | Meaning | Required provenance |
 | --- | --- | --- |
-| `copy.value` | Independent copy of a fixed-size nominal value | Explicit `copy(x)` |
-| `copy.bytes` | Copy a variable-size value | Explicit `copy`, channel send/receive, or another named value-semantic boundary |
+| `copy.value` | Independent copy of fixed-size nominal components | Explicit `copy(x)` or an inferred closed-value name or field use |
+| `copy.bytes` | Copy a variable-size value | Explicit `copy`, copy-on-write, channel send/receive, or another named value-semantic boundary |
 | `storage.grow` | Obtain storage for a growing task-local value | Constructed value and owning region |
 | `check.bounds` | Check an index against a collection length | Indexed access and the absence of a range proof |
 | `task.create` | Create a child task and retained frame | Executed `spawn` |
@@ -36,7 +36,7 @@ proposed proof boundary and its limits.
 
 These are logical events, not exact counts of memory instructions. A
 `copy.value` may be carried entirely in registers. The current executable
-compiler emits this event for explicit nominal copies, `task.create` for
+compiler emits this event for explicit and inferred nominal copies, `task.create` for
 source `spawn`, `task.yield` for explicit yields and automatic loop checkpoints,
 and `channel.op` for scalar and typed channel construction and closes of owned communication capabilities. Its static
 site ledger is available with `phoebe cost <file>`; it does not count dynamic
@@ -47,14 +47,17 @@ instructions for one event or eliminate instructions when semantics allow it.
 
 ## 2. Source-level cost rules
 
-1. Scalars and references copy by value. The current executable compiler
-   conservatively requires explicit `copy` for every nominal type, including
-   small fixed-size aggregates. The eventual small-aggregate threshold is
-   still open. Cranelift may remove redundant machine moves.
-2. Variable-size values do not copy at assignment, ordinary call, or return.
-   An owning parameter moves them; `&T` and `&mut T` borrow them explicitly.
-   Fresh results are constructed in the destination. An independent copy uses
-   `copy(x)`.
+1. Scalars and references copy by value. Closed nominal data has source value
+   semantics under Decision 0006: ordinary reuse needs no `copy(x)`. The
+   current compiler copies fixed-size components at inferred reuse sites and
+   moves a final SSA use on a return path. Cranelift may remove redundant
+   machine moves. Shared storage and copy-on-write are not implemented.
+2. Variable-size closed values must follow the same source contract. The
+   intended representation can borrow, transfer a sole owner, or retain shared
+   immutable storage; a later write may copy. `&T` and `&mut T` remain explicit
+   borrowing interfaces, while `copy(x)` requests independent storage. Fresh
+   results should be constructed in the destination. This variable-size path
+   remains a design target.
 3. `send` copies closed value components and moves linear communication
    capabilities into queue ownership. Buffered send constructs or copies
    closed data directly into queue storage; receive copies that data into

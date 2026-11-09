@@ -127,7 +127,9 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                         }
                         state.places[place.0] = false;
                     }
-                    Operation::ReadField(place, _) | Operation::CopyPlace(place) => {
+                    Operation::ReadField(place, _)
+                    | Operation::CopyPlace(place)
+                    | Operation::InferredCopyPlace(place) => {
                         if !state.places[place.0] {
                             return Err(OwnershipError {
                                 span,
@@ -138,18 +140,7 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                             });
                         }
                     }
-                    Operation::Field(owner, index) => {
-                        let Type::Data(id) = function.value_types[owner.0] else {
-                            unreachable!("structure verifier checked field owner")
-                        };
-                        let field_type = program.data[id.0].fields[*index].1;
-                        value_use(
-                            &mut state,
-                            *owner,
-                            matches!(field_type, Type::Data(_)),
-                            span,
-                        )?;
-                    }
+                    Operation::Field(owner, _) => value_use(&mut state, *owner, false, span)?,
                     other => {
                         for value in operands(other) {
                             value_use(&mut state, value, false, span)?;

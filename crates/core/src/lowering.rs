@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashSet;
 
 mod body;
 mod cleanup;
@@ -213,6 +214,24 @@ impl<'a> Lowerer<'a> {
                 instructions: block.instructions,
                 terminator,
             });
+        }
+        // On a return path, a closed SSA value's final use can transfer its
+        // components. Walk backward so prior uses still retain their copy.
+        for block in &mut blocks {
+            if let Terminator::Return(result) = block.terminator {
+                let mut live = HashSet::from([result]);
+                for instruction in block.instructions.iter_mut().rev() {
+                    if let Some(result) = instruction.result {
+                        live.remove(&result);
+                    }
+                    if let Operation::InferredCopy(source) = instruction.operation
+                        && !live.contains(&source)
+                    {
+                        instruction.operation = Operation::Move(source);
+                    }
+                    live.extend(verification::operands(&instruction.operation));
+                }
+            }
         }
         let mut loan_regions = Vec::new();
         for (block_id, block) in blocks.iter().enumerate() {

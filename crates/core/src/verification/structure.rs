@@ -516,6 +516,7 @@ pub(crate) fn verify_structure(
                 if let Operation::Load(place)
                 | Operation::Take(place)
                 | Operation::CopyPlace(place)
+                | Operation::InferredCopyPlace(place)
                 | Operation::ReadField(place, _)
                 | Operation::BorrowBegin(place, _)
                 | Operation::Store(place, _) = instruction.operation

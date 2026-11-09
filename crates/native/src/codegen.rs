@@ -537,7 +537,9 @@ pub(super) fn compile_functions<M: Module>(
                             Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
                         }
                         Operation::Unit => Some(Vec::new()),
-                        Operation::Move(value) | Operation::Copy(value) => Some(get(*value)),
+                        Operation::Move(value)
+                        | Operation::Copy(value)
+                        | Operation::InferredCopy(value) => Some(get(*value)),
                         Operation::BorrowBegin(place, _) => Some(vec![builder.ins().stack_addr(
                             pointer_type,
                             places[place.0][0],
@@ -777,7 +779,8 @@ pub(super) fn compile_functions<M: Module>(
                         }
                         Operation::Load(place)
                         | Operation::Take(place)
-                        | Operation::CopyPlace(place) => Some(
+                        | Operation::CopyPlace(place)
+                        | Operation::InferredCopyPlace(place) => Some(
                             shapes
                                 .types(function.place_types[place.0])
                                 .into_iter()
