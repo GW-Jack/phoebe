@@ -1,7 +1,7 @@
 rust_library(
     name = "phoebe_collection_storage",
     crate_root = "src/lib.rs",
-    srcs = ["src/lib.rs"],
+    srcs = ["src/lib.rs", "src/segmented.rs"],
     edition = "2024",
     deps = ["//crates/collection-plan:phoebe_collection_plan"],
     visibility = ["PUBLIC"],
@@ -11,7 +11,7 @@ rust_library(
 rust_test(
     name = "unit_tests",
     crate_root = "src/lib.rs",
-    srcs = ["src/lib.rs"],
+    srcs = ["src/lib.rs", "src/segmented.rs"],
     edition = "2024",
     deps = ["//crates/collection-plan:phoebe_collection_plan"],
 )

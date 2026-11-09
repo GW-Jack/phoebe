@@ -3,6 +3,9 @@
 
 use phoebe_collection_plan::{Extent, Plan, Representation};
 
+mod segmented;
+pub use segmented::{FrozenSegmentedI64, SegmentedI64};
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum StorageError {
     UnsupportedRepresentation,

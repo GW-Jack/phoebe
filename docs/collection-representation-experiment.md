@@ -184,8 +184,16 @@ sequence. Fixed-region construction checks the same limit before allocation.
 These are distinct Rust types, so ordinary reads do not dispatch on a representation
 tag. The host `FixedRegionI64` retains Rust `Vec` metadata; an eventual native
 fixed layout should carry only the extent and storage required by its ABI.
-Segmented and linked representations, task-local region integration, general
-element ownership, and source-to-Core lowering remain open.
+`SegmentedI64<CHUNK>` now provides the host stable-append case: each chunk
+reserves its full scalar capacity before publication, so directory growth
+cannot relocate earlier elements. Bounded push returns the intact value on
+limit or allocation failure, and freeze consumes the chunk directory without
+copying elements. Tests compare element addresses across 257 appends and
+exercise both failure kinds. This host API takes `&mut self` for append, so it
+does not demonstrate a live Rust element reference spanning append; Phoebe's
+loan analysis and native region layout must establish that separately.
+Segmented source/Core operations, linked storage, task-local region
+integration, general element ownership, and source-to-Core lowering remain open.
 
 The first pass obligations are mechanical: inferred requirements must be a
 sound over-approximation of every reachable use; the selected layout must
