@@ -926,5 +926,49 @@
     "payload_json": "{\"author\":\"cli\",\"body\":\"Active payload-bearing sum variants with direct ? now use a checked local destination: active tag, payload initialization, and publication are verified. Interpreter, direct JIT, retained JIT, and standalone agree on scalar and capability payloads across error and yield. Static destination.zero/write costs are source-attributed. Full Cargo workspace and strict Clippy pass. Caller-owned result destinations and broader sum selection remain.\"}",
     "actor": "cli",
     "created_at": "2026-11-09 10:53:12"
+  },
+  {
+    "event_id": "0f5c48aee8a1a65ee5cd75786e00ffeda7d3674ec160e9ebd71855dc410543c9",
+    "parents": [
+      "e84ca133b69bbdd01b18f982885d6b28748cdfe15053ce6ac2b8b9c52c66dbd4"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged a821a4d: active sum variant destinations with checked tag/payload publication, capability transfer across suspension, source cost sites, and green Cargo/Buck/formal gates.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/19\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 10:56:39"
+  },
+  {
+    "event_id": "3347c0e7355e29267cff268ae139e7a698cf3b2095ae6d1e8edcf29c0a87c905",
+    "parents": [
+      "e396a8fcf82f93967051c0a87de3b3587bd661d1d0cbe8780e39baf657f23fe8"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"PR #18 merged: branch joins accept equal field moves, loop backedges require matching capability state, moved fields can return through bare-right function returns and send through typed channels. Suspended multiword Request<I64> return, interpreter/JIT/standalone, full Cargo/Buck2/formal CI pass. Remaining: nested partial moves and cancellation acceptance.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 10:56:48"
+  },
+  {
+    "event_id": "1744bac719f9204a06d69fa6c1c061c87c17406178f5e2d726c08a628300321d",
+    "parents": [
+      "3347c0e7355e29267cff268ae139e7a698cf3b2095ae6d1e8edcf29c0a87c905"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged CFG/loop/return/send witnesses and bare-right return admission under exact capability flow.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/18\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 10:56:48"
+  },
+  {
+    "event_id": "70064619b48076c0cf33b7805a7d19ea116528de8e0cd1c4eca43154c9c5f938",
+    "parents": [
+      "1744bac719f9204a06d69fa6c1c061c87c17406178f5e2d726c08a628300321d"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex:phoebe-field-matrix\",\"lease_id\":\"e396a8fcf82f93967051c0a87de3b3587bd661d1d0cbe8780e39baf657f23fe8\",\"released_at\":\"2026-11-09 10:56:48\"}",
+    "actor": "codex:phoebe-field-matrix",
+    "created_at": "2026-11-09 10:56:48"
   }
 ]
