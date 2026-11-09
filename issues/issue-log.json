@@ -783,5 +783,115 @@
     "payload_json": "{\"actor\":\"codex:phoebe-field-reinit\",\"lease_id\":\"5a6b5fca0820ad0ffa8754e457033a314bff5fda9b6cfd76dddce64cc41fbec0\",\"released_at\":\"2026-11-09 10:07:57\"}",
     "actor": "codex:phoebe-field-reinit",
     "created_at": "2026-11-09 10:07:57"
+  },
+  {
+    "event_id": "b2341dde1dcb71657c93b96cb939f81e949903a5c3430d8a5ceb764e2451f9df",
+    "parents": [
+      "1c83206973cee2c95f72bc8284698092268d4e62567d8f62b2dc1a0d46a430fc"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"Storage-plan implementation rebased onto current main as 23b43f5: checked direct 256-word managed array selection, interpreter/native ownership cleanup, read-only call borrows, explicit deep-copy behavior, source-attributed storage costs, and bounded benchmark. Full Cargo workspace and strict Clippy passed before rebase; rerunning after integration. Retained frames and embedded arrays remain inline.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 10:09:23"
+  },
+  {
+    "event_id": "63687048a55be75cbae8b79ddf97414c896e58be2e09a4dbb2d3aa5dc6667b6c",
+    "parents": [
+      "9040715ee8166b6b2a322abf1ef8d9fdbb9934a40063d8a6473b52f847f126ef"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "claim.acquired",
+    "payload_json": "{\"actor\":\"codex:phoebe-field-flow\",\"expires_at\":\"2026-11-09 12:12:30\"}",
+    "actor": "codex:phoebe-field-flow",
+    "created_at": "2026-11-09 10:12:30"
+  },
+  {
+    "event_id": "358dc8a612e72fde8139db0e3e7d715e480649117f51300467b19adcccd16d4c",
+    "parents": [
+      "b2341dde1dcb71657c93b96cb939f81e949903a5c3430d8a5ceb764e2451f9df"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged c2d99d2: checked 256-word managed storage plan, interpreter/native borrowing and cleanup, cost sites, explicit deep copy, and benchmark; all PR gates passed. Retained and embedded storage remain.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/15\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 10:12:36"
+  },
+  {
+    "event_id": "f6e4c483ed3897ccc19ddfcdc620c572da4402c62f8d9e9d215e8050de56171c",
+    "parents": [
+      "358dc8a612e72fde8139db0e3e7d715e480649117f51300467b19adcccd16d4c"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"PR #15 merged with green Cargo/Buck/formal gates. Remaining WS-1: extend selection beyond direct bare 256-word arrays into retained frames and embedded closed fields, recoverable allocation errors and cleanup on fallible task paths, and broader cost/performance acceptance. Releasing claim to work on WS-2.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 10:13:09"
+  },
+  {
+    "event_id": "f54b8db93155465022c1d2da5b2b798442262efb8c795d0816122661266a04b4",
+    "parents": [
+      "f6e4c483ed3897ccc19ddfcdc620c572da4402c62f8d9e9d215e8050de56171c"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex:phoebe-memory-manager\",\"lease_id\":\"737debdda6dd9dc0405fdcfa999c3eccf1b22d7cc01b6a49902050d2ab114986\",\"released_at\":\"2026-11-09 10:13:12\"}",
+    "actor": "codex:phoebe-memory-manager",
+    "created_at": "2026-11-09 10:13:12"
+  },
+  {
+    "event_id": "4e0f9e808fc718028b2e171d3120c9466f017b8a494b21636acadaf294f7f780",
+    "parents": [
+      "8b39850713a0620bb16702569a5a6d37564782160f8e29f6e288559e926cfa96"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "claim.acquired",
+    "payload_json": "{\"actor\":\"codex:phoebe-memory-manager\",\"expires_at\":\"2026-11-09 12:13:14\"}",
+    "actor": "codex:phoebe-memory-manager",
+    "created_at": "2026-11-09 10:13:14"
+  },
+  {
+    "event_id": "a01090baea3da23d2e743b8ac686d7062b3d87180997575066591c0be697baae",
+    "parents": [
+      "4e0f9e808fc718028b2e171d3120c9466f017b8a494b21636acadaf294f7f780"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"Checked local destinations now support nonempty products of any field count. Product construction chooses a destination whenever an earlier field owns a right, so nested ? in a later expression gets exact initialized-right cleanup. New two- and three-field success/error/suspension tests pass in interpreter, JIT, and standalone; full Cargo workspace and strict Clippy pass. Caller-owned results and active sum variants remain.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 10:24:00"
+  },
+  {
+    "event_id": "7f627c0ca68d901f84ff4b7f123ee39294ead563c06d9cae0a2235d7d6613916",
+    "parents": [
+      "63687048a55be75cbae8b79ddf97414c896e58be2e09a4dbb2d3aa5dc6667b6c"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"PR #16 merged: scoped with products can move top-level rights; lexical exit cleanup closes only still-owned fields. Conditional private-place lowering preserves flat values that do not project a right. Nested with aliases, early ?, yield, child-task transfer, interpreter/JIT/standalone, Cargo/Buck2/formal checks pass. Remaining: nested partial moves and full CFG/loop/send/spawn/cancellation acceptance.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 10:26:26"
+  },
+  {
+    "event_id": "68ca5579ce372cb88847c33ae6df09e0f4c326d6cd760493cea7a849f2664e98",
+    "parents": [
+      "7f627c0ca68d901f84ff4b7f123ee39294ead563c06d9cae0a2235d7d6613916"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged scoped top-level right transfer and field-sensitive lexical cleanup across execution paths.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/16\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 10:26:26"
+  },
+  {
+    "event_id": "b2f77e80a97bad800669cfd8db95b01502d56e65eabb6402988cfba6d1d32f15",
+    "parents": [
+      "68ca5579ce372cb88847c33ae6df09e0f4c326d6cd760493cea7a849f2664e98"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex:phoebe-field-flow\",\"lease_id\":\"63687048a55be75cbae8b79ddf97414c896e58be2e09a4dbb2d3aa5dc6667b6c\",\"released_at\":\"2026-11-09 10:26:26\"}",
+    "actor": "codex:phoebe-field-flow",
+    "created_at": "2026-11-09 10:26:26"
   }
 ]
