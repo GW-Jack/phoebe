@@ -17,8 +17,9 @@ payload while an owner or call-scoped borrow keeps it live. Mutation uses
 `words_set`, which updates a unique buffer or performs copy-on-write.
 
 `StoragePlan` selects managed storage only for a 256-word array type with a
-checked copy site, and only when every function has direct return/jump/branch
-control and no data declaration embeds an array. Other programs use inline
+checked copy site, and only when every function has direct return/jump/branch/match
+control and no data declaration embeds an array. This includes an early `?`
+return through a `Result` match. Other programs use inline
 components in all backends. The narrow threshold follows the local
 benchmark: 32-word sharing lost badly and 128 words was near parity. The
 planner also recognizes one read-only array parameter whose uses are limited
@@ -49,7 +50,7 @@ linear.
 
 Verification includes runtime allocation-failure tests, a C archive-link
 exercise, interpreter and direct native value tests, cross-function returns,
-branch cleanup, zero live managed allocations after JIT completion, and a
+branch and early-error cleanup, zero live managed allocations after JIT completion, and a
 retained 256-word inline fallback across interpreter, JIT, and standalone.
 On this machine's AArch64 JIT, `cargo run --example storage_bench` ran
 200,000 calls to a function making ten read-only calls with a 256-word array.

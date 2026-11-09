@@ -14,12 +14,17 @@ impl StoragePlan {
     pub fn for_program(program: &Program) -> Self {
         let mut managed_arrays = [false; 257];
         // The first native implementation owns bare array pointers in direct
-        // frames. Data payloads and retained task frames keep their inline ABI.
+        // frames. Matches may select an early return, including `?`; every
+        // return releases the owners still held by that frame. Data payloads
+        // and retained task frames keep their inline ABI.
         let simple_control = program.functions.iter().all(|function| {
             function.blocks.iter().all(|block| {
                 matches!(
                     block.terminator,
-                    Terminator::Return(_) | Terminator::Jump(_, _) | Terminator::Branch { .. }
+                    Terminator::Return(_)
+                        | Terminator::Jump(_, _)
+                        | Terminator::Branch { .. }
+                        | Terminator::Match { .. }
                 ) && block.instructions.iter().all(|instruction| {
                     !matches!(
                         instruction.operation,

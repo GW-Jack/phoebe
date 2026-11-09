@@ -1,6 +1,7 @@
 #![cfg(debug_assertions)]
 
 use phoebe::{core, native, runtime, syntax};
+use std::process::Command;
 
 fn words() -> String {
     std::iter::once("40")
@@ -110,4 +111,43 @@ fn direct_managed_arrays_release_on_call_branch_and_return() {
     assert_eq!(runtime::debug_live_word_allocations(), baseline);
     assert_eq!(native::run(&joined, "main", &[]).unwrap(), 42);
     assert_eq!(runtime::debug_live_word_allocations(), baseline);
+}
+
+#[test]
+fn managed_arrays_release_on_early_result_return() {
+    let baseline = runtime::debug_live_word_allocations();
+    for (index, (outcome, expected)) in [("Err(7)", 7), ("Ok(22)", 42)].into_iter().enumerate() {
+        let source = format!(
+            "fn second() -> Result<I64, I64> = Result<I64, I64>.{outcome}\n\
+             fn build() -> Result<I64, I64> {{ var a = [{}]; val prior = a; \
+             val ignored = second()?; a[0] = 0; \
+             Result<I64, I64>.Ok(prior[0] + a[255]) }}\n\
+             fn main() -> I64 = when (build()) {{ \
+             Result<I64, I64>.Ok(value) -> {{ value }}, \
+             Result<I64, I64>.Err(error) -> {{ error }} }}",
+            words()
+        );
+        let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+        let plan = core::StoragePlan::for_program(&program);
+        assert!(plan.shares_array(256));
+        assert!(
+            program
+                .cost_events()
+                .iter()
+                .any(|event| event.kind == "storage.release")
+        );
+        assert_eq!(program.interpret("main", &[]).unwrap(), expected);
+        assert_eq!(runtime::debug_live_word_allocations(), baseline);
+        assert_eq!(native::run(&program, "main", &[]).unwrap(), expected);
+        assert_eq!(runtime::debug_live_word_allocations(), baseline);
+        let path = std::env::temp_dir().join(format!(
+            "phoebe-managed-early-result-{}-{index}",
+            std::process::id()
+        ));
+        native::build_executable(&program, &path).unwrap();
+        let output = Command::new(&path).output().unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, format!("{expected}\n").as_bytes());
+    }
 }
