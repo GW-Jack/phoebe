@@ -11,8 +11,19 @@ import tempfile
 
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
-    state = root / ".whipplescript"
-    events = root / "issues" / "issue-log.json"
+    common_dir = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    # Worktrees of one repository must coordinate through one lock, SQLite
+    # store, and portable event log. The common Git directory identifies the
+    # primary checkout without trusting the caller's working directory.
+    shared_root = Path(common_dir).resolve().parent
+    state = shared_root / ".whipplescript"
+    events = shared_root / "issues" / "issue-log.json"
     state.mkdir(exist_ok=True)
     events.parent.mkdir(exist_ok=True)
     environment = os.environ.copy()
@@ -24,7 +35,7 @@ def main() -> int:
         if not (state / "items.sqlite").exists():
             result = subprocess.run(
                 ["whip", "issue", "bootstrap"],
-                cwd=root,
+                cwd=shared_root,
                 env=environment,
                 stdout=subprocess.DEVNULL,
                 check=False,
@@ -34,7 +45,7 @@ def main() -> int:
         if events.exists():
             result = subprocess.run(
                 ["whip", "issue", "import", str(events)],
-                cwd=root,
+                cwd=shared_root,
                 env=environment,
                 stdout=subprocess.DEVNULL,
                 check=False,
@@ -42,7 +53,7 @@ def main() -> int:
             if result.returncode:
                 return result.returncode
         result = subprocess.run(
-            ["whip", "issue", *sys.argv[1:]], cwd=root, env=environment, check=False
+            ["whip", "issue", *sys.argv[1:]], cwd=shared_root, env=environment, check=False
         )
         if result.returncode:
             return result.returncode
@@ -52,7 +63,7 @@ def main() -> int:
             temporary_path = Path(temporary.name)
             exported = subprocess.run(
                 ["whip", "issue", "export"],
-                cwd=root,
+                cwd=shared_root,
                 env=environment,
                 stdout=temporary,
                 check=False,

@@ -1,11 +1,12 @@
 # Phoebe work tracking
 
-Phoebe has its own WhippleScript issue store. Use `scripts/issue` from this
-checkout, even when `WHIPPLESCRIPT_ITEMS_STORE` points to another project's
-store in your shell. The wrapper selects Phoebe's store and keeps the ordered
-event log in `issues/issue-log.json` current. This preserves WS-1, WS-2, and
-later issue numbers across fresh checkouts. Do not edit the event log or the
-generated `tracker/` views by hand.
+Phoebe has its own WhippleScript issue store. Use `scripts/issue` from any
+Phoebe worktree, even when `WHIPPLESCRIPT_ITEMS_STORE` points to another
+project's store in your shell. The wrapper resolves the shared Git directory
+and uses the primary checkout's store, lock, and ordered event log at
+`issues/issue-log.json`. This gives concurrent worktrees one issue sequence.
+Commit the event log to preserve WS-1, WS-2, and later issue numbers across
+fresh clones. Do not edit the event log or generated `tracker/` views by hand.
 
 Before work that will span sessions or produce a substantial change, inspect
 `scripts/issue ready phoebe` and `scripts/issue list --tracker phoebe --status open`.
