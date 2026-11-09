@@ -524,7 +524,8 @@ fn instruction_live(live: &mut Live, operation: &Operation, result: Option<Value
         Operation::DestField(place, _, _)
         | Operation::StoreField(place, _, _)
         | Operation::DestPublish(place)
-        | Operation::DestTakeField(place, _) => {
+        | Operation::DestTakeField(place, _)
+        | Operation::TakeField(place, _) => {
             live.places[place.0] = true;
         }
         Operation::Load(place)

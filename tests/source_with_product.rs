@@ -1,6 +1,6 @@
 use phoebe::core::Operation;
 use phoebe::runtime::{NativePollTask, Scheduler, ScopeLimits};
-use phoebe::{core, native, syntax};
+use phoebe::{core, frame_layout, native, syntax};
 use std::process::Command;
 
 #[test]
@@ -263,35 +263,23 @@ fn main() -> I64 = when (work()) {
 
 #[test]
 fn child_failure_cancels_parent_with_partially_moved_product() {
-    let source = r#"
-data Pair { sender: Sender<I64>, receiver: Receiver<I64> }
-
-fn grandchild() -> I64 { yield; 0 }
-fn build() -> Result<I64, ResourceError> {
-  spawn grandchild()?;
-  Result<I64, ResourceError>.Ok(0)
-}
-fn child() -> I64 {
-  scope { val unused = build(); }
-  0
-}
-fn start() -> Result<I64, ResourceError> {
-  val (sender, receiver) = channel<I64>(capacity = 1)?;
-  with pair = Pair(sender, receiver) {
-    val moved = pair.sender;
-    scope { spawn child()?; yield; }
-    moved.close();
-  }
-  Result<I64, ResourceError>.Ok(42)
-}
-fn main() -> I64 = when (start()) {
-  Result<I64, ResourceError>.Ok(value) -> { value },
-  Result<I64, ResourceError>.Err(error) -> { 0 },
-}
-"#;
+    let source = include_str!("../examples/partial_scope_cancel.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
     core::verify(&program).unwrap();
+    let frames = frame_layout::analyze(&program).unwrap();
+    let start = frames
+        .iter()
+        .find(|frame| program.functions[frame.function.0].name == "start")
+        .unwrap();
+    assert!(start.place_slots.contains(&core::PlaceId(1)));
+    assert!(
+        start
+            .points
+            .iter()
+            .any(|point| point.places.contains(&core::PlaceId(1)))
+    );
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
     let limits = ScopeLimits {
         tasks: 3,
         scopes: 1,

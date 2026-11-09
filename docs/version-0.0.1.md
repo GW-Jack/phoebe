@@ -426,7 +426,10 @@ A source regression also suspends a parent with one right moved from a scoped
 product and another still in its empty-slot record. Under a child failure, the
 native scheduler cancels the parent, reports no open handles, and passes its
 internal consistency check. The interpreter and JIT exercise the same source
-under tight scope limits; the interpreter also checks the successful path.
+under tight scope limits. Poll-frame liveness now treats a field take as a
+read of its containing place, so the still-owned sibling survives yields and
+scope joins in the persistent task frame. The successful path agrees in the
+interpreter, native JIT, and standalone executable.
 Failure and deadlock cleanup now drop descendant task frames before ancestor
 frames. Runtime tests inspect drop order for three generations, and a source
 test faults a child while its parent has a pending borrowed call. These are
