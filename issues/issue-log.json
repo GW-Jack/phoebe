@@ -530,5 +530,49 @@
     "payload_json": "{\"actor\":\"codex:phoebe-field-loans\",\"lease_id\":\"fa70b86b1b506656d7306394f4e585a582136d93365d23ea255242f96de94e56\",\"released_at\":\"2026-11-09 09:03:20\"}",
     "actor": "codex:phoebe-field-loans",
     "created_at": "2026-11-09 09:03:20"
+  },
+  {
+    "event_id": "10eb762bc8bc830d123ed13c4d9ee9abe0f95de60d84b0b81d04615b63a5ab17",
+    "parents": [
+      "ec46d0edd916a7ba2ce8ed210898ecd0cdb8f89c88b97dd09b4f85797b20947d"
+    ],
+    "issue_id": "053f98aad904ba5a346c04cfe77bbe5111ddc7e39219b495b2cd259e033379a0",
+    "kind": "claim.acquired",
+    "payload_json": "{\"actor\":\"codex:phoebe-field-loan-model\",\"expires_at\":\"2026-11-09 11:08:40\"}",
+    "actor": "codex:phoebe-field-loan-model",
+    "created_at": "2026-11-09 09:08:40"
+  },
+  {
+    "event_id": "980aab3d66ce3f8230ae9f82ebfd43ffff20695729e43a5f0f94fc66f3d3df62",
+    "parents": [
+      "10eb762bc8bc830d123ed13c4d9ee9abe0f95de60d84b0b81d04615b63a5ab17"
+    ],
+    "issue_id": "053f98aad904ba5a346c04cfe77bbe5111ddc7e39219b495b2cd259e033379a0",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged finite Maude authority model for field-path loans; all CI checks passed.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/10\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 09:12:59"
+  },
+  {
+    "event_id": "decf7dd202d399ceb22085c791f1e52bb8ce8fe34a770d8cb86424a8388d9dc6",
+    "parents": [
+      "980aab3d66ce3f8230ae9f82ebfd43ffff20695729e43a5f0f94fc66f3d3df62"
+    ],
+    "issue_id": "053f98aad904ba5a346c04cfe77bbe5111ddc7e39219b495b2cd259e033379a0",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"PR #10 adds a finite Maude authority model (142 states) for parent/child and sibling field loans, writes, and owner transfer. It does not prove Core refinement. Remaining: whole-product references, field loans into partial capability-bearing records after WS-3, and executable parent/child move tests.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 09:13:03"
+  },
+  {
+    "event_id": "cf527653c609a3c02b12b381059e0ad50c3efdb505d5747a7e33b6dda786f7de",
+    "parents": [
+      "decf7dd202d399ceb22085c791f1e52bb8ce8fe34a770d8cb86424a8388d9dc6"
+    ],
+    "issue_id": "053f98aad904ba5a346c04cfe77bbe5111ddc7e39219b495b2cd259e033379a0",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex:phoebe-field-loan-model\",\"lease_id\":\"10eb762bc8bc830d123ed13c4d9ee9abe0f95de60d84b0b81d04615b63a5ab17\",\"released_at\":\"2026-11-09 09:13:05\"}",
+    "actor": "codex:phoebe-field-loan-model",
+    "created_at": "2026-11-09 09:13:05"
   }
 ]
