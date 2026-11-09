@@ -1,12 +1,12 @@
 # Typed message transfer contract
 
-Status: source and interpreter path for concrete `channel<T>` messages; native
-code generation remains open. The executable
-kernel has a scalar `I64` queue and a preallocated fixed-width queue that
-carries `Request<I64>` and other messages containing `ReplyTo<I64>` rights. This document
-defines the bridge from checked Core values to a general bounded queue. The
-interpreter path is implemented for admitted concrete messages; the native
-generated path and a general proof remain open.
+Status: concrete `channel<T>` messages run in the interpreter, Cranelift JIT,
+and standalone code for the admitted scalar, nominal, sum, and `ReplyTo<I64>`
+subset. The executable kernel has a scalar `I64` queue and a preallocated
+fixed-width queue that carries `Request<I64>` and other messages containing
+`ReplyTo<I64>` rights. This document defines the bridge from checked Core
+values to a general bounded queue. Transfer of other right kinds and a general
+proof remain open.
 
 ## Message admissibility
 
@@ -46,20 +46,21 @@ to that runtime plan, preserving flattened offsets and structural close order.
 Its type ID is unique within one linked program and must not be reused across
 independently linked programs. The interpreter's concrete `Request<I64>`
 channel now creates its runtime queue from this catalog and encodes and
-decodes its two words through the same layout table. General checked Core
-channel operations, generated native descriptor calls, and transfer of other
-right kinds remain open.
-An executable aggregate witness now encodes a tagged product with an active
-reply right, transfers it through the runtime queue, decodes it, and closes
-the returned right. This exercises the bridge below source `channel<T>`;
-it does not establish the general native path.
+decodes its two words through the same layout table. Checked Core channel
+operations and generated native descriptor calls use the same catalog for
+admitted concrete messages. Transfer of other right kinds remains open.
+An executable aggregate witness encodes a tagged product with an active reply
+right, transfers it through the runtime queue, decodes it, and closes the
+returned right. Source regressions now carry both active and inactive tagged
+reply-right arms through generated native channels.
 Checked Core now has `TypedChannelNew`, `TypedSend`, and `TypedReceive` for
 concrete message identities. The verifier checks exact endpoint and message
 types and derives capability actions for success, closed, retry, and value
 edges. Hand-built Core programs interpret nominal messages, including a
 product that owns a reply right. Source `channel<T>` lowers concrete nominal
-traffic and a closed send that returns an owned reply right. Native lowering reports an explicit
-unsupported operation until it can pass descriptors and flattened words.
+traffic and a closed send that returns an owned reply right. Native lowering
+passes the checked descriptor identity and flattened words to the versioned
+runtime ABI.
 
 ## Ownership equations
 
@@ -125,14 +126,17 @@ and still occupy a queue slot.
    transfer. The interpreter's concrete request and checked typed channel
    creation paths request it; generated native creation uses the same
    descriptor. Source regressions compare nominal, boolean-field, zero-width,
-   and reply-right aggregate messages across interpreter, JIT, and standalone.
+   reply-right aggregate, and tagged messages across interpreter, JIT, and
+   standalone.
 2. Extend the runtime's preallocated typed slots beyond `ReplyTo<I64>` rights.
    The current path checks type identity and width, validates all active reply
    rights before changing any owner, transfers multiple rights on enqueue and
    dequeue, closes them on discard, and preserves unsent rights on full and
    closed sends. Tests exercise active and inactive tagged arms, duplicate or
-   invalid rights, and a two-task full queue. Injected precommit allocation
-   failure and transfer of channel handles remain open.
+   invalid rights, and a two-task full queue. A dedicated allocation-counting
+   test checks zero heap allocations for successful typed send and receive
+   after channel creation. Injected precommit allocation failure on a parked
+   send and transfer of channel handles remain open.
 3. Complete source `channel<T>` and native code generation through the checked
    typed Core family. The interpreter, Cranelift JIT, and standalone paths now
    handle concrete nominal and reply-right aggregate messages. The existing

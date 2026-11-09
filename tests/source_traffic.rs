@@ -665,3 +665,56 @@ fn main() -> I64 = when (exchange()) {
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
     assert_standalone(&program, "typed-reply-right", 42);
 }
+
+#[test]
+fn native_typed_message_transfers_only_the_active_tagged_right() {
+    let some_source = r#"
+data Envelope { maybe: Option<ReplyTo<I64>>, number: I64 }
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<Envelope>(capacity = 1)?;
+  val (right, answer) = reply<I64>()?;
+  val sent = sender.send(Envelope(Option<ReplyTo<I64>>.Some(right), 42));
+  sender.close();
+  when (sent) {
+    Send<Envelope>.Sent -> {
+      val received = receiver.receive();
+      receiver.close();
+      when (received) {
+        Receive<Envelope>.Value(envelope) -> {
+          val (maybe, number) = envelope.unpack();
+          maybe.close_caps();
+          answer.close();
+          Result<I64, ResourceError>.Ok(number)
+        },
+        Receive<Envelope>.End -> {
+          answer.close();
+          Result<I64, ResourceError>.Ok(-1)
+        }
+      }
+    },
+    Send<Envelope>.Closed(envelope) -> {
+      envelope.close_caps();
+      receiver.close();
+      answer.close();
+      Result<I64, ResourceError>.Ok(-2)
+    }
+  }
+}
+
+fn main() -> I64 = when (exchange()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { -3 },
+}
+"#;
+    let none_source = some_source.replace(
+        "val sent = sender.send(Envelope(Option<ReplyTo<I64>>.Some(right), 42));",
+        "right.close();\n  val sent = sender.send(Envelope(Option<ReplyTo<I64>>.None, 42));",
+    );
+    for (index, source) in [some_source, &none_source].into_iter().enumerate() {
+        let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+        assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+        assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+        assert_standalone(&program, &format!("typed-tagged-right-{index}"), 42);
+    }
+}

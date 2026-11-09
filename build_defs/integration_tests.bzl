@@ -1,5 +1,13 @@
 def integration_tests(rust_test):
     rust_test(
+        name = "typed_no_alloc_tests",
+        crate_root = "tests/typed_no_alloc.rs",
+        srcs = ["tests/typed_no_alloc.rs"],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+    )
+
+    rust_test(
         name = "source_lexical_borrows_tests",
         crate_root = "tests/source_lexical_borrows.rs",
         srcs = [
