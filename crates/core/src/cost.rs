@@ -30,14 +30,19 @@ impl Program {
                         }
                         _ => None,
                     };
-                    if let Some(Type::Data(id)) = copy_ty {
+                    if let Some(ty @ (Type::Data(_) | Type::ArrayI64(_))) = copy_ty {
+                        let type_name = match ty {
+                            Type::Data(id) => self.data[id.0].name.clone(),
+                            Type::ArrayI64(len) => format!("[I64; {len}]"),
+                            _ => unreachable!(),
+                        };
                         events.push(CostEvent {
                             function: function.name.clone(),
                             block: block_id,
                             instruction: instruction_id,
                             span: instruction.span,
                             kind: "copy.value",
-                            type_name: self.data[id.0].name.clone(),
+                            type_name,
                             reason: if matches!(
                                 instruction.operation,
                                 Operation::InferredCopy(_) | Operation::InferredCopyPlace(_)
@@ -59,14 +64,19 @@ impl Program {
                         },
                         _ => None,
                     };
-                    if let Some(Type::Data(id)) = projected_ty {
+                    if let Some(ty @ (Type::Data(_) | Type::ArrayI64(_))) = projected_ty {
+                        let type_name = match ty {
+                            Type::Data(id) => self.data[id.0].name.clone(),
+                            Type::ArrayI64(len) => format!("[I64; {len}]"),
+                            _ => unreachable!(),
+                        };
                         events.push(CostEvent {
                             function: function.name.clone(),
                             block: block_id,
                             instruction: instruction_id,
                             span: instruction.span,
                             kind: "copy.value",
-                            type_name: self.data[id.0].name.clone(),
+                            type_name,
                             reason: "inferred field value",
                         });
                     }

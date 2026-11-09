@@ -537,6 +537,16 @@ pub(super) fn compile_functions<M: Module>(
                             Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
                         }
                         Operation::Unit => Some(Vec::new()),
+                        Operation::ArrayI64(elements) => {
+                            Some(elements.iter().map(|element| one(*element)).collect())
+                        }
+                        Operation::ArrayGet(array, index) => Some(vec![get(*array)[*index]]),
+                        Operation::ArrayLen(array) => {
+                            let Type::ArrayI64(len) = function.value_types[array.0] else {
+                                unreachable!("verified array length")
+                            };
+                            Some(vec![builder.ins().iconst(types::I64, len as i64)])
+                        }
                         Operation::Move(value)
                         | Operation::Copy(value)
                         | Operation::InferredCopy(value) => Some(get(*value)),

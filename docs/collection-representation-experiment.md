@@ -1,12 +1,16 @@
 # Collection representation experiment — draft 0.3
 
 Status: exploratory design, isolated Rust benchmark, pure requirement
-planner, and host-side scalar storage kernel, 2026-11-08.
+planner, host-side scalar storage kernel, and a bounded fixed-array Core
+slice, 2026-11-08.
 `crates/collection-plan` infers requirements from a supplied checked-use graph
 and selects by constant-size rule logic; it is not yet fed by Phoebe source or
 Core IR. `crates/collection-storage` exercises selected fixed and contiguous
 layouts, but is not yet Phoebe's interpreter or native runtime.
-No Phoebe collection syntax or Core collection operation is implemented.
+Checked Core supports inline `[I64; N]` for `N <= 32`, constant indexed reads,
+and length. The direct and retained Cranelift paths and interpreter execute the
+same Core program. Source syntax, dynamic indexing, larger fixed storage, and
+source-use inference remain open.
 This document does not amend Decision 0003.
 
 ## The semantic boundary

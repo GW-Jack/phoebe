@@ -282,6 +282,15 @@ def integration_tests(rust_test):
     )
 
     rust_test(
+        name = "core_arrays_tests",
+        crate_root = "tests/core_arrays.rs",
+        srcs = ["tests/core_arrays.rs"],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
         name = "core_spawn_tests",
         crate_root = "tests/core_spawn.rs",
         srcs = ["tests/core_spawn.rs"],

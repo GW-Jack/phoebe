@@ -810,6 +810,21 @@ fn compile_poll_module<M: Module>(
                             Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
                         }
                         Operation::Unit => Some(Vec::new()),
+                        Operation::ArrayI64(elements) => Some(
+                            elements
+                                .iter()
+                                .map(|element| get(*element, &mut builder)[0])
+                                .collect(),
+                        ),
+                        Operation::ArrayGet(array, index) => {
+                            Some(vec![get(*array, &mut builder)[*index]])
+                        }
+                        Operation::ArrayLen(array) => {
+                            let Type::ArrayI64(len) = function.value_types[array.0] else {
+                                unreachable!("verified array length")
+                            };
+                            Some(vec![builder.ins().iconst(types::I64, len as i64)])
+                        }
                         Operation::Move(value)
                         | Operation::Copy(value)
                         | Operation::InferredCopy(value) => Some(get(*value, &mut builder)),
@@ -1876,6 +1891,9 @@ fn validate_poll_function(
                 Operation::Const(_)
                     | Operation::Bool(_)
                     | Operation::Unit
+                    | Operation::ArrayI64(_)
+                    | Operation::ArrayGet(_, _)
+                    | Operation::ArrayLen(_)
                     | Operation::Move(_)
                     | Operation::Copy(_)
                     | Operation::InferredCopy(_)
