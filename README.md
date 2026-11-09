@@ -37,9 +37,11 @@ call and task across all three execution paths.
 
 ## Current milestone
 
-Substantial implementation work is coordinated in the shared WhippleScript
-`phoebe` issue queue. `AGENTS.md` gives the claim and completion commands;
-`docs/decisions/` remains the record of language decisions.
+Substantial implementation work is coordinated in Phoebe's own WhippleScript
+issue store, beginning with WS-1. Run `scripts/issue ready phoebe` to see the
+backlog. `AGENTS.md` explains the claim and completion workflow; the ordered
+event log is committed in `issues/issue-log.json`. `docs/decisions/` remains the
+record of language decisions.
 
 `docs/version-0.0.1.md` states the release gates and the exact subset that
 currently runs. The Rust workspace parses functions over I64, Bool, Unit, nominal sums

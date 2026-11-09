@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Run WhippleScript issues against Phoebe's own portable backlog."""
+
+import fcntl
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+
+def main() -> int:
+    root = Path(__file__).resolve().parent.parent
+    state = root / ".whipplescript"
+    events = root / "issues" / "issue-log.json"
+    state.mkdir(exist_ok=True)
+    events.parent.mkdir(exist_ok=True)
+    environment = os.environ.copy()
+    environment["WHIPPLESCRIPT_ITEMS_STORE"] = str(state / "items.sqlite")
+
+    # Serialize import, mutation, and export for sessions sharing this checkout.
+    with (state / "issue-wrapper.lock").open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not (state / "items.sqlite").exists():
+            result = subprocess.run(
+                ["whip", "issue", "bootstrap"],
+                cwd=root,
+                env=environment,
+                stdout=subprocess.DEVNULL,
+                check=False,
+            )
+            if result.returncode:
+                return result.returncode
+        if events.exists():
+            result = subprocess.run(
+                ["whip", "issue", "import", str(events)],
+                cwd=root,
+                env=environment,
+                stdout=subprocess.DEVNULL,
+                check=False,
+            )
+            if result.returncode:
+                return result.returncode
+        result = subprocess.run(
+            ["whip", "issue", *sys.argv[1:]], cwd=root, env=environment, check=False
+        )
+        if result.returncode:
+            return result.returncode
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=events.parent, prefix=".issue-log-", delete=False
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            exported = subprocess.run(
+                ["whip", "issue", "export"],
+                cwd=root,
+                env=environment,
+                stdout=temporary,
+                check=False,
+            )
+        if exported.returncode:
+            temporary_path.unlink()
+            return exported.returncode
+        temporary_path.replace(events)
+        return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
