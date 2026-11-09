@@ -420,6 +420,11 @@ the parent retained another sender and would otherwise report a deadlock
 instead of the child's fault. The bounded two-task Maude model includes
 atomic scope cancellation and queued-message discard; it remains an abstract
 model, not a proof about the executable scheduler.
+A source regression also suspends a parent with one right moved from a scoped
+product and another still in its empty-slot record. Under a child failure, the
+native scheduler cancels the parent, reports no open handles, and passes its
+internal consistency check. The interpreter and JIT exercise the same source
+under tight scope limits; the interpreter also checks the successful path.
 Failure and deadlock cleanup now drop descendant task frames before ancestor
 frames. Runtime tests inspect drop order for three generations, and a source
 test faults a child while its parent has a pending borrowed call. These are
