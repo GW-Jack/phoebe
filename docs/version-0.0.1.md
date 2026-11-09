@@ -189,7 +189,9 @@ components, without native heap allocation. Direct returns wider than the
 target's register return capacity use a caller-owned stack buffer, so x86-64
 and AArch64 both support finite nested results. A checked single-block
 product constructor made from literals and moves can fill that buffer directly,
-without an intermediate local product copy. `docs/abi-shapes.md` records the current internal
+without an intermediate local product copy. A direct one-call wrapper can
+forward the buffer to its callee, avoiding a second result slot.
+`docs/abi-shapes.md` records the current internal
 calling convention and its unmeasured argument cost threshold. Core IR
 constructs nonempty products with a direct `?` in a later field or an owned
 right in an earlier field in checked local destinations with write-once fields

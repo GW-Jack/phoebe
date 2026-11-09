@@ -45,7 +45,9 @@ preserve initialized fields while the next field suspends. On deadlock the
 scheduler closes each still task-owned right once. A direct single-block
 product constructor with only literal and move operations writes its checked
 destination straight into a caller-owned wide-result buffer when the ABI uses
-one. General caller-owned destinations, including suspension, remain pending.
+one. A direct one-call wrapper forwards that buffer to its callee for a
+complete wide result. General caller-owned destinations, including suspension,
+remain pending.
 A payload-bearing sum constructor whose payload
 directly uses `?` also uses a checked local destination. `dest.begin.variant`
 fixes the active tag; `dest.field` accepts only that tag's payload, and

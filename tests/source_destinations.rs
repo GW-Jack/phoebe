@@ -605,10 +605,11 @@ data Large {
   e: I64, f: I64, g: I64, h: I64, i: I64
 }
 fn make(right: Sender<I64>) -> Large = Large(right, 33, 2, 3, 4, 5, 6, 7, 8, 9)
+fn relay(right: Sender<I64>) -> Large = make(right)
 fn entry() -> Result<I64, ResourceError> {
   val (sender, receiver) = channel<I64>(capacity = 1)?;
   receiver.close();
-  val large = make(sender);
+  val large = relay(sender);
   val total = large.a + large.i;
   large.close_caps();
   Result<I64, ResourceError>.Ok(total)
@@ -641,6 +642,18 @@ fn main() -> I64 = when (entry()) {
     assert!(!make_clif.contains("explicit_slot"), "{make_clif}");
     assert!(!make_clif.contains("stack_store"), "{make_clif}");
     assert!(!make_clif.contains("stack_load"), "{make_clif}");
+    let relay_clif = clif
+        .split("; Phoebe function relay\n")
+        .nth(1)
+        .unwrap()
+        .split("; Phoebe function ")
+        .next()
+        .unwrap();
+    assert!(relay_clif.contains(" sret)"), "{relay_clif}");
+    assert!(relay_clif.contains("call "), "{relay_clif}");
+    assert!(!relay_clif.contains("explicit_slot"), "{relay_clif}");
+    assert!(!relay_clif.contains("stack_store"), "{relay_clif}");
+    assert!(!relay_clif.contains("stack_load"), "{relay_clif}");
     assert_eq!(
         program
             .cost_events()

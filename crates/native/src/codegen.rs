@@ -97,6 +97,20 @@ fn caller_result_destination(function: &core::Function) -> Option<(core::PlaceId
     Some((place, *returned))
 }
 
+fn caller_result_call(function: &core::Function) -> Option<core::ValueId> {
+    let [block] = function.blocks.as_slice() else {
+        return None;
+    };
+    let [instruction] = block.instructions.as_slice() else {
+        return None;
+    };
+    let Terminator::Return(returned) = block.terminator else {
+        return None;
+    };
+    matches!(instruction.operation, Operation::Call(_, _) if instruction.result == Some(returned))
+        .then_some(returned)
+}
+
 fn release_owner<M: Module>(
     module: &mut M,
     builder: &mut FunctionBuilder<'_>,
@@ -499,6 +513,9 @@ pub(super) fn compile_functions<M: Module>(
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_context);
             let caller_destination = (shapes.types(function.return_type).len() > register_results)
                 .then(|| caller_result_destination(function))
+                .flatten();
+            let caller_result_call = (shapes.types(function.return_type).len() > register_results)
+                .then(|| caller_result_call(function))
                 .flatten();
             let blocks = function
                 .blocks
@@ -1046,14 +1063,22 @@ pub(super) fn compile_functions<M: Module>(
                                 let context = runtime_context.expect("caller context propagation");
                                 call_args.insert(0, context);
                             }
-                            let returned = emit_direct_call(
-                                &mut builder,
-                                callee,
-                                call_args,
-                                &shapes.types(program.functions[target.0].return_type),
-                                pointer_type,
-                                register_results,
-                            )?;
+                            let returned = if caller_result_call
+                                .is_some_and(|value| instruction.result == Some(value))
+                            {
+                                call_args.push(return_address.expect("wide caller result"));
+                                builder.ins().call(callee, &call_args);
+                                Vec::new()
+                            } else {
+                                emit_direct_call(
+                                    &mut builder,
+                                    callee,
+                                    call_args,
+                                    &shapes.types(program.functions[target.0].return_type),
+                                    pointer_type,
+                                    register_results,
+                                )?
+                            };
                             for (param, arg) in args.iter().enumerate() {
                                 if let CallArg::Value(value) = arg
                                     && !shapes.borrows_param(target.0, param)
