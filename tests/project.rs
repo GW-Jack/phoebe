@@ -6,6 +6,26 @@ use phoebe::{ProjectBuildSession, ProjectCompilerSession, core, native, package,
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
+fn imported_fixed_array_signature_preserves_shape() {
+    let path = temp_project();
+    std::fs::write(
+        path.join("math.phoebe"),
+        "pub fn id(xs: [I64; 2]) -> [I64; 2] = xs\n",
+    )
+    .unwrap();
+    std::fs::write(
+        path.join("app.phoebe"),
+        "import math\nfn main() -> I64 { val xs = math.id([40, 2]); xs[0] + 2 }\n",
+    )
+    .unwrap();
+    let loaded = project::load(&path).unwrap();
+    let program = core::lower(&loaded.ast).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
 fn imported_nominal_message_keeps_its_identity_through_typed_channel() {
     let path = temp_project();
     std::fs::write(

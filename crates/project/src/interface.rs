@@ -42,6 +42,10 @@ impl ModuleInterface {
         fn ty(bytes: &mut Vec<u8>, value: &TypeName, binders: &HashMap<&str, usize>) {
             match value {
                 TypeName::I64 => bytes.push(0),
+                TypeName::ArrayI64(len) => {
+                    bytes.push(18);
+                    length(bytes, *len);
+                }
                 TypeName::Bool => bytes.push(1),
                 TypeName::Unit => bytes.push(12),
                 TypeName::SenderI64 => bytes.push(2),
@@ -271,6 +275,21 @@ mod tests {
         );
         assert_ne!(before.canonical_bytes(), changed_shape.canonical_bytes());
         assert_ne!(before.fingerprint(), changed_shape.fingerprint());
+    }
+
+    #[test]
+    fn fingerprint_tracks_fixed_array_lengths_in_signatures_and_fields() {
+        let before = interface(
+            "pub data Pair { words: [I64; 2] }\npub fn id(xs: [I64; 2]) -> [I64; 2] = xs",
+        );
+        let changed_param = interface(
+            "pub data Pair { words: [I64; 2] }\npub fn id(xs: [I64; 3]) -> [I64; 2] = [1, 2]",
+        );
+        let changed_field = interface(
+            "pub data Pair { words: [I64; 3] }\npub fn id(xs: [I64; 2]) -> [I64; 2] = xs",
+        );
+        assert_ne!(before.fingerprint(), changed_param.fingerprint());
+        assert_ne!(before.fingerprint(), changed_field.fingerprint());
     }
 
     #[test]

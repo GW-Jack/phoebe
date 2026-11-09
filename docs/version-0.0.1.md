@@ -74,16 +74,18 @@ nominal field values. Capability-bearing values remain affine: whole-value
 transfers consume the source, and CFG joins reject reuse after a move. Products
 with rights permit independent reads of closed sibling fields, while moving a
 right field still requires whole-product unpack.
-Checked Core and local source bindings support bounded inline `[I64; N]` values
-for `N <= 32`: `[40, 2]`, `array[0]`, and `array.len`. The verifier rejects
+Checked Core and source support bounded inline `[I64; N]` values
+for `N <= 32`: `[40, 2]`, `array[0]`, and `array.len`. Owning function
+parameters and returns, product fields, variant payloads, and module interfaces
+carry the exact length in their type and ABI. The verifier rejects
 out-of-range literal indices; direct and retained native lowering read the
 selected component without allocation or a dynamic bounds check. Mutable
 array places read and update one component with `array[0] = value`; an earlier
 ordinary copy retains its logical value through the update. Direct, retained,
 and standalone execution agree. This inline operation does not allocate or
 perform reference-counted copy-on-write. Explicit
-array copies record a `copy.value` cost site. Source array type annotations,
-dynamic indices, and variable-size structural mutation remain pending.
+array copies record a `copy.value` cost site. Array borrows, dynamic indices,
+and variable-size structural mutation remain pending.
 Source `spawn` records a `task.create` cost site with its source span; this
 ledger identifies static sites rather than counting successful creations.
 Recursion is rejected until task stacks have safe growth limits. Arithmetic

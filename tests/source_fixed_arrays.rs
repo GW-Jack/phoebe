@@ -37,6 +37,34 @@ fn fixed_array_source_agrees_across_execution_paths() {
 }
 
 #[test]
+fn fixed_array_signatures_and_data_cross_calls() {
+    for source in [
+        "fn id(xs: [I64; 2]) -> [I64; 2] = xs\nfn main() -> I64 = id([40, 2])[0] + 2",
+        "data Pair { words: [I64; 2] }\nfn id(p: Pair) -> Pair = p\nfn main() -> I64 { val p = id(Pair([40, 2])); p.words[0] + 2 }",
+        "data Choice { Some(words: [I64; 2]), None }\nfn main() -> I64 = when (Choice.Some([40, 2])) { Choice.Some(words) -> { words[0] + 2 }, Choice.None -> { 0 } }",
+    ] {
+        let program = lower(source);
+        assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+        assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    }
+}
+
+#[test]
+fn fixed_array_type_bounds_and_borrows_are_diagnosed() {
+    for (source, expected) in [
+        ("fn id(xs: [I64; 33]) -> Unit {}", "exceeds 32 elements"),
+        ("fn id(xs: [Bool; 2]) -> Unit {}", "I64 array element type"),
+        (
+            "fn id(xs: &[I64; 2]) -> Unit {}",
+            "array borrows are not implemented",
+        ),
+    ] {
+        let error = syntax::parse(source).unwrap_err();
+        assert!(error.message.contains(expected), "{error:?}");
+    }
+}
+
+#[test]
 fn fixed_array_reads_need_no_copy_or_bounds_site() {
     let program = lower("fn main() -> I64 { val a = [40, 2]; a[0] + a.len }");
     assert!(program.cost_events().is_empty());
