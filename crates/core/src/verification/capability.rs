@@ -151,6 +151,18 @@ pub(crate) fn capability_graph(
                     let moves = move_ranges(source, slots[taken.0].clone());
                     actions.push(CapAction::MoveGroup(moves));
                 }
+                Operation::StoreField(place, field, value) => {
+                    let Type::Data(id) = function.place_types[place.0] else {
+                        unreachable!("verified product place")
+                    };
+                    let leaves = layout.field_leaves(id, *field);
+                    let destination = (places[place.0].start + leaves.start)
+                        ..(places[place.0].start + leaves.end);
+                    let moves = move_ranges(slots[value.0].clone(), destination);
+                    if !moves.is_empty() {
+                        actions.push(CapAction::MoveGroup(moves));
+                    }
+                }
                 Operation::Take(place) => {
                     let taken = instruction.result.expect("verified take has result");
                     let moves = move_ranges(places[place.0].clone(), slots[taken.0].clone());

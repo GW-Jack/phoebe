@@ -820,7 +820,8 @@ fn compile_poll_module<M: Module>(
                         }
                         Operation::Unit => Some(Vec::new()),
                         Operation::DestBegin(_) => None,
-                        Operation::DestField(place, index, value) => {
+                        Operation::DestField(place, index, value)
+                        | Operation::StoreField(place, index, value) => {
                             let Type::Data(id) = function.place_types[place.0] else {
                                 unreachable!("verified destination type")
                             };
@@ -2016,6 +2017,7 @@ fn validate_poll_function(
                     | Operation::Product(_, _)
                     | Operation::DestBegin(_)
                     | Operation::DestField(_, _, _)
+                    | Operation::StoreField(_, _, _)
                     | Operation::DestPublish(_)
                     | Operation::DestTakeField(_, _)
                     | Operation::TakeField(_, _)

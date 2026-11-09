@@ -461,6 +461,30 @@ impl CoreTask {
                 fields[*index] = Some(field);
                 return Ok(None);
             }
+            Operation::StoreField(place, index, value) => {
+                let base = self.frames.last().expect("active frame").base;
+                let field = self.owned_value(*value);
+                let stored = self.stores[base + place.0]
+                    .as_mut()
+                    .expect("verified product place");
+                match stored {
+                    Value::Product(_, fields) => fields[*index] = field,
+                    Value::PartialProduct(id, fields) => {
+                        fields[*index] = Some(field);
+                        if fields.iter().all(Option::is_some) {
+                            *stored = Value::Product(
+                                *id,
+                                std::mem::take(fields)
+                                    .into_iter()
+                                    .map(|field| field.expect("restored product field"))
+                                    .collect(),
+                            );
+                        }
+                    }
+                    _ => unreachable!("verified product place"),
+                }
+                return Ok(None);
+            }
             Operation::DestPublish(place) => {
                 let base = self.frames.last().expect("active frame").base;
                 let Some(Value::UnpublishedProduct(id, fields)) =
@@ -561,6 +585,7 @@ impl CoreTask {
             | Operation::Product(_, _)
             | Operation::PlaceInit(_, _)
             | Operation::Store(_, _) => unreachable!("handled owned transfer above"),
+            Operation::StoreField(_, _, _) => unreachable!("handled owned transfer above"),
             Operation::Copy(value) | Operation::InferredCopy(value) => Some(get(*value)),
             Operation::Field(owner, index) => {
                 let Value::Product(_, fields) = get(*owner) else {
@@ -1377,6 +1402,9 @@ impl fmt::Display for Program {
                         }
                         Operation::TakeField(place, index) => {
                             write!(f, "place.take.field p{}, {}", place.0, index)?
+                        }
+                        Operation::StoreField(place, index, value) => {
+                            write!(f, "place.store.field p{}, {}, v{}", place.0, index, value.0)?
                         }
                         Operation::ArrayGetPlace(place, index) => {
                             write!(f, "place.array.get p{}, {}", place.0, index)?

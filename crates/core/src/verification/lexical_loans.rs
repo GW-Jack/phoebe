@@ -364,6 +364,7 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                         ));
                     }
                     Operation::ArraySetPlace(place, index, _)
+                    | Operation::StoreField(place, index, _)
                     | Operation::TakeField(place, index)
                         if conflict(
                             &state.active,

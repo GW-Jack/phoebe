@@ -204,6 +204,20 @@ pub(super) fn op_type(
             }
             Ok(Some(field))
         }
+        Operation::StoreField(place, index, value) => {
+            let Some(Type::Data(id)) = function.place_types.get(place.0) else {
+                return Err("field store requires a product place".into());
+            };
+            let field = program.data[id.0]
+                .fields
+                .get(*index)
+                .map(|(_, ty)| *ty)
+                .ok_or("invalid field store")?;
+            if ty(*value) != field {
+                return Err("field store type mismatch".into());
+            }
+            Ok(None)
+        }
         Operation::Neg(a) => {
             if ty(*a) != Type::I64 {
                 return Err("neg expects I64".into());
@@ -487,6 +501,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::Store(_, a)
         | Operation::ArraySetPlace(_, _, a)
         | Operation::DestField(_, _, a)
+        | Operation::StoreField(_, _, a)
         | Operation::BorrowEnd(a)
         | Operation::BorrowReborrow(a, _)
         | Operation::LoadRef(a) => vec![*a],

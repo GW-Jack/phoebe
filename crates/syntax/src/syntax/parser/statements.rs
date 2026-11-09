@@ -233,6 +233,29 @@ impl Parser {
                 statements.push(Statement::ArrayAssign(name, index, start.join(end), value));
                 continue;
             }
+            let field_assignment = matches!(self.current().kind, TokenKind::Ident(_))
+                && self
+                    .tokens
+                    .get(self.pos + 1)
+                    .is_some_and(|next| next.kind == TokenKind::Dot)
+                && matches!(
+                    self.tokens.get(self.pos + 2).map(|next| &next.kind),
+                    Some(TokenKind::Ident(_))
+                )
+                && self
+                    .tokens
+                    .get(self.pos + 3)
+                    .is_some_and(|next| next.kind == TokenKind::Equal);
+            if field_assignment {
+                let (name, start) = self.name()?;
+                self.expect(&TokenKind::Dot, ".")?;
+                let (field, end) = self.name()?;
+                self.expect(&TokenKind::Equal, "=")?;
+                let value = self.expr(0)?;
+                self.expect(&TokenKind::Semicolon, "; after assignment")?;
+                statements.push(Statement::FieldAssign(name, field, start.join(end), value));
+                continue;
+            }
             let assignment = matches!(self.current().kind, TokenKind::Ident(_))
                 && self
                     .tokens

@@ -599,6 +599,7 @@ pub(crate) fn verify_structure(
                 | Operation::InferredCopyPlace(place)
                 | Operation::ReadField(place, _)
                 | Operation::TakeField(place, _)
+                | Operation::StoreField(place, _, _)
                 | Operation::ArrayGetPlace(place, _)
                 | Operation::ArraySetPlace(place, _, _)
                 | Operation::DestField(place, _, _)

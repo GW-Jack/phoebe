@@ -16,6 +16,7 @@ fn visit_body(body: &Body, fields: &mut HashSet<(String, String)>) {
             Statement::Val(_, _, value)
             | Statement::Var(_, _, value)
             | Statement::Assign(_, _, value)
+            | Statement::FieldAssign(_, _, _, value)
             | Statement::ArrayAssign(_, _, _, value)
             | Statement::Expr(value)
             | Statement::UnpackVal { value, .. } => visit_expr(value, fields),

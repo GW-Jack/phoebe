@@ -28,6 +28,93 @@ fn fail() -> I64 = unwrap(work(0))
 "#;
 
 #[test]
+fn restored_right_field_allows_whole_product_transfer() {
+    let source = r#"
+data Bag { label: I64, sender: Sender<I64>, receiver: Receiver<I64> }
+fn work(capacity: I64) -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  var bag = Bag(41, sender, receiver);
+  val removed = bag.sender;
+  yield;
+  val (replacement, spare) = channel<I64>(capacity = capacity)?;
+  bag.sender = replacement;
+  val restored = bag;
+  val new_sender = restored.sender;
+  val old_receiver = restored.receiver;
+  removed.close();
+  new_sender.close();
+  old_receiver.close();
+  spare.close();
+  Result<I64, ResourceError>.Ok(restored.label + 1)
+}
+fn main() -> I64 = when (work(1)) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+fn fail() -> I64 = when (work(0)) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    core::verify(&program).unwrap();
+    for (entry, expected) in [("main", 42), ("fail", 0)] {
+        assert_eq!(program.interpret(entry, &[]).unwrap(), expected);
+        assert_eq!(native::run(&program, entry, &[]).unwrap(), expected);
+    }
+    let direct = core::lower(&syntax::parse(&source.replace("  yield;\n", "")).unwrap()).unwrap();
+    core::verify(&direct).unwrap();
+    assert_eq!(direct.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&direct, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!("phoebe-restored-field-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn live_right_field_cannot_be_overwritten() {
+    let source = SOURCE.replace(
+        "  val extracted = bag.sender;",
+        "  val (replacement, spare) = channel<I64>(capacity = 1)?;\n  bag.sender = replacement;\n  spare.close();\n  val extracted = bag.sender;",
+    );
+    let error = core::lower(&syntax::parse(&source).unwrap()).unwrap_err();
+    assert!(
+        error.message.contains("not empty") || error.message.contains("live"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn val_product_field_assignment_is_rejected() {
+    let source = SOURCE.replace("  var bag =", "  val bag =").replace(
+        "  val extracted = bag.sender;",
+        "  bag.label = 42;\n  val extracted = bag.sender;",
+    );
+    let error = core::lower(&syntax::parse(&source).unwrap()).unwrap_err();
+    assert!(
+        error.message.contains("cannot assign to val bag"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn field_assignment_respects_overlapping_loan() {
+    let source = SOURCE.replace(
+        "  val extracted = bag.sender;",
+        "  with field = &mut bag.label { bag.label = 42; }\n  val extracted = bag.sender;",
+    );
+    let error = core::lower(&syntax::parse(&source).unwrap()).unwrap_err();
+    assert!(error.message.contains("loan"), "{error:?}");
+}
+
+#[test]
 fn field_transfer_retains_closed_sibling_and_cleans_remaining_right_on_error() {
     let program = core::lower(&syntax::parse(SOURCE).unwrap()).unwrap();
     core::verify(&program).unwrap();

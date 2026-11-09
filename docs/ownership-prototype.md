@@ -107,15 +107,17 @@ retained payload and the moved right closes that right once; the source has
 an empty right slot and does not close it again. This is model behavior. The
 actual Phoebe Core now preserves closed nominal name and field reads, scalar
 field loans, and top-level right-field moves from owned `val` and `var`
-products. The prototype's deeper nested partial moves and field
-reinitialization remain separate. Its `Right` closes via a Rust `Drop`
+products. The source and Core now also permit reinitializing an empty top-level
+right field of a mutable product, restoring whole-record transfer once all
+rights are present. The prototype's deeper nested partial moves remain separate.
+Its `Right` closes via a Rust `Drop`
 counter, not the Phoebe runtime.
 
 The current source rule permits a partially moved owned record to read closed
 siblings and move other live right fields. Whole-record transfer requires all
-rights to be present. Reinitializing an empty field and automatically rebuilding
-a complete record for an owning call remain open. The checker needs exact
-per-field capability state at CFG joins, and a public API cannot make transfer
+rights to be present. Reinitializing an empty top-level field restores a
+complete record for an owning call. The checker still needs broader validation
+of per-field capability state at CFG joins, and a public API cannot make transfer
 depend on a callee's private body.
 
 ## Compatibility decisions before source adoption
