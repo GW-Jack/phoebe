@@ -120,8 +120,8 @@ pub(super) fn op_type(
                 return Err("destination requires a product place".into());
             };
             let fields = &program.data[id.0].fields;
-            if fields.len() != 2 {
-                return Err("destination requires a two-field product".into());
+            if fields.is_empty() {
+                return Err("destination requires a product with fields".into());
             }
             if matches!(operation, Operation::DestPublish(_)) {
                 Ok(Some(Type::Data(*id)))

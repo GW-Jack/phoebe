@@ -252,6 +252,145 @@ fn main() -> I64 = when (build()) {{
 }
 
 #[test]
+fn nested_try_in_second_field_cleans_owned_first_field() {
+    for (second, expected) in [
+        ("yield; Result<I64, I64>.Ok(22)", 23),
+        ("Result<I64, I64>.Err(7)", 42),
+    ] {
+        let source = format!(
+            r#"
+data Envelope {{ sender: Sender<I64>, number: I64 }}
+fn second() -> Result<I64, I64> {{ {second} }}
+fn build(sender: Sender<I64>) -> Result<I64, I64> {{
+  val envelope = Envelope(sender, second()? + 1);
+  val number = envelope.number;
+  envelope.close_caps();
+  Result<I64, I64>.Ok(number)
+}}
+fn entry() -> Result<I64, ResourceError> {{
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  receiver.close();
+  val result = build(sender);
+  val value = when (result) {{
+    Result<I64, I64>.Ok(number) -> {{ number }},
+    Result<I64, I64>.Err(error) -> {{ 42 }},
+  }};
+  Result<I64, ResourceError>.Ok(value)
+}}
+fn main() -> I64 = when (entry()) {{
+  Result<I64, ResourceError>.Ok(value) -> {{ value }},
+  Result<I64, ResourceError>.Err(error) -> {{ 42 }},
+}}
+"#
+        );
+        let program = lower(&source);
+        let ir = program.to_string();
+        assert!(ir.contains("dest.take.field"), "{ir}");
+        assert!(ir.contains("dest.publish"), "{ir}");
+        let failure_source = source.find("second()?").unwrap();
+        assert!(program.cost_events().iter().any(|event| {
+            event.function == "build"
+                && event.kind == "channel.op"
+                && event.reason == "owned capability close"
+                && event.span.start == failure_source
+        }));
+        assert_eq!(program.interpret("main", &[]).unwrap(), expected);
+        assert_eq!(native::run(&program, "main", &[]).unwrap(), expected);
+        let path = std::env::temp_dir().join(format!(
+            "phoebe-nested-try-destination-{}-{expected}",
+            std::process::id()
+        ));
+        native::build_executable(&program, &path).unwrap();
+        let output = Command::new(&path).output().unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, format!("{expected}\n").as_bytes());
+    }
+}
+
+#[test]
+fn three_field_destination_cleans_each_initialized_right() {
+    let source = r#"
+data Envelope { first: Sender<I64>, second: Sender<I64>, number: I64 }
+fn number() -> Result<I64, I64> { yield; Result<I64, I64>.Err(7) }
+fn build(first: Sender<I64>, second: Sender<I64>) -> Result<I64, I64> {
+  val envelope = Envelope(first, second, number()? + 1);
+  val number = envelope.number;
+  envelope.close_caps();
+  Result<I64, I64>.Ok(number)
+}
+fn entry() -> Result<I64, ResourceError> {
+  val (first, first_receiver) = channel<I64>(capacity = 1)?;
+  first_receiver.close();
+  val (second, second_receiver) = channel<I64>(capacity = 1)?;
+  second_receiver.close();
+  val result = build(first, second);
+  val value = when (result) {
+    Result<I64, I64>.Ok(number) -> { number },
+    Result<I64, I64>.Err(error) -> { 42 },
+  };
+  Result<I64, ResourceError>.Ok(value)
+}
+fn main() -> I64 = when (entry()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+"#;
+    let program = lower(source);
+    let ir = program.to_string();
+    assert_eq!(ir.matches("dest.take.field").count(), 2, "{ir}");
+    assert!(ir.contains("dest.publish"), "{ir}");
+    let mut missing = program.clone();
+    let build = missing
+        .functions
+        .iter_mut()
+        .find(|function| function.name == "build")
+        .unwrap();
+    let block = build
+        .blocks
+        .iter_mut()
+        .find(|block| {
+            block.instructions.iter().any(|instruction| {
+                matches!(instruction.operation, core::Operation::DestField(_, 2, _))
+            })
+        })
+        .unwrap();
+    block.instructions.retain(|instruction| {
+        !matches!(instruction.operation, core::Operation::DestField(_, 2, _))
+    });
+    assert!(
+        core::verify(&missing)
+            .unwrap_err()
+            .contains("destination field was not initialized")
+    );
+    let failure_source = source.find("number()?").unwrap();
+    assert_eq!(
+        program
+            .cost_events()
+            .iter()
+            .filter(|event| {
+                event.function == "build"
+                    && event.kind == "channel.op"
+                    && event.reason == "owned capability close"
+                    && event.span.start == failure_source
+            })
+            .count(),
+        2
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!(
+        "phoebe-three-field-destination-{}",
+        std::process::id()
+    ));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
 fn nested_owned_destination_closes_both_moved_rights() {
     let source = r#"
 data Rights { sender: Sender<I64>, receiver: Receiver<I64> }
@@ -277,7 +416,7 @@ fn main() -> I64 = when (build()) {
 "#;
     let program = lower(source);
     let ir = program.to_string();
-    assert!(ir.contains("dest.take.field p0, 0"), "{ir}");
+    assert!(ir.contains("dest.take.field p"), "{ir}");
     assert!(ir.contains("close.caps"), "{ir}");
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);

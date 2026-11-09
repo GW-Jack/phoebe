@@ -474,7 +474,14 @@ pub(crate) fn verify_structure(
             return Err(format!("{}: unreachable block", function.name));
         }
         let dominators = Dominators::new(&successors, &predecessors);
-        let mut destination_fields = vec![[None; 2]; function.place_types.len()];
+        let mut destination_fields = function
+            .place_types
+            .iter()
+            .map(|ty| match ty {
+                Type::Data(id) => vec![None; program.data[id.0].fields.len()],
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>();
         let mut destination_publishes = vec![None; function.place_types.len()];
         for (block_id, block) in function.blocks.iter().enumerate() {
             for (index, instruction) in block.instructions.iter().enumerate() {
@@ -520,7 +527,7 @@ pub(crate) fn verify_structure(
             }
             let (publish_block, publish_index) = destination_publishes[place]
                 .ok_or_else(|| format!("{}: destination was not published", function.name))?;
-            for field in destination_fields[place] {
+            for field in destination_fields[place].iter().copied() {
                 let (write_block, write_index) = field.ok_or_else(|| {
                     format!("{}: destination field was not initialized", function.name)
                 })?;

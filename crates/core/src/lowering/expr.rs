@@ -513,14 +513,22 @@ impl Lowerer<'_> {
                         ));
                     }
                     let expected = fields.iter().map(|(_, ty)| *ty).collect::<Vec<_>>();
-                    if expected.len() == 2
-                        && matches!(
-                            args.get(1),
-                            Some(CallArgument::Value(Expr {
-                                kind: ExprKind::Try(_),
-                                ..
+                    // A later expression can return early through a nested `?`.
+                    // Once an earlier field owns a right, keep that right in a
+                    // checked destination until every field is published.
+                    if expected.len() >= 2
+                        && (expected[..expected.len() - 1]
+                            .iter()
+                            .any(|ty| self.capability_layout.leaves(*ty) > 0)
+                            || args.iter().skip(1).any(|arg| {
+                                matches!(
+                                    arg,
+                                    CallArgument::Value(Expr {
+                                        kind: ExprKind::Try(_),
+                                        ..
+                                    })
+                                )
                             }))
-                        )
                     {
                         let destination = self.place(Type::Data(id));
                         self.emit_effect(Operation::DestBegin(destination), expr.span);
