@@ -76,8 +76,9 @@ Closed nominal values now remain usable across ordinary `T` calls and field
 projections. Source lowering emits an inferred value copy for repeated uses;
 CFG liveness turns a final closed SSA use into a move and a final closed
 `var` use into a place transfer, including across branches and loops. Remaining
-copies use fixed-size components; reference-counted sharing and copy-on-write
-are not implemented. `copy(x)` still requests an explicit independent value. The
+copies use fixed-size components unless the checked storage plan selects a
+copied 256-word bare array for managed sharing. `copy(x)` still requests an
+explicit independent value. The
 cost ledger distinguishes explicit copies, inferred name uses, and inferred
 nominal field values. Capability-bearing values remain affine: whole-value
 transfers consume the source, and CFG joins reject reuse after a move. Products
@@ -94,17 +95,18 @@ must be empty before it can receive a new owner. When every right-bearing field
 is present again, whole-record transfer is available. The same assignment on a
 `val` product remains rejected. Moving rights from a scoped `with` product
 binding remains unsupported.
-Checked Core and source support bounded inline `[I64; N]` values
-for `N <= 32`: `[40, 2]`, `array[0]`, and `array.len`. Owning function
+Checked Core and source support bounded `[I64; N]` values
+for `N <= 256`: `[40, 2]`, `array[0]`, and `array.len`. Owning function
 parameters and returns, product fields, variant payloads, and module interfaces
 carry the exact length in their type and ABI. The verifier rejects
-out-of-range literal indices; direct and retained native lowering read the
-selected component without allocation or a dynamic bounds check. Mutable
+out-of-range literal indices; reads need no dynamic bounds check. Mutable
 array places read and update one component with `array[0] = value`; an earlier
 ordinary copy retains its logical value through the update. Direct, retained,
-and standalone execution agree. This inline operation does not allocate or
-perform reference-counted copy-on-write. Explicit
-array copies record a `copy.value` cost site. Array borrows, dynamic indices,
+and standalone execution agree. A copied 256-word bare array in a direct
+program may use managed shared storage and copy-on-write; the checked planner
+also borrows a read-only callee's parameter for its call. Other arrays stay
+inline. The cost ledger reports possible `storage.*` sites for selected arrays
+and `copy.value` for inline copies. Source array borrows, dynamic indices,
 and variable-size structural mutation remain pending.
 Source `spawn` records a `task.create` cost site with its source span; this
 ledger identifies static sites rather than counting successful creations.

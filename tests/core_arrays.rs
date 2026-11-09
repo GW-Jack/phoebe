@@ -95,8 +95,12 @@ fn fixed_array_checks_shape_and_constant_index_before_execution() {
     );
 
     let mut oversized = program(false);
-    oversized.functions[0].value_types[2] = Type::ArrayI64(33);
-    assert!(core::verify(&oversized).unwrap_err().contains("exceeds 32"));
+    oversized.functions[0].value_types[2] = Type::ArrayI64(257);
+    assert!(
+        core::verify(&oversized)
+            .unwrap_err()
+            .contains("exceeds 256")
+    );
 }
 
 #[test]

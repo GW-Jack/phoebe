@@ -96,7 +96,7 @@ pub enum Part {
     Address,
 }
 
-const INLINE_ARRAY_WORDS: [Part; 32] = [Part::Word; 32];
+const INLINE_ARRAY_WORDS: [Part; 256] = [Part::Word; 256];
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Shape {
@@ -418,8 +418,8 @@ impl Shapes {
             Type::I64 => Ok(WORD),
             Type::Bool => Ok(BYTE),
             Type::Unit => Ok(EMPTY),
-            Type::ArrayI64(len) if len <= 32 => Ok(&INLINE_ARRAY_WORDS[..len]),
-            Type::ArrayI64(_) => Err("inline I64 array exceeds 32 elements".into()),
+            Type::ArrayI64(len) if len <= 256 => Ok(&INLINE_ARRAY_WORDS[..len]),
+            Type::ArrayI64(_) => Err("fixed I64 array exceeds 256 elements".into()),
             Type::Data(id) => self
                 .data
                 .get(id.0)

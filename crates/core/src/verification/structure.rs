@@ -118,7 +118,7 @@ pub(crate) fn verify_structure(
         }
         if definition.payloads.iter().flatten().any(|ty| match ty {
             Type::I64 | Type::Bool | Type::Unit => false,
-            Type::ArrayI64(len) => *len > 32,
+            Type::ArrayI64(len) => *len > 256,
             Type::Data(id) => id.0 >= index,
             Type::ResourceError => false,
             Type::RefI64 | Type::RefMutI64 | Type::RefBool | Type::RefMutBool => true,
@@ -137,7 +137,7 @@ pub(crate) fn verify_structure(
             if !fields.insert(name)
                 || match ty {
                     Type::I64 | Type::Bool | Type::Unit => false,
-                    Type::ArrayI64(len) => *len > 32,
+                    Type::ArrayI64(len) => *len > 256,
                     Type::Data(id) => id.0 >= index,
                     Type::ResourceError => false,
                     Type::RefI64 | Type::RefMutI64 | Type::RefBool | Type::RefMutBool => true,
@@ -166,9 +166,9 @@ pub(crate) fn verify_structure(
             .chain(&function.place_types)
             .chain(std::iter::once(&function.return_type))
         {
-            if matches!(ty, Type::ArrayI64(len) if *len > 32) {
+            if matches!(ty, Type::ArrayI64(len) if *len > 256) {
                 return Err(format!(
-                    "{}: inline I64 array exceeds 32 elements",
+                    "{}: fixed I64 array exceeds 256 elements",
                     function.name
                 ));
             }

@@ -3,7 +3,7 @@ use phoebe::core::ArrayValue;
 #[test]
 fn large_interpreter_arrays_retain_then_copy_on_write() {
     let words = (0..32).collect::<Vec<_>>();
-    let original = ArrayValue::from_slice(&words).unwrap();
+    let original = ArrayValue::from_slice(&words, true).unwrap();
     let mut copy = original.clone();
     let (ArrayValue::Shared(original_storage), ArrayValue::Shared(copy_storage)) =
         (&original, &copy)
@@ -31,7 +31,7 @@ fn large_interpreter_arrays_retain_then_copy_on_write() {
 
 #[test]
 fn small_interpreter_arrays_remain_inline() {
-    let original = ArrayValue::from_slice(&[40, 2]).unwrap();
+    let original = ArrayValue::from_slice(&[40, 2], false).unwrap();
     let mut copy = original.clone();
     assert!(matches!(original, ArrayValue::Inline(_)));
     copy.set(0, 0).unwrap();

@@ -34,8 +34,8 @@ pub(super) fn op_type(
         Operation::Bool(_) => Ok(Some(Type::Bool)),
         Operation::Unit => Ok(Some(Type::Unit)),
         Operation::ArrayI64(elements) => {
-            if elements.len() > 32 || elements.iter().any(|value| ty(*value) != Type::I64) {
-                return Err("inline I64 array expects at most 32 I64 elements".into());
+            if elements.len() > 256 || elements.iter().any(|value| ty(*value) != Type::I64) {
+                return Err("fixed I64 array expects at most 256 I64 elements".into());
             }
             Ok(Some(Type::ArrayI64(elements.len())))
         }
