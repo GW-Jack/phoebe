@@ -2,6 +2,7 @@
 //! Call-scoped loans remain atomic Call operations and need no active state.
 
 use super::*;
+use crate::path_language::PathLanguage;
 
 fn successors(terminator: &Terminator) -> Vec<BlockId> {
     match terminator {
@@ -45,10 +46,11 @@ fn successors(terminator: &Terminator) -> Vec<BlockId> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Loan {
     origin: LoanOrigin,
     exclusive: bool,
+    path: PathLanguage,
 }
 
 #[derive(Clone, Copy)]
@@ -114,10 +116,12 @@ fn loan_definitions(function: &Function) -> Result<Vec<Option<Loan>>, String> {
                 Operation::BorrowBegin(place, exclusive) => Some(Loan {
                     origin: LoanOrigin::Root(place),
                     exclusive,
+                    path: PathLanguage::subtree(vec![]),
                 }),
                 Operation::BorrowReborrow(parent, exclusive) => Some(Loan {
                     origin: LoanOrigin::Parent(parent),
                     exclusive,
+                    path: PathLanguage::subtree(vec![]),
                 }),
                 _ => None,
             };
@@ -155,12 +159,15 @@ fn conflict(
     loans: &[Option<Loan>],
     roots: &[Option<StorageRoot>],
     root_place: PlaceId,
+    path: &[usize],
     exclusive: bool,
 ) -> bool {
     active.iter().enumerate().any(|(id, live)| {
         *live
-            && loans[id].is_some_and(|loan| {
-                roots[id] == Some(StorageRoot::Place(root_place)) && (exclusive || loan.exclusive)
+            && loans[id].as_ref().is_some_and(|loan| {
+                roots[id] == Some(StorageRoot::Place(root_place))
+                    && loan.path.overlaps_subtree(path)
+                    && (exclusive || loan.exclusive)
             })
     })
 }
@@ -201,7 +208,7 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                 }
                 match &instruction.operation {
                     Operation::BorrowBegin(place, exclusive) => {
-                        if conflict(&state.active, &loans, &roots, *place, *exclusive) {
+                        if conflict(&state.active, &loans, &roots, *place, &[], *exclusive) {
                             return Err(format!("{}: overlapping lexical borrows", function.name));
                         }
                         state.active[instruction.result.expect("typed borrow begin").0] = true;
@@ -236,7 +243,7 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                         }
                         if loans.iter().enumerate().any(|(id, loan)| {
                             state.active[id]
-                                && loan.is_some_and(|loan| {
+                                && loan.as_ref().is_some_and(|loan| {
                                     matches!(loan.origin, LoanOrigin::Parent(parent) if parent == *reference)
                                 })
                         }) {
@@ -244,7 +251,7 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                         }
                         state.active[reference.0] = false;
                         if let LoanOrigin::Parent(parent) =
-                            loans[reference.0].expect("checked loan").origin
+                            loans[reference.0].as_ref().expect("checked loan").origin
                         {
                             state.frozen[parent.0] = false;
                         }
@@ -259,7 +266,7 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                     | Operation::ArrayGetPlace(place, _)
                     | Operation::CopyPlace(place)
                     | Operation::InferredCopyPlace(place)
-                        if conflict(&state.active, &loans, &roots, *place, false) =>
+                        if conflict(&state.active, &loans, &roots, *place, &[], false) =>
                     {
                         return Err(format!(
                             "{}: read conflicts with exclusive loan",
@@ -270,7 +277,7 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                     | Operation::Store(place, _)
                     | Operation::ArraySetPlace(place, _, _)
                     | Operation::Take(place)
-                        if conflict(&state.active, &loans, &roots, *place, true) =>
+                        if conflict(&state.active, &loans, &roots, *place, &[], true) =>
                     {
                         return Err(format!(
                             "{}: mutation conflicts with lexical loan",
@@ -282,7 +289,14 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                         for arg in args {
                             let root = match arg {
                                 CallArg::Borrow(place, exclusive) => {
-                                    if conflict(&state.active, &loans, &roots, *place, *exclusive) {
+                                    if conflict(
+                                        &state.active,
+                                        &loans,
+                                        &roots,
+                                        *place,
+                                        &[],
+                                        *exclusive,
+                                    ) {
                                         return Err(format!(
                                             "{}: call borrow conflicts with lexical loan",
                                             function.name
@@ -342,4 +356,40 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_field_loans_have_exact_parent_and_sibling_conflicts() {
+        let loans = vec![
+            Some(Loan {
+                origin: LoanOrigin::Root(PlaceId(0)),
+                exclusive: false,
+                path: PathLanguage::subtree(vec![0, 0]),
+            }),
+            Some(Loan {
+                origin: LoanOrigin::Root(PlaceId(0)),
+                exclusive: true,
+                path: PathLanguage::subtree(vec![0, 1]),
+            }),
+        ];
+        let roots = vec![Some(StorageRoot::Place(PlaceId(0))); 2];
+        let active = [true, true];
+        assert!(!conflict(&active, &loans, &roots, PlaceId(0), &[1], true));
+        assert!(!conflict(
+            &active,
+            &loans,
+            &roots,
+            PlaceId(0),
+            &[0, 0],
+            false
+        ));
+        assert!(conflict(&active, &loans, &roots, PlaceId(0), &[0, 0], true));
+        assert!(conflict(&active, &loans, &roots, PlaceId(0), &[0], false));
+        assert!(conflict(&active, &loans, &roots, PlaceId(0), &[], true));
+        assert!(!conflict(&active, &loans, &roots, PlaceId(1), &[], true));
+    }
 }
