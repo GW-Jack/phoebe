@@ -227,6 +227,7 @@ pub(crate) fn verify_structure(
         let mut definitions = vec![None; count];
         let mut place_initializers = vec![None; function.place_types.len()];
         let mut destinations = vec![false; function.place_types.len()];
+        let mut destination_variants = vec![None; function.place_types.len()];
         for (block_id, block) in function.blocks.iter().enumerate() {
             for (param_index, param) in block.params.iter().enumerate() {
                 let slot = definitions
@@ -283,8 +284,9 @@ pub(crate) fn verify_structure(
                         return Err(format!("{}: duplicate value definition", function.name));
                     }
                 }
-                if let Operation::PlaceInit(place, _) | Operation::DestBegin(place) =
-                    instruction.operation
+                if let Operation::PlaceInit(place, _)
+                | Operation::DestBegin(place)
+                | Operation::DestBeginVariant(place, _) = instruction.operation
                 {
                     let slot = place_initializers
                         .get_mut(place.0)
@@ -292,8 +294,13 @@ pub(crate) fn verify_structure(
                     if slot.replace((block_id, index)).is_some() {
                         return Err(format!("{}: duplicate place initialization", function.name));
                     }
-                    destinations[place.0] =
-                        matches!(instruction.operation, Operation::DestBegin(_));
+                    destinations[place.0] = matches!(
+                        instruction.operation,
+                        Operation::DestBegin(_) | Operation::DestBeginVariant(_, _)
+                    );
+                    if let Operation::DestBeginVariant(_, tag) = instruction.operation {
+                        destination_variants[place.0] = Some(tag);
+                    }
                 }
             }
         }
@@ -478,7 +485,17 @@ pub(crate) fn verify_structure(
             .place_types
             .iter()
             .map(|ty| match ty {
-                Type::Data(id) => vec![None; program.data[id.0].fields.len()],
+                Type::Data(id) => {
+                    let definition = &program.data[id.0];
+                    vec![
+                        None;
+                        if definition.fields.is_empty() {
+                            definition.variants.len()
+                        } else {
+                            definition.fields.len()
+                        }
+                    ]
+                }
                 _ => Vec::new(),
             })
             .collect::<Vec<_>>();
@@ -490,6 +507,12 @@ pub(crate) fn verify_structure(
                         if !destinations.get(place.0).copied().unwrap_or(false) {
                             return Err(format!(
                                 "{}: field write needs a destination",
+                                function.name
+                            ));
+                        }
+                        if destination_variants[place.0].is_some_and(|tag| tag != field) {
+                            return Err(format!(
+                                "{}: destination payload does not match active variant",
                                 function.name
                             ));
                         }
@@ -527,7 +550,19 @@ pub(crate) fn verify_structure(
             }
             let (publish_block, publish_index) = destination_publishes[place]
                 .ok_or_else(|| format!("{}: destination was not published", function.name))?;
-            for field in destination_fields[place].iter().copied() {
+            let required = if let Some(tag) = destination_variants[place] {
+                let Type::Data(id) = function.place_types[place] else {
+                    unreachable!()
+                };
+                if program.data[id.0].payloads[tag].is_some() {
+                    vec![destination_fields[place][tag]]
+                } else {
+                    Vec::new()
+                }
+            } else {
+                destination_fields[place].clone()
+            };
+            for field in required {
                 let (write_block, write_index) = field.ok_or_else(|| {
                     format!("{}: destination field was not initialized", function.name)
                 })?;

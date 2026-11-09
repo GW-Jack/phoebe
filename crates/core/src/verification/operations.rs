@@ -117,11 +117,11 @@ pub(super) fn op_type(
         }
         Operation::DestBegin(place) | Operation::DestPublish(place) => {
             let Some(Type::Data(id)) = function.place_types.get(place.0) else {
-                return Err("destination requires a product place".into());
+                return Err("destination requires a data place".into());
             };
-            let fields = &program.data[id.0].fields;
-            if fields.is_empty() {
-                return Err("destination requires a product with fields".into());
+            if matches!(operation, Operation::DestBegin(_)) && program.data[id.0].fields.is_empty()
+            {
+                return Err("product destination requires fields".into());
             }
             if matches!(operation, Operation::DestPublish(_)) {
                 Ok(Some(Type::Data(*id)))
@@ -129,15 +129,35 @@ pub(super) fn op_type(
                 Ok(None)
             }
         }
+        Operation::DestBeginVariant(place, tag) => {
+            let Some(Type::Data(id)) = function.place_types.get(place.0) else {
+                return Err("variant destination requires a data place".into());
+            };
+            let definition = &program.data[id.0];
+            if !definition.fields.is_empty() || *tag >= definition.variants.len() {
+                return Err("invalid destination variant".into());
+            }
+            Ok(None)
+        }
         Operation::DestField(place, index, value) => {
             let Some(Type::Data(id)) = function.place_types.get(place.0) else {
-                return Err("destination field requires a product place".into());
+                return Err("destination field requires a data place".into());
             };
-            let expected = program.data[id.0]
-                .fields
-                .get(*index)
-                .map(|(_, ty)| *ty)
-                .ok_or("invalid destination field")?;
+            let definition = &program.data[id.0];
+            let expected = if definition.fields.is_empty() {
+                definition
+                    .payloads
+                    .get(*index)
+                    .copied()
+                    .flatten()
+                    .ok_or("invalid destination payload")?
+            } else {
+                definition
+                    .fields
+                    .get(*index)
+                    .map(|(_, ty)| *ty)
+                    .ok_or("invalid destination field")?
+            };
             if ty(*value) != expected {
                 return Err("destination field type mismatch".into());
             }
@@ -514,6 +534,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::TakeField(_, _)
         | Operation::ArrayGetPlace(_, _)
         | Operation::DestBegin(_)
+        | Operation::DestBeginVariant(_, _)
         | Operation::DestPublish(_)
         | Operation::DestTakeField(_, _)
         | Operation::BorrowBegin(_, _) => vec![],

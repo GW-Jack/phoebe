@@ -893,5 +893,38 @@
     "payload_json": "{\"actor\":\"codex:phoebe-field-flow\",\"lease_id\":\"63687048a55be75cbae8b79ddf97414c896e58be2e09a4dbb2d3aa5dc6667b6c\",\"released_at\":\"2026-11-09 10:26:26\"}",
     "actor": "codex:phoebe-field-flow",
     "created_at": "2026-11-09 10:26:26"
+  },
+  {
+    "event_id": "e396a8fcf82f93967051c0a87de3b3587bd661d1d0cbe8780e39baf657f23fe8",
+    "parents": [
+      "b2f77e80a97bad800669cfd8db95b01502d56e65eabb6402988cfba6d1d32f15"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "claim.acquired",
+    "payload_json": "{\"actor\":\"codex:phoebe-field-matrix\",\"expires_at\":\"2026-11-09 12:29:25\"}",
+    "actor": "codex:phoebe-field-matrix",
+    "created_at": "2026-11-09 10:29:25"
+  },
+  {
+    "event_id": "90fb663de72ebd9d5f0bf2b456cf71674db1a93df2c6d7492a087a8b336c7e39",
+    "parents": [
+      "a01090baea3da23d2e743b8ac686d7062b3d87180997575066591c0be697baae"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged ec0ae75: checked destinations for rights-bearing nonempty products, nested early-error cleanup, multi-field verifier, interpreter/JIT/standalone tests; Cargo/Buck/formal passed.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/17\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 10:30:43"
+  },
+  {
+    "event_id": "e84ca133b69bbdd01b18f982885d6b28748cdfe15053ce6ac2b8b9c52c66dbd4",
+    "parents": [
+      "90fb663de72ebd9d5f0bf2b456cf71674db1a93df2c6d7492a087a8b336c7e39"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"Active payload-bearing sum variants with direct ? now use a checked local destination: active tag, payload initialization, and publication are verified. Interpreter, direct JIT, retained JIT, and standalone agree on scalar and capability payloads across error and yield. Static destination.zero/write costs are source-attributed. Full Cargo workspace and strict Clippy pass. Caller-owned result destinations and broader sum selection remain.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 10:53:12"
   }
 ]

@@ -29,6 +29,40 @@ impl Program {
                             reason: "lexical scope",
                         });
                     }
+                    if let Operation::DestBeginVariant(place, _) = instruction.operation {
+                        let Type::Data(id) = function.place_types[place.0] else {
+                            unreachable!("checked variant destination")
+                        };
+                        events.push(CostEvent {
+                            function: function.name.clone(),
+                            block: block_id,
+                            instruction: instruction_id,
+                            span: instruction.span,
+                            kind: "destination.zero",
+                            type_name: self.data[id.0].name.clone(),
+                            reason: "initialize active variant destination",
+                        });
+                    }
+                    if let Operation::DestField(place, index, _) = instruction.operation {
+                        let Type::Data(id) = function.place_types[place.0] else {
+                            unreachable!("checked destination field")
+                        };
+                        let definition = &self.data[id.0];
+                        let ty = if definition.fields.is_empty() {
+                            definition.payloads[index].expect("checked variant payload")
+                        } else {
+                            definition.fields[index].1
+                        };
+                        events.push(CostEvent {
+                            function: function.name.clone(),
+                            block: block_id,
+                            instruction: instruction_id,
+                            span: instruction.span,
+                            kind: "destination.write",
+                            type_name: storage_type_name(ty),
+                            reason: "write unpublished field or payload",
+                        });
+                    }
                     let copy_ty = match instruction.operation {
                         Operation::Copy(value) | Operation::InferredCopy(value) => {
                             Some(function.value_types[value.0])

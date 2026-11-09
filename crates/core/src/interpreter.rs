@@ -88,6 +88,7 @@ fn close_caps(value: Value, context: &mut Option<&mut Context<'_>>) -> Result<()
                 close_caps(field, context)?;
             }
         }
+        Value::UnpublishedVariant(_, _, Some(payload)) => close_caps(*payload, context)?,
         Value::Data(_, _, Some(payload)) => close_caps(*payload, context)?,
         Value::Sender(token) => context
             .as_deref_mut()
@@ -122,6 +123,9 @@ fn collect_capability_transfers(value: &Value, out: &mut Vec<runtime::Capability
             }
         }
         Value::Data(_, _, Some(payload)) => collect_capability_transfers(payload, out),
+        Value::UnpublishedVariant(_, _, Some(payload)) => {
+            collect_capability_transfers(payload, out)
+        }
         Value::Sender(token) | Value::Receiver(token) => {
             out.push(runtime::CapabilityTransfer::Channel(*token));
         }
@@ -474,11 +478,13 @@ impl CoreTask {
             Operation::DestField(place, index, value) => {
                 let base = self.frames.last().expect("active frame").base;
                 let field = self.owned_value(*value);
-                let Some(Value::UnpublishedProduct(_, fields)) = &mut self.stores[base + place.0]
-                else {
-                    unreachable!("verified destination field")
-                };
-                fields[*index] = Some(field);
+                match &mut self.stores[base + place.0] {
+                    Some(Value::UnpublishedProduct(_, fields)) => fields[*index] = Some(field),
+                    Some(Value::UnpublishedVariant(_, tag, payload)) if *tag == *index => {
+                        *payload = Some(Box::new(field));
+                    }
+                    _ => unreachable!("verified destination field"),
+                }
                 return Ok(None);
             }
             Operation::StoreField(place, index, value) => {
@@ -507,18 +513,19 @@ impl CoreTask {
             }
             Operation::DestPublish(place) => {
                 let base = self.frames.last().expect("active frame").base;
-                let Some(Value::UnpublishedProduct(id, fields)) =
-                    self.stores[base + place.0].take()
-                else {
-                    unreachable!("verified destination publication")
-                };
-                return Ok(Some(Value::Product(
-                    id,
-                    fields
-                        .into_iter()
-                        .map(|field| field.expect("verified destination field"))
-                        .collect(),
-                )));
+                return Ok(Some(match self.stores[base + place.0].take() {
+                    Some(Value::UnpublishedProduct(id, fields)) => Value::Product(
+                        id,
+                        fields
+                            .into_iter()
+                            .map(|field| field.expect("verified destination field"))
+                            .collect(),
+                    ),
+                    Some(Value::UnpublishedVariant(id, tag, payload)) => {
+                        Value::Data(id, tag, payload)
+                    }
+                    _ => unreachable!("verified destination publication"),
+                }));
             }
             _ => {}
         }
@@ -538,6 +545,15 @@ impl CoreTask {
                     id,
                     vec![None; self.program.data[id.0].fields.len()],
                 ));
+                None
+            }
+            Operation::DestBeginVariant(place, tag) => {
+                let Type::Data(id) = self.program.functions[self.frames.last().unwrap().function.0]
+                    .place_types[place.0]
+                else {
+                    unreachable!("verified variant destination type")
+                };
+                self.stores[base + place.0] = Some(Value::UnpublishedVariant(id, *tag, None));
                 None
             }
             Operation::DestField(_, _, _) | Operation::DestPublish(_) => {
@@ -1338,6 +1354,7 @@ fn as_i64(value: Value) -> i64 {
         | Value::Product(_, _)
         | Value::PartialProduct(_, _)
         | Value::UnpublishedProduct(_, _)
+        | Value::UnpublishedVariant(_, _, _)
         | Value::Ref(_)
         | Value::RefPath(_, _)
         | Value::Sender(_)
@@ -1363,6 +1380,7 @@ fn as_bool(value: Value) -> bool {
         | Value::Product(_, _)
         | Value::PartialProduct(_, _)
         | Value::UnpublishedProduct(_, _)
+        | Value::UnpublishedVariant(_, _, _)
         | Value::Ref(_)
         | Value::RefPath(_, _)
         | Value::Sender(_)
@@ -1470,6 +1488,9 @@ impl fmt::Display for Program {
                             write!(f, ")")?;
                         }
                         Operation::DestBegin(place) => write!(f, "dest.begin p{}", place.0)?,
+                        Operation::DestBeginVariant(place, tag) => {
+                            write!(f, "dest.begin.variant p{}, {tag}", place.0)?
+                        }
                         Operation::DestField(place, index, value) => {
                             write!(f, "dest.field p{}, {}, v{}", place.0, index, value.0)?
                         }
