@@ -196,7 +196,8 @@ pub(crate) fn verify_structure(
         if !matches!(
             function.return_type,
             Type::I64 | Type::Bool | Type::Unit | Type::ArrayI64(_) | Type::Data(_)
-        ) {
+        ) && !super::capability_layout::Layout::bare_right(function.return_type)
+        {
             return Err(format!("{}: invalid return type", function.name));
         }
         if function.blocks.is_empty() {
