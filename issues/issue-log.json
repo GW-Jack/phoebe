@@ -1100,5 +1100,60 @@
     "payload_json": "{\"author\":\"cli\",\"body\":\"Managed 256-word arrays now stay selected through direct Result matches, including early ? returns. A new test checks Err and Ok/COW paths in interpreter, JIT, and standalone, with zero live managed allocations after each interpreter/JIT run. Full workspace Cargo tests and strict Clippy pass. Remaining: managed storage in retained frames and embedded data, plus recoverable native allocation failures.\"}",
     "actor": "cli",
     "created_at": "2026-11-09 11:16:39"
+  },
+  {
+    "event_id": "2f95873a2ca09761e3cce0650b8c1106ce359d6bb2aa9ecc59604c04c271187a",
+    "parents": [
+      "f59495bdf3ac463faeddabce2f0cd22780e131dd56163bd41c101efc1639a40d"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged 5bc443e: direct Result match and early ? cleanup for managed arrays, with interpreter/JIT/standalone agreement and green Cargo/Buck/formal gates.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/22\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:20:01"
+  },
+  {
+    "event_id": "ebea1e068ede5ad987c02d6709748fbe4dff659a121733e49b13616f271890e6",
+    "parents": [
+      "13025a76a91ccc30c1ea36ee2a27496fbdd4045b87b8035e6f8fee1795f73530"
+    ],
+    "issue_id": "e2124f7d36edff2c192f80f993e01eda482186fae60063228ab1ecfd6374eb4a",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged poll-frame TakeField liveness fix and cross-backend regression; Cargo, Buck2, formal CI passed.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/23\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:20:31"
+  },
+  {
+    "event_id": "1df9ec3e86040f784daad5e0bb878fb6a4db31f2529b3f077fa3f77d0b21617c",
+    "parents": [
+      "ebea1e068ede5ad987c02d6709748fbe4dff659a121733e49b13616f271890e6"
+    ],
+    "issue_id": "e2124f7d36edff2c192f80f993e01eda482186fae60063228ab1ecfd6374eb4a",
+    "kind": "issue.closed",
+    "payload_json": "{\"status\":\"closed\",\"summary\":\"Retain product places used by field takes across suspension; interpreter, native JIT, and standalone now agree on the nested-scope witness.\"}",
+    "actor": null,
+    "created_at": "2026-11-09 11:20:31"
+  },
+  {
+    "event_id": "ada28a1906c8b28098383468fde169b9b5ac6212489dad79613dc67dbec70ab3",
+    "parents": [
+      "1df9ec3e86040f784daad5e0bb878fb6a4db31f2529b3f077fa3f77d0b21617c"
+    ],
+    "issue_id": "e2124f7d36edff2c192f80f993e01eda482186fae60063228ab1ecfd6374eb4a",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex:phoebe-native-abi\",\"lease_id\":\"13025a76a91ccc30c1ea36ee2a27496fbdd4045b87b8035e6f8fee1795f73530\",\"released_at\":\"2026-11-09 11:20:31\"}",
+    "actor": "codex:phoebe-native-abi",
+    "created_at": "2026-11-09 11:20:31"
+  },
+  {
+    "event_id": "9d65fdf3dffa6835d4b80c9c487f8b3bca0462c28772ae2a9bd9d6809c7ce277",
+    "parents": [
+      "ada28a1906c8b28098383468fde169b9b5ac6212489dad79613dc67dbec70ab3"
+    ],
+    "issue_id": "e2124f7d36edff2c192f80f993e01eda482186fae60063228ab1ecfd6374eb4a",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":null,\"at_cut\":null,\"basis\":null,\"basis_fingerprint\":null,\"kind\":\"cuts\",\"note\":null,\"reference\":\"intent(e2124f7d36edff2c192f80f993e01eda482186fae60063228ab1ecfd6374eb4a)\"}",
+    "actor": null,
+    "created_at": "2026-11-09 11:20:31"
   }
 ]
