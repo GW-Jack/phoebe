@@ -970,5 +970,27 @@
     "payload_json": "{\"actor\":\"codex:phoebe-field-matrix\",\"lease_id\":\"e396a8fcf82f93967051c0a87de3b3587bd661d1d0cbe8780e39baf657f23fe8\",\"released_at\":\"2026-11-09 10:56:48\"}",
     "actor": "codex:phoebe-field-matrix",
     "created_at": "2026-11-09 10:56:48"
+  },
+  {
+    "event_id": "373b99321e34995650ea252005414304d9ff18eb95b7212d72ac0e287cb3ef98",
+    "parents": [
+      "70064619b48076c0cf33b7805a7d19ea116528de8e0cd1c4eca43154c9c5f938"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "claim.acquired",
+    "payload_json": "{\"actor\":\"codex:phoebe-nested-fields\",\"expires_at\":\"2026-11-09 12:59:47\"}",
+    "actor": "codex:phoebe-nested-fields",
+    "created_at": "2026-11-09 10:59:47"
+  },
+  {
+    "event_id": "c3e68605030eb829cf5859683ac49b814f3d3e2cd6be13bfde4eaa4f8dfe35fd",
+    "parents": [
+      "0f5c48aee8a1a65ee5cd75786e00ffeda7d3674ec160e9ebd71855dc410543c9"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"Direct one-block wide product construction now writes checked destination fields into the caller-owned result buffer when built from literals and moves. No intermediate product stack slots/loads/stores appear in CLIF; calls retain local fallback. Interpreter/JIT/standalone outputs agree, and full Cargo workspace plus strict Clippy pass. Caller-owned destinations across suspension and fallible construction remain.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:06:45"
   }
 ]

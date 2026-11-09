@@ -63,6 +63,40 @@ fn clear_owner(
     builder.ins().stack_store(pointer, zero, slot, 0);
 }
 
+fn caller_result_destination(function: &core::Function) -> Option<(core::PlaceId, core::ValueId)> {
+    let [block] = function.blocks.as_slice() else {
+        return None;
+    };
+    let Terminator::Return(returned) = &block.terminator else {
+        return None;
+    };
+    let last = block.instructions.last()?;
+    let Operation::DestPublish(place) = last.operation else {
+        return None;
+    };
+    if last.result != Some(*returned)
+        || function.place_types.get(place.0) != Some(&function.return_type)
+        || !block.instructions.iter().any(
+            |instruction| matches!(instruction.operation, Operation::DestBegin(p) if p == place),
+        )
+        || block
+            .instructions
+            .iter()
+            .any(|instruction| match instruction.operation {
+                Operation::Const(_) | Operation::Bool(_) | Operation::Unit | Operation::Move(_) => {
+                    false
+                }
+                Operation::DestBegin(p)
+                | Operation::DestField(p, _, _)
+                | Operation::DestPublish(p) => p != place,
+                _ => true,
+            })
+    {
+        return None;
+    }
+    Some((place, *returned))
+}
+
 fn release_owner<M: Module>(
     module: &mut M,
     builder: &mut FunctionBuilder<'_>,
@@ -463,6 +497,9 @@ pub(super) fn compile_functions<M: Module>(
         ctx.func.name = UserFuncName::user(0, id.as_u32());
         {
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_context);
+            let caller_destination = (shapes.types(function.return_type).len() > register_results)
+                .then(|| caller_result_destination(function))
+                .flatten();
             let blocks = function
                 .blocks
                 .iter()
@@ -471,7 +508,11 @@ pub(super) fn compile_functions<M: Module>(
             let places = function
                 .place_types
                 .iter()
-                .map(|ty| {
+                .enumerate()
+                .map(|(place_id, ty)| {
+                    if caller_destination.is_some_and(|(place, _)| place.0 == place_id) {
+                        return Vec::new();
+                    }
                     shapes
                         .types(*ty)
                         .into_iter()
@@ -839,23 +880,52 @@ pub(super) fn compile_functions<M: Module>(
                                     .map(|(_, ty)| shapes.types(*ty).len())
                                     .sum::<usize>()
                             };
-                            for (component, slot) in
-                                get(*value).into_iter().zip(&places[place.0][offset..])
-                            {
-                                builder.ins().stack_store(pointer_type, component, *slot, 0);
+                            if caller_destination.is_some_and(|(target, _)| target == *place) {
+                                let address = return_address.expect("wide caller result buffer");
+                                for (part, (component, ty)) in get(*value)
+                                    .into_iter()
+                                    .zip(shapes.types(function.value_types[value.0]))
+                                    .enumerate()
+                                {
+                                    let raw = if ty == types::I8 {
+                                        builder.ins().uextend(types::I64, component)
+                                    } else {
+                                        component
+                                    };
+                                    let byte_offset = i32::try_from((offset + part) * 8)
+                                        .map_err(|_| "caller result field offset overflow")?;
+                                    builder.ins().store(
+                                        MemFlagsData::new(),
+                                        raw,
+                                        address,
+                                        byte_offset,
+                                    );
+                                }
+                            } else {
+                                for (component, slot) in
+                                    get(*value).into_iter().zip(&places[place.0][offset..])
+                                {
+                                    builder.ins().stack_store(pointer_type, component, *slot, 0);
+                                }
                             }
                             None
                         }
-                        Operation::DestPublish(place) => Some(
-                            shapes
-                                .types(function.place_types[place.0])
-                                .into_iter()
-                                .zip(&places[place.0])
-                                .map(|(ty, slot)| {
-                                    builder.ins().stack_load(pointer_type, ty, *slot, 0)
-                                })
-                                .collect(),
-                        ),
+                        Operation::DestPublish(place) => {
+                            if caller_destination.is_some_and(|(target, _)| target == *place) {
+                                Some(Vec::new())
+                            } else {
+                                Some(
+                                    shapes
+                                        .types(function.place_types[place.0])
+                                        .into_iter()
+                                        .zip(&places[place.0])
+                                        .map(|(ty, slot)| {
+                                            builder.ins().stack_load(pointer_type, ty, *slot, 0)
+                                        })
+                                        .collect(),
+                                )
+                            }
+                        }
                         Operation::DestTakeField(place, index)
                         | Operation::TakeField(place, index) => {
                             let Type::Data(id) = function.place_types[place.0] else {
