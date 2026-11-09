@@ -635,13 +635,15 @@ fn one_variant_and_mutable_nominal_place_agree() {
 }
 
 #[test]
-fn products_cross_calls_and_returns_without_place_storage() {
+fn products_cross_calls_and_returns_with_checked_destinations() {
     let program = compile(include_str!("../examples/product.phoebe"));
     assert!(
         program
             .functions
             .iter()
-            .all(|function| function.place_types.is_empty())
+            .flat_map(|function| &function.blocks)
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| matches!(instruction.operation, core::Operation::DestPublish(_)))
     );
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
@@ -693,7 +695,7 @@ fn products_reject_bad_fields_and_implicit_equality() {
 #[test]
 fn verifier_checks_product_shape_before_native_lowering() {
     let mut program = compile(
-        "data Pair { left: I64, ready: Bool } fn main() -> I64 { val p = Pair(42, true); p.left }",
+        "data Pair { left: I64, ready: Bool, spare: Unit } fn main() -> I64 { val p = Pair(42, true, Unit); p.left }",
     );
     let product = program.functions[0].blocks[0]
         .instructions

@@ -810,6 +810,36 @@ fn compile_poll_module<M: Module>(
                             Some(vec![builder.ins().iconst(types::I8, i64::from(*value))])
                         }
                         Operation::Unit => Some(Vec::new()),
+                        Operation::DestBegin(_) => None,
+                        Operation::DestField(place, index, value) => {
+                            let Type::Data(id) = function.place_types[place.0] else {
+                                unreachable!("verified destination type")
+                            };
+                            let fields = &program.data[id.0].fields;
+                            let offset = fields[..*index]
+                                .iter()
+                                .map(|(_, ty)| shapes.types(*ty).len())
+                                .sum::<usize>();
+                            for (component, address) in get(*value, &mut builder)
+                                .into_iter()
+                                .zip(&places[place.0][offset..])
+                            {
+                                builder
+                                    .ins()
+                                    .store(MemFlagsData::new(), component, *address, 0);
+                            }
+                            None
+                        }
+                        Operation::DestPublish(place) => Some(
+                            shapes
+                                .types(function.place_types[place.0])
+                                .into_iter()
+                                .zip(&places[place.0])
+                                .map(|(ty, address)| {
+                                    builder.ins().load(ty, MemFlagsData::new(), *address, 0)
+                                })
+                                .collect(),
+                        ),
                         Operation::ArrayI64(elements) => Some(
                             elements
                                 .iter()
@@ -1927,6 +1957,9 @@ fn validate_poll_function(
                     | Operation::ReadField(_, _)
                     | Operation::Variant(_, _, _)
                     | Operation::Product(_, _)
+                    | Operation::DestBegin(_)
+                    | Operation::DestField(_, _, _)
+                    | Operation::DestPublish(_)
                     | Operation::Field(_, _)
                     | Operation::Neg(_)
                     | Operation::Not(_)

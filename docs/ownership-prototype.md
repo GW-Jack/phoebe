@@ -4,7 +4,8 @@ Status: isolated executable experiment plus closed-value compiler slices,
 2026-11-08. Decision 0006 adopts the source model. Closed nested nominal
 field and name reads now preserve their parent in source lowering and Core
 verification, including closed siblings of resource-bearing records. Closed
-values survive ordinary `T` calls. Inferred sharing and partial right-transfer
+values survive ordinary `T` calls. Two-field scalar products now have checked
+local destination construction. Inferred sharing and partial right-transfer
 remain prototype-only.
 
 ## Question
@@ -79,7 +80,7 @@ Phoebe scheduler.
 | Mechanism | What the prototype establishes | Required Phoebe integration |
 | --- | --- | --- |
 | Inferred use | A read can borrow; a last owning use moves; an owning use with a later use retains closed data; a capability cannot be retained. | Source value semantics, closed/right distinction, and CFG-aware last-use moves are implemented. Add borrow/retain selection, retain/release costs, and shared representation. |
-| Destination construction | A write-once field cannot be filled twice; a result with a missing field cannot be published; dropping an incomplete destination drops initialized fields. | Add typed destination and initialization state to Core, select caller storage, verify all return and failure edges, handle sums and rights, keep destinations stable across suspension. |
+| Destination construction | A write-once field cannot be filled twice; a result with a missing field cannot be published; dropping an incomplete destination drops initialized fields. | Checked local destinations now cover two-field scalar products, early `?`, and suspension. Extend to caller storage, sums, rights, and exact resource cleanup. |
 | Regex paths | Named left/right fields are disjoint; a call result summarized as any subfield conservatively overlaps either; nested paths can be distinguished. | Add field loans and path roots to Core, implement exact terminating regex/automaton checks and CFG joins, prove or validate the checker, check actual native address and cleanup rules. |
 
 ## Field extension

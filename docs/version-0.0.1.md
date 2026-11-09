@@ -159,7 +159,12 @@ components, without native heap allocation. Direct returns wider than the
 target's register return capacity use a caller-owned stack buffer, so x86-64
 and AArch64 both support finite nested results. `docs/abi-shapes.md` records the current internal
 calling convention and its unmeasured argument cost threshold. Core IR
-has typed values, conditional branches, variant matches, block parameters,
+constructs two-field scalar products in checked local destinations with
+write-once fields and publication after both fields are initialized. An early
+`?` leaves the destination unpublished, and a retained frame preserves its
+first field when the second field suspends. This path does not yet handle
+capability-bearing products or active sum variants. Core IR has typed values,
+conditional branches, variant matches, block parameters,
 and task-local places for `var`. `val (a, b, ...) = product.unpack();`
 destructures a whole finite product, including nested fields, with one name
 per field; the existing request pair binding uses the same syntax.
