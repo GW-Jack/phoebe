@@ -12,6 +12,10 @@ pub struct PathLanguage {
 }
 
 impl PathLanguage {
+    pub fn subtrees_overlap(left: &[usize], right: &[usize]) -> bool {
+        left.starts_with(right) || right.starts_with(left)
+    }
+
     pub fn subtree(path: impl Into<Vec<usize>>) -> Self {
         Self {
             prefixes: vec![path.into()],
@@ -34,14 +38,14 @@ impl PathLanguage {
             other
                 .prefixes
                 .iter()
-                .any(|right| left.starts_with(right) || right.starts_with(left))
+                .any(|right| Self::subtrees_overlap(left, right))
         })
     }
 
     pub fn overlaps_subtree(&self, path: &[usize]) -> bool {
         self.prefixes
             .iter()
-            .any(|prefix| prefix.starts_with(path) || path.starts_with(prefix))
+            .any(|prefix| Self::subtrees_overlap(prefix, path))
     }
 }
 

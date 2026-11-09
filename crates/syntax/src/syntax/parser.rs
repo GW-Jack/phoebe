@@ -69,6 +69,23 @@ impl Parser {
         }
     }
 
+    fn borrow_path(&mut self) -> Result<(String, Vec<String>, Span), Diagnostic> {
+        let (name, mut span) = self.name()?;
+        let mut path = Vec::new();
+        while self.eat(&TokenKind::Dot).is_some() {
+            if path.len() == MAX_AST_DEPTH {
+                return Err(Diagnostic::new(
+                    self.current().span,
+                    "field path exceeds compiler limit",
+                ));
+            }
+            let (field, end) = self.name()?;
+            path.push(field);
+            span = span.join(end);
+        }
+        Ok((name, path, span))
+    }
+
     fn call_arguments(&mut self) -> Result<(Vec<CallArgument>, Span), Diagnostic> {
         let mut args = Vec::new();
         let end = if let Some(close) = self.eat(&TokenKind::RParen) {
@@ -77,9 +94,10 @@ impl Parser {
             loop {
                 if let Some(amp) = self.eat(&TokenKind::Amp) {
                     let mutable = self.eat(&TokenKind::Mut).is_some();
-                    let (name, name_span) = self.name()?;
+                    let (name, path, name_span) = self.borrow_path()?;
                     args.push(CallArgument::Borrow {
                         name,
+                        path,
                         span: amp.span.join(name_span),
                         mutable,
                     });

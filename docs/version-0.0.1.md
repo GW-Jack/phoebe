@@ -58,6 +58,13 @@ site), call-site `&I64`, `&mut I64`, `&Bool`, and `&mut Bool`
 arguments, `?` on concrete built-in `Result<T, E>` applications with
 primitive, existing nominal, or finite `Option`/`Result` payloads and the same
 error type as the enclosing function's `Result<U, E>`, and a matching tail expression.
+Scalar `I64` and `Bool` fields of mutable product locals support nested
+`&record.field` and `&mut record.field` loans. Disjoint sibling loans coexist;
+overlapping loans and whole-place mutation while a field loan is live are
+rejected. Field loans survive `yield` with stable retained storage. Immutable
+product bindings can supply shared field borrows through scalar projection.
+Whole-product references and field loans into mutable capability-bearing
+records remain outside this executable slice.
 Boolean operators require `Bool` on both sides even when the right side is
 skipped at runtime. Their precedence is `||` below `&&`, below comparisons;
 the right side is a separate Core CFG branch and may contain `?`.

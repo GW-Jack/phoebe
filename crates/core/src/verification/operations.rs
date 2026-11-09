@@ -2,6 +2,24 @@
 
 use super::*;
 
+fn field_path_type(program: &Program, mut ty: Type, path: &[usize]) -> Result<Type, String> {
+    if path.is_empty() {
+        return Err("field borrow requires a nonempty path".into());
+    }
+    for &index in path {
+        let Type::Data(id) = ty else {
+            return Err("field path crosses a non-product value".into());
+        };
+        ty = program
+            .data
+            .get(id.0)
+            .and_then(|data| data.fields.get(index))
+            .map(|(_, ty)| *ty)
+            .ok_or("field path has no product field")?;
+    }
+    Ok(ty)
+}
+
 pub(super) fn op_type(
     program: &Program,
     function: &Function,
@@ -230,6 +248,14 @@ pub(super) fn op_type(
                                 _ => Type::I64,
                             })
                     }
+                    (CallArg::BorrowPath(place, path, false), ParamMode::Shared)
+                    | (CallArg::BorrowPath(place, path, true), ParamMode::Exclusive) => {
+                        function
+                            .place_types
+                            .get(place.0)
+                            .and_then(|root| field_path_type(program, *root, path).ok())
+                            == expected.referent()
+                    }
                     (CallArg::Ref(value, false), ParamMode::Shared) => {
                         matches!(
                             (ty(*value), expected),
@@ -278,6 +304,23 @@ pub(super) fn op_type(
             )
             .map(Some)
             .ok_or_else(|| "borrow requires an I64 or Bool place".into())
+        }
+        Operation::BorrowBeginPath(place, path, exclusive) => {
+            let root = *function
+                .place_types
+                .get(place.0)
+                .ok_or("invalid place ID")?;
+            let referent = field_path_type(program, root, path)?;
+            Type::parameter(
+                if *exclusive {
+                    ParamMode::Exclusive
+                } else {
+                    ParamMode::Shared
+                },
+                referent,
+            )
+            .map(Some)
+            .ok_or_else(|| "field borrow requires an I64 or Bool field".into())
         }
         Operation::BorrowReborrow(parent, exclusive) => {
             let parent_type = ty(*parent);
@@ -433,6 +476,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::DestBegin(_)
         | Operation::DestPublish(_)
         | Operation::BorrowBegin(_, _) => vec![],
+        Operation::BorrowBeginPath(_, _, _) => vec![],
         Operation::Add(a, b)
         | Operation::Sub(a, b)
         | Operation::Mul(a, b)
@@ -446,7 +490,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
             .iter()
             .filter_map(|arg| match arg {
                 CallArg::Value(value) | CallArg::Ref(value, _) => Some(*value),
-                CallArg::Borrow(_, _) => None,
+                CallArg::Borrow(_, _) | CallArg::BorrowPath(_, _, _) => None,
             })
             .collect(),
         Operation::GenericCall { args, .. } => args.clone(),

@@ -228,6 +228,9 @@ impl<'a> Lowerer<'a> {
                         CallArg::Borrow(place, exclusive) => {
                             Some(LoanRoot::Place(*place, *exclusive))
                         }
+                        CallArg::BorrowPath(place, path, exclusive) => {
+                            Some(LoanRoot::Path(*place, path.clone(), *exclusive))
+                        }
                         CallArg::Ref(value, exclusive) => {
                             Some(LoanRoot::Forwarded(*value, *exclusive))
                         }

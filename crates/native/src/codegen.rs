@@ -83,6 +83,13 @@ impl AbiShapes {
             .collect()
     }
 
+    pub(super) fn field_offset(&self, root: Type, path: &[usize]) -> usize {
+        self.shapes
+            .field_path(root, path)
+            .expect("verified Core field path")
+            .1
+    }
+
     pub(super) fn capability_parts(&self, ty: Type) -> Cow<'_, [phoebe_abi::CapabilityPart]> {
         self.shapes
             .capability_parts(ty)
@@ -573,6 +580,14 @@ pub(super) fn compile_functions<M: Module>(
                             places[place.0][0],
                             0,
                         )]),
+                        Operation::BorrowBeginPath(place, path, _) => {
+                            let offset = shapes.field_offset(function.place_types[place.0], path);
+                            Some(vec![builder.ins().stack_addr(
+                                pointer_type,
+                                places[place.0][offset],
+                                0,
+                            )])
+                        }
                         Operation::BorrowReborrow(parent, _) => Some(get(*parent)),
                         Operation::BorrowEnd(_) => None,
                         Operation::Variant(id, tag, payload) => {
@@ -704,6 +719,15 @@ pub(super) fn compile_functions<M: Module>(
                                         vec![builder.ins().stack_addr(
                                             pointer_type,
                                             places[place.0][0],
+                                            0,
+                                        )]
+                                    }
+                                    CallArg::BorrowPath(place, path, _) => {
+                                        let offset = shapes
+                                            .field_offset(function.place_types[place.0], path);
+                                        vec![builder.ins().stack_addr(
+                                            pointer_type,
+                                            places[place.0][offset],
                                             0,
                                         )]
                                     }

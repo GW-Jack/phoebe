@@ -615,6 +615,7 @@ impl Lowerer<'_> {
                         (
                             CallArgument::Borrow {
                                 name,
+                                path,
                                 span,
                                 mutable,
                             },
@@ -631,17 +632,32 @@ impl Lowerer<'_> {
                             })?;
                             let call_arg = match binding {
                                 Binding::Var(place) => {
-                                    self.require(self.place_types[place.0], param_type, *span)?;
-                                    CallArg::Borrow(place, *mutable)
+                                    let (indices, actual) = self.resolve_borrow_path(
+                                        self.place_types[place.0],
+                                        path,
+                                        *span,
+                                    )?;
+                                    self.require(actual, param_type, *span)?;
+                                    if indices.is_empty() {
+                                        CallArg::Borrow(place, *mutable)
+                                    } else {
+                                        CallArg::BorrowPath(place, indices, *mutable)
+                                    }
                                 }
                                 Binding::Val(value) if !*mutable => {
-                                    self.require(self.value_types[value.0], param_type, *span)?;
+                                    let (value, actual) = if path.is_empty() {
+                                        (value, self.value_types[value.0])
+                                    } else {
+                                        self.project_shared_field(value, path, *span)?
+                                    };
+                                    self.require(actual, param_type, *span)?;
                                     let place = self.place(param_type);
                                     self.emit_effect(Operation::PlaceInit(place, value), *span);
                                     CallArg::Borrow(place, false)
                                 }
                                 Binding::Ref(value, source_mode)
-                                    if !*mutable || source_mode == ParamMode::Exclusive =>
+                                    if path.is_empty()
+                                        && (!*mutable || source_mode == ParamMode::Exclusive) =>
                                 {
                                     let actual = self.value_types[value.0]
                                         .referent()
@@ -652,7 +668,11 @@ impl Lowerer<'_> {
                                 _ => {
                                     return Err(Diagnostic::new(
                                         *span,
-                                        "cannot mutably borrow this binding",
+                                        if path.is_empty() {
+                                            "cannot mutably borrow this binding"
+                                        } else {
+                                            "field borrow requires a mutable local place"
+                                        },
                                     ));
                                 }
                             };
