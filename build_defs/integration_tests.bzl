@@ -479,6 +479,15 @@ def integration_tests(rust_test):
     )
 
     rust_test(
+        name = "native_managed_array_leaks_tests",
+        crate_root = "tests/native_managed_array_leaks.rs",
+        srcs = ["tests/native_managed_array_leaks.rs"],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
         name = "standalone_partial_scope_tests",
         crate_root = "tests/standalone_partial_scope.rs",
         srcs = ["tests/standalone_partial_scope.rs", "examples/partial_scope_cancel.phoebe"],

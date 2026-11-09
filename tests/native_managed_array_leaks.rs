@@ -2,6 +2,10 @@
 
 use phoebe::{core, native, runtime, syntax};
 use std::process::Command;
+use std::sync::Mutex;
+
+// The debug allocation counters are process-wide, including across tests.
+static ALLOCATION_COUNTER_TEST: Mutex<()> = Mutex::new(());
 
 fn words() -> String {
     std::iter::once("40")
@@ -13,6 +17,9 @@ fn words() -> String {
 
 #[test]
 fn direct_managed_arrays_release_on_call_branch_and_return() {
+    let _guard = ALLOCATION_COUNTER_TEST
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let baseline = runtime::debug_live_word_allocations();
     let source = format!(
         "fn edit(xs: [I64; 256]) -> I64 {{ var local = xs; local[0] = 0; local[255] }}\n\
@@ -115,6 +122,9 @@ fn direct_managed_arrays_release_on_call_branch_and_return() {
 
 #[test]
 fn managed_arrays_release_on_early_result_return() {
+    let _guard = ALLOCATION_COUNTER_TEST
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let baseline = runtime::debug_live_word_allocations();
     for (index, (outcome, expected)) in [("Err(7)", 7), ("Ok(22)", 42)].into_iter().enumerate() {
         let source = format!(
