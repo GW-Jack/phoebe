@@ -160,6 +160,23 @@ typed variant construction and matching. Source and native paths now run
 finite capability-bearing sums with tag-aware close and spawn transfer. No
 refinement proof connects those implementations to this model.
 
+## Two-message tagged queue
+
+`tagged_queue.maude` fixes two distinct messages whose tags select different
+reply-right leaves. A capacity-two FIFO permits either insertion order.
+Enqueue and dequeue move each message's selected right with the message;
+closing the last receiver discards only rights still queued. A send after
+closure leaves the unsent right with the sender for explicit cleanup. The
+search explores 33 reachable states without an encoded ownership or queue
+mismatch. Nine witnesses cover both full-queue orders, FIFO dequeue, whole and
+partial discard, and rejected-send cleanup. Two wrong-order dequeue states
+are unreachable. Three deliberately malformed states are classified bad.
+
+Each tag has one fixed active right. The model does not encode flattened
+payload words, inactive-arm padding, nested rights, scheduler parking, or
+allocator failure. Source and native tests exercise active and inactive
+tagged payloads, but no refinement proof connects them to this model.
+
 ## Mutable right places
 
 `mutable_right_places.maude` tracks two distinct rights in two task-local
@@ -182,7 +199,7 @@ their compiler/runtime implementation to this model.
 
 ## Evidence boundary
 
-These are finite explorations of ten handwritten abstract machines. The
+These are finite explorations of eleven handwritten abstract machines. The
 two-task model does not include regions or references; the one-task model
 does not include handle fork. Neither models multiple queued messages or
 blocking/parking. The reply model does not cover multiple reply rights,
@@ -193,6 +210,8 @@ The retained borrow model includes parking but only one same-task call chain,
 one scalar place, and an abstract ordered unwind. It does not encode the
 generated frame offsets, Rust pointer operations, or allocator behavior.
 The tagged-sum model fixes one optional right and omits scheduler interleavings.
+The tagged-queue model adds two queued messages but omits scheduler parking and
+concrete word layouts.
 None models scheduling fairness, foreign calls, or executable compiler IR.
 No proof yet connects any model to the compiler, runtime, or generated machine
 code. A `No solution.` result means only that its stated bad predicate is

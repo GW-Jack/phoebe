@@ -145,7 +145,7 @@ develops them and lists the next questions.
 communication capabilities inside rejected or discarded messages.
 `docs/concurrency-pressure-tests.md` compares scoped tasks and actors on
 stateful and asynchronous workloads and records the resulting design gates.
-The ten finite models in `formal/` explore ownership, nested borrows, task
+The eleven finite models in `formal/` explore ownership, nested borrows, task
 scopes, channel and request backpressure, reply rights, and structural
 capability cleanup. `formal/README.md` states each model's bounds and
 witnesses. These checks do not prove the full language, compiler, or native

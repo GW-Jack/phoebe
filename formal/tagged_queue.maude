@@ -1,0 +1,95 @@
+--- Two distinct tagged messages share a capacity-two FIFO. Left and right
+--- select different reply-right leaves; each inactive arm contributes no right.
+--- A queued message and its selected right change owner as one transition.
+mod PHOEBE-TAGGED-QUEUE is
+  protecting BOOL .
+
+  sorts Tag Queue Stage Owner Gate State .
+  ops left right : -> Tag [ctor] .
+  op empty : -> Queue [ctor] .
+  op one : Tag -> Queue [ctor] .
+  op two : Tag Tag -> Queue [ctor] .
+  ops ready queued delivered rejected closed : -> Stage [ctor] .
+  ops sender inqueue receiver gone : -> Owner [ctor] .
+  ops open shut : -> Gate [ctor] .
+  op st : Queue Stage Stage Owner Owner Gate -> State [ctor] .
+  op initial : -> State .
+  eq initial = st(empty, ready, ready, sender, sender, open) .
+
+  --- Enqueue either tag first. The second enqueue fills the remaining slot.
+  rl [send-left-empty] : st(empty, ready, SR:Stage, sender, OR:Owner, open)
+    => st(one(left), queued, SR:Stage, inqueue, OR:Owner, open) .
+  rl [send-right-empty] : st(empty, SL:Stage, ready, OL:Owner, sender, open)
+    => st(one(right), SL:Stage, queued, OL:Owner, inqueue, open) .
+  rl [send-right-second] : st(one(left), queued, ready, inqueue, sender, open)
+    => st(two(left, right), queued, queued, inqueue, inqueue, open) .
+  rl [send-left-second] : st(one(right), ready, queued, sender, inqueue, open)
+    => st(two(right, left), queued, queued, inqueue, inqueue, open) .
+
+  --- Receive may remove only the front message and its selected right.
+  rl [receive-left-only] : st(one(left), queued, SR:Stage, inqueue, OR:Owner, open)
+    => st(empty, delivered, SR:Stage, receiver, OR:Owner, open) .
+  rl [receive-right-only] : st(one(right), SL:Stage, queued, OL:Owner, inqueue, open)
+    => st(empty, SL:Stage, delivered, OL:Owner, receiver, open) .
+  rl [receive-left-first] : st(two(left, right), queued, queued, inqueue, inqueue, open)
+    => st(one(right), delivered, queued, receiver, inqueue, open) .
+  rl [receive-right-first] : st(two(right, left), queued, queued, inqueue, inqueue, open)
+    => st(one(left), queued, delivered, inqueue, receiver, open) .
+  rl [close-delivered-left] : st(Q:Queue, delivered, SR:Stage, receiver, OR:Owner, G:Gate)
+    => st(Q:Queue, closed, SR:Stage, gone, OR:Owner, G:Gate) .
+  rl [close-delivered-right] : st(Q:Queue, SL:Stage, delivered, OL:Owner, receiver, G:Gate)
+    => st(Q:Queue, SL:Stage, closed, OL:Owner, gone, G:Gate) .
+
+  --- Closing the last receiver discards only messages still in the queue.
+  --- An already delivered right stays with the receiving task.
+  rl [close-empty] : st(empty, SL:Stage, SR:Stage, OL:Owner, OR:Owner, open)
+    => st(empty, SL:Stage, SR:Stage, OL:Owner, OR:Owner, shut) .
+  rl [discard-left] : st(one(left), queued, SR:Stage, inqueue, OR:Owner, open)
+    => st(empty, closed, SR:Stage, gone, OR:Owner, shut) .
+  rl [discard-right] : st(one(right), SL:Stage, queued, OL:Owner, inqueue, open)
+    => st(empty, SL:Stage, closed, OL:Owner, gone, shut) .
+  rl [discard-both-left-first] : st(two(left, right), queued, queued, inqueue, inqueue, open)
+    => st(empty, closed, closed, gone, gone, shut) .
+  rl [discard-both-right-first] : st(two(right, left), queued, queued, inqueue, inqueue, open)
+    => st(empty, closed, closed, gone, gone, shut) .
+
+  --- A send after closure returns the unchanged right; the caller then
+  --- explicitly closes the rejected message.
+  rl [reject-left] : st(empty, ready, SR:Stage, sender, OR:Owner, shut)
+    => st(empty, rejected, SR:Stage, sender, OR:Owner, shut) .
+  rl [reject-right] : st(empty, SL:Stage, ready, OL:Owner, sender, shut)
+    => st(empty, SL:Stage, rejected, OL:Owner, sender, shut) .
+  rl [close-rejected-left] : st(empty, rejected, SR:Stage, sender, OR:Owner, shut)
+    => st(empty, closed, SR:Stage, gone, OR:Owner, shut) .
+  rl [close-rejected-right] : st(empty, SL:Stage, rejected, OL:Owner, sender, shut)
+    => st(empty, SL:Stage, closed, OL:Owner, gone, shut) .
+
+  vars S1 S2 : Stage .
+  vars O1 O2 : Owner .
+  vars Q : Queue .
+  var G : Gate .
+  op stageOwner : Stage Owner -> Bool .
+  eq stageOwner(ready, sender) = true .
+  eq stageOwner(queued, inqueue) = true .
+  eq stageOwner(delivered, receiver) = true .
+  eq stageOwner(rejected, sender) = true .
+  eq stageOwner(closed, gone) = true .
+  eq stageOwner(S1, O1) = false [owise] .
+
+  op queueStages : Queue Stage Stage -> Bool .
+  eq queueStages(empty, S1, S2) = not (S1 == queued) and not (S2 == queued) .
+  eq queueStages(one(left), queued, S2) = not (S2 == queued) .
+  eq queueStages(one(right), S1, queued) = not (S1 == queued) .
+  eq queueStages(two(left, right), queued, queued) = true .
+  eq queueStages(two(right, left), queued, queued) = true .
+  eq queueStages(Q, S1, S2) = false [owise] .
+
+  op gateQueue : Gate Queue -> Bool .
+  eq gateQueue(open, Q) = true .
+  eq gateQueue(shut, empty) = true .
+  eq gateQueue(G, Q) = false [owise] .
+  op bad : State -> Bool .
+  eq bad(st(Q, S1, S2, O1, O2, G)) =
+    not (stageOwner(S1, O1) and stageOwner(S2, O2)
+      and queueStages(Q, S1, S2) and gateQueue(G, Q)) .
+endm

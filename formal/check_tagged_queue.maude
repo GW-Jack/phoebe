@@ -1,0 +1,51 @@
+load tagged_queue.maude
+
+--- The checker must reject a torn queue/right state, duplicate queue tags,
+--- and a closed receiver that still owns queued payloads.
+reduce in PHOEBE-TAGGED-QUEUE :
+  bad(st(one(left), queued, ready, sender, sender, open)) .
+reduce in PHOEBE-TAGGED-QUEUE :
+  bad(st(two(left, left), queued, queued, inqueue, inqueue, open)) .
+reduce in PHOEBE-TAGGED-QUEUE :
+  bad(st(one(right), ready, queued, sender, inqueue, shut)) .
+
+search [1] in PHOEBE-TAGGED-QUEUE : initial =>* X:State
+  such that bad(X:State) == true .
+
+--- Both insertion orders reach a full queue. Only the front tag may leave.
+search [1] in PHOEBE-TAGGED-QUEUE : initial =>*
+  st(two(left, right), queued, queued, inqueue, inqueue, open) .
+search [1] in PHOEBE-TAGGED-QUEUE : initial =>*
+  st(two(right, left), queued, queued, inqueue, inqueue, open) .
+search [1] in PHOEBE-TAGGED-QUEUE :
+  st(two(left, right), queued, queued, inqueue, inqueue, open) =>*
+  st(one(right), delivered, queued, receiver, inqueue, open) .
+search [1] in PHOEBE-TAGGED-QUEUE :
+  st(two(right, left), queued, queued, inqueue, inqueue, open) =>*
+  st(one(left), queued, delivered, inqueue, receiver, open) .
+search [1] in PHOEBE-TAGGED-QUEUE :
+  st(two(left, right), queued, queued, inqueue, inqueue, open) =>*
+  st(one(left), queued, delivered, inqueue, receiver, open) .
+search [1] in PHOEBE-TAGGED-QUEUE :
+  st(two(right, left), queued, queued, inqueue, inqueue, open) =>*
+  st(one(right), delivered, queued, receiver, inqueue, open) .
+
+--- Closing the last receiver discards both queued rights or only the
+--- remaining queued right after the first receive.
+search [1] in PHOEBE-TAGGED-QUEUE :
+  st(two(left, right), queued, queued, inqueue, inqueue, open) =>*
+  st(empty, closed, closed, gone, gone, shut) .
+search [1] in PHOEBE-TAGGED-QUEUE :
+  st(two(right, left), queued, queued, inqueue, inqueue, open) =>*
+  st(empty, closed, closed, gone, gone, shut) .
+search [1] in PHOEBE-TAGGED-QUEUE :
+  st(one(right), delivered, queued, receiver, inqueue, open) =>*
+  st(empty, delivered, closed, receiver, gone, shut) .
+
+--- A right in an unsent message remains with the sender on rejection.
+search [1] in PHOEBE-TAGGED-QUEUE :
+  st(one(left), queued, ready, inqueue, sender, open) =>*
+  st(empty, closed, rejected, gone, sender, shut) .
+search [1] in PHOEBE-TAGGED-QUEUE :
+  st(empty, closed, rejected, gone, sender, shut) =>*
+  st(empty, closed, closed, gone, gone, shut) .

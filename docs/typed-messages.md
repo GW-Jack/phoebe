@@ -144,10 +144,12 @@ and still occupy a queue slot.
    The native ABI passes descriptor identity and flattened words, never
    treating a matching word count as type identity. Transfer of channel
    handles and other right kinds is still outside this subset.
-4. Extend the bounded Maude model to cover a two-message queue containing
-   differently tagged aggregates. Its finite search is design evidence; an
-   explicit refinement argument or independent executable tests are still
-   needed for compiler and runtime behavior.
+4. The bounded `formal/tagged_queue.maude` model covers a two-message FIFO
+   with different active tags and reply-right leaves. It checks atomic
+   transfer, FIFO receive, discard, and closed-send retention. Its finite
+   search is design evidence; no refinement proof connects it to Core,
+   runtime, or generated code. Independent executable tests cover tagged
+   source traffic and runtime rights.
 5. Compare interpreter, JIT, and standalone runs for the remaining
    recoverable/failure edges, then measure allocation count and send cost.
 
