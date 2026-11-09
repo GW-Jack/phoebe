@@ -87,5 +87,91 @@
     "payload_json": "{\"dep_kind\":null,\"from\":\"053f98aad904ba5a346c04cfe77bbe5111ddc7e39219b495b2cd259e033379a0\",\"kind\":\"blocks\",\"to\":\"31353b4ad33a1dc1d7bd94e41bb608f3dc37519c1bbea3634af1eaede175289d\"}",
     "actor": "cli",
     "created_at": "2026-11-09 03:45:31"
+  },
+  {
+    "event_id": "d17161ebb42a0c4ac9ff7749ecc6af50318ce7c983a752f71df255771006d11e",
+    "parents": [
+      "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "claim.acquired",
+    "payload_json": "{\"actor\":\"codex:phoebe-memory-2026-11-09\",\"expires_at\":\"2026-11-09 09:48:36\"}",
+    "actor": "codex:phoebe-memory-2026-11-09",
+    "created_at": "2026-11-09 07:48:36"
+  },
+  {
+    "event_id": "c3eae082cc8ca16b542636ae8e01ba74ca52f751927783f412358c05df634d26",
+    "parents": [],
+    "issue_id": "c3eae082cc8ca16b542636ae8e01ba74ca52f751927783f412358c05df634d26",
+    "kind": "issue.created",
+    "payload_json": "{\"assigned_to\":null,\"body\":\"Finish source fixed I64 arrays, verify all backends, and merge collection work into trunk with bounded capability inference; keep source and Core semantics documented.\",\"filed_by\":\"codex-collections\",\"labels\":[],\"metadata\":{\"kind\":\"task\"},\"queue\":\"phoebe\",\"title\":\"Land fixed arrays and collection capability slice\"}",
+    "actor": "codex-collections",
+    "created_at": "2026-11-09 07:54:54"
+  },
+  {
+    "event_id": "2585fed23e90f71feacb6acbf136ced544ee1317090c9086435d8ca1a41fc9e1",
+    "parents": [
+      "c3eae082cc8ca16b542636ae8e01ba74ca52f751927783f412358c05df634d26"
+    ],
+    "issue_id": "c3eae082cc8ca16b542636ae8e01ba74ca52f751927783f412358c05df634d26",
+    "kind": "claim.acquired",
+    "payload_json": "{\"actor\":\"codex-collections\",\"expires_at\":\"2026-11-09 09:54:57\"}",
+    "actor": "codex-collections",
+    "created_at": "2026-11-09 07:54:57"
+  },
+  {
+    "event_id": "7af424343a12635c2a36e053d9589f18d5d81122251eb1e3e54c31ab9898be5c",
+    "parents": [
+      "d17161ebb42a0c4ac9ff7749ecc6af50318ce7c983a752f71df255771006d11e"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"Partial implementation: CFG place liveness now transfers final closed var uses through branches, loops, and replacement stores. Interpreter transfers owned nominal values through moves, constructors, stores, calls, block arguments, matches, and returns. Compiler and cross-backend tests pass. Remaining WS-1 acceptance: checked Core retain/release/allocation/COW actions, a shared immutable representation in interpreter/JIT/standalone, source-attributed cost events, and a measured win over eager copies. Current ABI flattens finite nominal data; there is no mutable field or variable-size source type yet, so COW requires a representation and mutation design.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 07:59:45"
+  },
+  {
+    "event_id": "a338b5687f9f336a43d615849dda92def53b8dc099684b9345f652cc0a3adeaa",
+    "parents": [
+      "7af424343a12635c2a36e053d9589f18d5d81122251eb1e3e54c31ab9898be5c"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex:phoebe-memory-2026-11-09\",\"lease_id\":\"d17161ebb42a0c4ac9ff7749ecc6af50318ce7c983a752f71df255771006d11e\",\"released_at\":\"2026-11-09 07:59:53\"}",
+    "actor": "codex:phoebe-memory-2026-11-09",
+    "created_at": "2026-11-09 07:59:53"
+  },
+  {
+    "event_id": "9d96c21c1e31b141a78fd7a16edab071963b573d840e6e335a15818ce39d1beb",
+    "parents": [
+      "2585fed23e90f71feacb6acbf136ced544ee1317090c9086435d8ca1a41fc9e1"
+    ],
+    "issue_id": "c3eae082cc8ca16b542636ae8e01ba74ca52f751927783f412358c05df634d26",
+    "kind": "issue.closed",
+    "payload_json": "{\"status\":\"closed\",\"summary\":\"Merged Phoebe PR #1 at 01c77c8: fixed I64 arrays in source and Core, collection planner/storage prototype, shared issue wrapper across worktrees; Cargo, Buck2, and formal CI passed.\"}",
+    "actor": null,
+    "created_at": "2026-11-09 08:00:19"
+  },
+  {
+    "event_id": "4a3e1bb96821777dd606553be7238d0ba64061eb74934bda86ab9c073d98abcd",
+    "parents": [
+      "9d96c21c1e31b141a78fd7a16edab071963b573d840e6e335a15818ce39d1beb"
+    ],
+    "issue_id": "c3eae082cc8ca16b542636ae8e01ba74ca52f751927783f412358c05df634d26",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex-collections\",\"lease_id\":\"2585fed23e90f71feacb6acbf136ced544ee1317090c9086435d8ca1a41fc9e1\",\"released_at\":\"2026-11-09 08:00:19\"}",
+    "actor": "codex-collections",
+    "created_at": "2026-11-09 08:00:19"
+  },
+  {
+    "event_id": "7fc56ba94724f67c6a79981bab057eea597a528687a2bde6c412224ffc040054",
+    "parents": [
+      "4a3e1bb96821777dd606553be7238d0ba64061eb74934bda86ab9c073d98abcd"
+    ],
+    "issue_id": "c3eae082cc8ca16b542636ae8e01ba74ca52f751927783f412358c05df634d26",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":null,\"at_cut\":null,\"basis\":null,\"basis_fingerprint\":null,\"kind\":\"cuts\",\"note\":null,\"reference\":\"intent(c3eae082cc8ca16b542636ae8e01ba74ca52f751927783f412358c05df634d26)\"}",
+    "actor": null,
+    "created_at": "2026-11-09 08:00:19"
   }
 ]
