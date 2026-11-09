@@ -71,7 +71,7 @@ fn check_call_aliases(args: &[CallArg]) -> Result<(), String> {
                 (call_arg_place_path(arg), call_arg_place_path(other))
             {
                 (
-                    a == b && (ap.starts_with(bp) || bp.starts_with(ap)),
+                    a == b && path_language::PathLanguage::subtrees_overlap(ap, bp),
                     am || bm,
                 )
             } else if let (CallArg::Ref(a, am), CallArg::Ref(b, bm)) = (arg, other) {
