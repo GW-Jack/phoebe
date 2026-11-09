@@ -15,15 +15,17 @@ fn args(a: &[CallArgument], b: &[CallArgument], delta: isize) -> bool {
             (
                 CallArgument::Borrow {
                     name: an,
+                    path: ap,
                     span: aspan,
                     mutable: am,
                 },
                 CallArgument::Borrow {
                     name: bn,
+                    path: bp,
                     span: bspan,
                     mutable: bm,
                 },
-            ) => an == bn && am == bm && span(*aspan, *bspan, delta),
+            ) => an == bn && ap == bp && am == bm && span(*aspan, *bspan, delta),
             _ => false,
         })
 }
@@ -206,13 +208,15 @@ fn expr(a: &Expr, b: &Expr, delta: isize) -> bool {
         (
             ExprKind::Borrow {
                 name: an,
+                path: ap,
                 mutable: am,
             },
             ExprKind::Borrow {
                 name: bn,
+                path: bp,
                 mutable: bm,
             },
-        ) => an == bn && am == bm,
+        ) => an == bn && ap == bp && am == bm,
         (ExprKind::Copy(a), ExprKind::Copy(b))
         | (ExprKind::Neg(a), ExprKind::Neg(b))
         | (ExprKind::Not(a), ExprKind::Not(b))

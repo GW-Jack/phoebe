@@ -1,8 +1,8 @@
 # Field-path loan language
 
-Status: exact path checker integrated into the lexical-loan verifier for its
-current whole-place operations. Source field borrows and field-address lowering
-are still pending under WS-4.
+Status: exact path checker, checked scalar field loans, and field-address
+lowering are integrated. Parent product references and partial capability
+records remain open under WS-4 and WS-3.
 
 A path is a finite sequence of product-field indices relative to one storage
 root. The empty path names the whole root. A loan at path `p` covers `p` and
@@ -35,10 +35,19 @@ the general property for the represented language. Neither is a proof that
 source lowering chooses the correct storage roots or that native addresses
 match those paths.
 
-The current verifier associates every existing `borrow.begin` and call borrow
-with the empty path, preserving whole-place behavior. The next integration
-step is to carry a checked field path on lexical and call loans, validate each
-step against the nominal product layout, and compute its flattened component
-offset for the interpreter and both Cranelift execution paths. Incoming
-references must retain their caller root and path; no reference may cross a
-task boundary.
+The verifier now carries paths on lexical and call loans. Source `&record.meta.id`
+and `&mut record.meta.id` work for scalar `I64` and `Bool` leaves of `var`
+products, including across suspension. The interpreter resolves the nested
+value path; direct and retained Cranelift code use the same checked flattened
+component offset. A shared borrow from a `val` product projects its closed
+field into a scalar temporary, preserving the immutable parent. Call arguments
+may borrow disjoint siblings, while a whole-place mutation or overlapping
+field borrow conflicts with an active loan. Exact loan state must agree at CFG
+joins. No reference may cross a task boundary.
+
+The present reference types are scalar. Borrowing an entire product parent is
+therefore unsupported, even though the path checker would detect its overlap
+with a child. Mutable places containing rights are separately restricted, so
+this implementation does not yet provide field loans in partial resource
+records. Those source and Core surfaces, and a fieldwise capability transfer,
+remain acceptance work for WS-4 and WS-3.

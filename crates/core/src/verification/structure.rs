@@ -60,6 +60,9 @@ fn verify_loan_regions(function: &Function) -> Result<(), String> {
                 .iter()
                 .filter_map(|arg| match arg {
                     CallArg::Borrow(place, exclusive) => Some(LoanRoot::Place(*place, *exclusive)),
+                    CallArg::BorrowPath(place, path, exclusive) => {
+                        Some(LoanRoot::Path(*place, path.clone(), *exclusive))
+                    }
                     CallArg::Ref(value, exclusive) => Some(LoanRoot::Forwarded(*value, *exclusive)),
                     CallArg::Value(_) => None,
                 })
@@ -600,6 +603,7 @@ pub(crate) fn verify_structure(
                 | Operation::DestField(place, _, _)
                 | Operation::DestPublish(place)
                 | Operation::BorrowBegin(place, _)
+                | Operation::BorrowBeginPath(place, _, _)
                 | Operation::Store(place, _) = instruction.operation
                 {
                     check_place(place, block_id, index)?;
@@ -617,8 +621,11 @@ pub(crate) fn verify_structure(
                 }
                 if let Operation::Call(_, args) = &instruction.operation {
                     for arg in args {
-                        if let CallArg::Borrow(place, _) = arg {
-                            check_place(*place, block_id, index)?;
+                        match arg {
+                            CallArg::Borrow(place, _) | CallArg::BorrowPath(place, _, _) => {
+                                check_place(*place, block_id, index)?;
+                            }
+                            _ => {}
                         }
                     }
                 }

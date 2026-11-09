@@ -14,6 +14,161 @@ fn assert_standalone(program: &core::Program, expected: i64, label: &str) {
 }
 
 #[test]
+fn sibling_field_loans_coexist_and_write_through_nested_path() {
+    let source = r#"
+data Inner { left: I64, right: I64 }
+data Outer { head: I64, inner: Inner }
+fn increment(value: &mut I64) -> Unit { value = value + 1; }
+fn main() -> I64 {
+  var record = Outer(1, Inner(20, 20));
+  with left = &record.inner.left {
+    with right = &mut record.inner.right {
+      increment(&mut right);
+      left + right + record.head
+    }
+  }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let ir = program.to_string();
+    assert!(ir.contains("borrow.begin &p0.[1, 0]"), "{ir}");
+    assert!(ir.contains("borrow.begin &mut p0.[1, 1]"), "{ir}");
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, 42, "field-siblings");
+}
+
+#[test]
+fn direct_field_call_borrows_and_retained_field_loan_agree() {
+    let direct = r#"
+data Pair { left: I64, right: I64 }
+fn combine(a: &I64, b: &mut I64) -> I64 { b = b + 1; a + b }
+fn main() -> I64 { var pair = Pair(20, 20); combine(&pair.left, &mut pair.right) }
+"#;
+    let direct = core::lower(&syntax::parse(direct).unwrap()).unwrap();
+    assert_eq!(direct.interpret("main", &[]).unwrap(), 41);
+    assert_eq!(native::run(&direct, "main", &[]).unwrap(), 41);
+    assert_standalone(&direct, 41, "field-direct-call");
+
+    let source = r#"
+data Pair { left: I64, right: I64 }
+fn combine(a: &I64, b: &mut I64) -> I64 { b = b + 1; a + b }
+fn main() -> I64 {
+  var pair = Pair(20, 20);
+  val first = combine(&pair.left, &mut pair.right);
+  with right = &mut pair.right { yield; right = right + 1; };
+  first
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 41);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 41);
+    assert_standalone(&program, 41, "field-call-yield");
+}
+
+#[test]
+fn field_loan_state_is_exact_at_cfg_join() {
+    let source = r#"
+data Pair { left: I64, right: I64 }
+fn main() -> I64 {
+  var pair = Pair(20, 22);
+  with left = &pair.left {
+    val selected = if (true) { left } else { left };
+    selected + pair.right
+  }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, 42, "field-cfg-join");
+}
+
+#[test]
+fn same_field_loan_and_whole_place_mutation_conflict() {
+    let accepted = r#"
+data Pair { left: I64, right: I64 }
+fn main() -> I64 {
+  var pair = Pair(20, 22);
+  with left = &pair.left { with right = &mut pair.right { left + right } }
+}
+"#;
+    assert!(core::lower(&syntax::parse(accepted).unwrap()).is_ok());
+    let overlapping = accepted.replace("&mut pair.right", "&mut pair.left");
+    let error = core::lower(&syntax::parse(&overlapping).unwrap()).unwrap_err();
+    assert!(
+        error.message.contains("overlapping lexical borrows"),
+        "{error:?}"
+    );
+    let mutation = accepted.replace(
+        "with right = &mut pair.right { left + right }",
+        "pair = Pair(1, 2); left",
+    );
+    let error = core::lower(&syntax::parse(&mutation).unwrap()).unwrap_err();
+    assert!(
+        error
+            .message
+            .contains("mutation conflicts with lexical loan"),
+        "{error:?}"
+    );
+
+    let alias = r#"
+data Pair { left: I64, right: I64 }
+fn combine(a: &I64, b: &mut I64) -> I64 { a + b }
+fn main() -> I64 { var pair = Pair(20, 22); combine(&pair.left, &mut pair.left) }
+"#;
+    let error = core::lower(&syntax::parse(alias).unwrap()).unwrap_err();
+    assert!(
+        error.message.contains("overlapping call borrows"),
+        "{error:?}"
+    );
+
+    let unknown = accepted.replace("&pair.left", "&pair.missing");
+    let error = core::lower(&syntax::parse(&unknown).unwrap()).unwrap_err();
+    assert!(error.message.contains("unknown product field"), "{error:?}");
+}
+
+#[test]
+fn forged_field_path_is_rejected_before_interpretation_or_codegen() {
+    let source = "data Pair { left: I64, right: I64 } fn main() -> I64 { var pair = Pair(20, 22); with left = &pair.left { left } }";
+    let mut program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let operation = program.functions[0]
+        .blocks
+        .iter_mut()
+        .flat_map(|block| &mut block.instructions)
+        .find(|instruction| {
+            matches!(
+                instruction.operation,
+                core::Operation::BorrowBeginPath(_, _, _)
+            )
+        })
+        .unwrap();
+    let core::Operation::BorrowBeginPath(_, path, _) = &mut operation.operation else {
+        unreachable!()
+    };
+    *path = vec![99];
+    let error = core::verify(&program).unwrap_err();
+    assert!(error.contains("field path has no product field"), "{error}");
+}
+
+#[test]
+fn immutable_field_borrow_preserves_parent_value() {
+    let source = r#"
+data Pair { left: I64, right: I64 }
+fn read(value: &I64) -> I64 { value }
+fn main() -> I64 {
+  val pair = Pair(20, 22);
+  val first = read(&pair.left);
+  with right = &pair.right { first + right + (pair.left - 20) }
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, 42, "immutable-field");
+}
+
+#[test]
 fn nested_source_reborrow_survives_yield() {
     let source = include_str!("../examples/lexical_borrow.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

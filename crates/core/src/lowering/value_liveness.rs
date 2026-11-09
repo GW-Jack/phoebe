@@ -58,12 +58,13 @@ fn place_transfer(live: &mut HashSet<PlaceId>, operation: &Operation) {
         | Operation::Take(place)
         | Operation::CopyPlace(place)
         | Operation::InferredCopyPlace(place)
-        | Operation::BorrowBegin(place, _) => {
+        | Operation::BorrowBegin(place, _)
+        | Operation::BorrowBeginPath(place, _, _) => {
             live.insert(*place);
         }
         Operation::Call(_, args) => {
             for arg in args {
-                if let CallArg::Borrow(place, _) = arg {
+                if let CallArg::Borrow(place, _) | CallArg::BorrowPath(place, _, _) = arg {
                     live.insert(*place);
                 }
             }
@@ -78,12 +79,12 @@ fn borrowed_places(blocks: &[Block]) -> HashSet<PlaceId> {
     let mut borrowed = HashSet::new();
     for instruction in blocks.iter().flat_map(|block| &block.instructions) {
         match &instruction.operation {
-            Operation::BorrowBegin(place, _) => {
+            Operation::BorrowBegin(place, _) | Operation::BorrowBeginPath(place, _, _) => {
                 borrowed.insert(*place);
             }
             Operation::Call(_, args) => {
                 for arg in args {
-                    if let CallArg::Borrow(place, _) = arg {
+                    if let CallArg::Borrow(place, _) | CallArg::BorrowPath(place, _, _) = arg {
                         borrowed.insert(*place);
                     }
                 }

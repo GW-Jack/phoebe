@@ -119,6 +119,7 @@ pub enum CallArgument {
     Value(Expr),
     Borrow {
         name: String,
+        path: Vec<String>,
         span: Span,
         mutable: bool,
     },
@@ -198,6 +199,7 @@ pub enum ExprKind {
     Name(String),
     Borrow {
         name: String,
+        path: Vec<String>,
         mutable: bool,
     },
     Copy(Box<Expr>),

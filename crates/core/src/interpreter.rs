@@ -566,20 +566,36 @@ impl CoreTask {
                     .expect("verified owned place"),
             ),
             Operation::BorrowBegin(place, _) => Some(Value::Ref(base + place.0)),
+            Operation::BorrowBeginPath(place, path, _) => {
+                Some(Value::RefPath(base + place.0, path.clone()))
+            }
             Operation::BorrowReborrow(parent, _) => Some(get(*parent)),
             Operation::BorrowEnd(_) => None,
             Operation::LoadRef(reference) => {
-                let Value::Ref(slot) = get(*reference) else {
-                    unreachable!("verified reference")
-                };
-                Some(self.stores[slot].clone().expect("verified borrowed place"))
+                let reference = get(*reference);
+                Some(match reference {
+                    Value::Ref(slot) => self.stores[slot].clone().expect("verified borrowed place"),
+                    Value::RefPath(slot, path) => field_at(
+                        self.stores[slot].as_ref().expect("verified borrowed place"),
+                        &path,
+                    )
+                    .clone(),
+                    _ => unreachable!("verified reference"),
+                })
             }
             Operation::StoreRef(reference, value) => {
-                let Value::Ref(slot) = get(*reference) else {
-                    unreachable!("verified reference")
-                };
+                let reference = get(*reference);
                 let value = get(*value);
-                self.stores[slot] = Some(value);
+                match reference {
+                    Value::Ref(slot) => self.stores[slot] = Some(value),
+                    Value::RefPath(slot, path) => {
+                        *field_at_mut(
+                            self.stores[slot].as_mut().expect("verified borrowed place"),
+                            &path,
+                        ) = value
+                    }
+                    _ => unreachable!("verified reference"),
+                }
                 None
             }
             Operation::CloseHandle(value) => {
@@ -652,6 +668,9 @@ impl CoreTask {
                             CallArg::Value(value) => self.owned_value(*value),
                             CallArg::Ref(value, _) => self.value(*value),
                             CallArg::Borrow(place, _) => Value::Ref(base + place.0),
+                            CallArg::BorrowPath(place, path, _) => {
+                                Value::RefPath(base + place.0, path.clone())
+                            }
                         })
                         .collect();
                     if self.frames.len() >= 1024 {
@@ -1142,6 +1161,26 @@ impl Task for CoreTask {
     }
 }
 
+fn field_at<'a>(mut value: &'a Value, path: &[usize]) -> &'a Value {
+    for &index in path {
+        let Value::Product(_, fields) = value else {
+            unreachable!("verified product field path")
+        };
+        value = &fields[index];
+    }
+    value
+}
+
+fn field_at_mut<'a>(mut value: &'a mut Value, path: &[usize]) -> &'a mut Value {
+    for &index in path {
+        let Value::Product(_, fields) = value else {
+            unreachable!("verified product field path")
+        };
+        value = &mut fields[index];
+    }
+    value
+}
+
 fn as_i64(value: Value) -> i64 {
     match value {
         Value::I64(x) => x,
@@ -1152,6 +1191,7 @@ fn as_i64(value: Value) -> i64 {
         | Value::Product(_, _)
         | Value::UnpublishedProduct(_, _)
         | Value::Ref(_)
+        | Value::RefPath(_, _)
         | Value::Sender(_)
         | Value::Receiver(_)
         | Value::ReplyTo(_)
@@ -1173,6 +1213,7 @@ fn as_bool(value: Value) -> bool {
         | Value::Product(_, _)
         | Value::UnpublishedProduct(_, _)
         | Value::Ref(_)
+        | Value::RefPath(_, _)
         | Value::Sender(_)
         | Value::Receiver(_)
         | Value::ReplyTo(_)
@@ -1208,6 +1249,10 @@ impl fmt::Display for Program {
                     match root {
                         LoanRoot::Place(place, false) => write!(f, "&p{}", place.0)?,
                         LoanRoot::Place(place, true) => write!(f, "&mut p{}", place.0)?,
+                        LoanRoot::Path(place, path, false) => write!(f, "&p{}.{path:?}", place.0)?,
+                        LoanRoot::Path(place, path, true) => {
+                            write!(f, "&mut p{}.{path:?}", place.0)?
+                        }
                         LoanRoot::Forwarded(value, false) => write!(f, "&v{}", value.0)?,
                         LoanRoot::Forwarded(value, true) => write!(f, "&mut v{}", value.0)?,
                     }
@@ -1311,6 +1356,12 @@ impl fmt::Display for Program {
                                     CallArg::Value(value) => write!(f, "v{}", value.0)?,
                                     CallArg::Borrow(place, false) => write!(f, "&p{}", place.0)?,
                                     CallArg::Borrow(place, true) => write!(f, "&mut p{}", place.0)?,
+                                    CallArg::BorrowPath(place, path, false) => {
+                                        write!(f, "&p{}.{path:?}", place.0)?
+                                    }
+                                    CallArg::BorrowPath(place, path, true) => {
+                                        write!(f, "&mut p{}.{path:?}", place.0)?
+                                    }
                                     CallArg::Ref(value, false) => write!(f, "&v{}", value.0)?,
                                     CallArg::Ref(value, true) => write!(f, "&mut v{}", value.0)?,
                                 }
@@ -1348,6 +1399,12 @@ impl fmt::Display for Program {
                         }
                         Operation::BorrowBegin(place, true) => {
                             write!(f, "borrow.begin &mut p{}", place.0)?
+                        }
+                        Operation::BorrowBeginPath(place, path, false) => {
+                            write!(f, "borrow.begin &p{}.{path:?}", place.0)?
+                        }
+                        Operation::BorrowBeginPath(place, path, true) => {
+                            write!(f, "borrow.begin &mut p{}.{path:?}", place.0)?
                         }
                         Operation::BorrowReborrow(parent, false) => {
                             write!(f, "borrow.reborrow &v{}", parent.0)?

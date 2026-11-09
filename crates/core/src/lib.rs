@@ -45,6 +45,7 @@ pub enum Value {
     Product(DataId, Vec<Value>),
     UnpublishedProduct(DataId, Vec<Option<Value>>),
     Ref(usize),
+    RefPath(usize, Vec<usize>),
     Sender(Token),
     Receiver(Token),
     ReplyTo(ReplyToken),
@@ -55,13 +56,28 @@ pub enum Value {
 
 type TypedValue = (ValueId, Type);
 
+fn call_arg_place_path(arg: &CallArg) -> Option<(PlaceId, &[usize], bool)> {
+    match arg {
+        CallArg::Borrow(place, exclusive) => Some((*place, &[][..], *exclusive)),
+        CallArg::BorrowPath(place, path, exclusive) => Some((*place, path.as_slice(), *exclusive)),
+        _ => None,
+    }
+}
+
 fn check_call_aliases(args: &[CallArg]) -> Result<(), String> {
     for (index, arg) in args.iter().enumerate() {
         for other in &args[..index] {
-            let (overlap, exclusive) = match (arg, other) {
-                (CallArg::Borrow(a, am), CallArg::Borrow(b, bm)) => (a == b, *am || *bm),
-                (CallArg::Ref(a, am), CallArg::Ref(b, bm)) => (a == b, *am || *bm),
-                _ => (false, false),
+            let (overlap, exclusive) = if let (Some((a, ap, am)), Some((b, bp, bm))) =
+                (call_arg_place_path(arg), call_arg_place_path(other))
+            {
+                (
+                    a == b && (ap.starts_with(bp) || bp.starts_with(ap)),
+                    am || bm,
+                )
+            } else if let (CallArg::Ref(a, am), CallArg::Ref(b, bm)) = (arg, other) {
+                (a == b, *am || *bm)
+            } else {
+                (false, false)
             };
             if overlap && exclusive {
                 return Err("overlapping call borrows include an exclusive borrow".into());
@@ -82,15 +98,17 @@ enum Binding {
 pub enum CallArg {
     Value(ValueId),
     Borrow(PlaceId, bool),
+    BorrowPath(PlaceId, Vec<usize>, bool),
     Ref(ValueId, bool),
 }
 
 /// A call-scoped loan starts immediately before its call and ends when that
 /// call returns or unwinds. Forwarded roots remain bounded by the caller's
 /// incoming loan; they do not create a reference that can escape the task.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoanRoot {
     Place(PlaceId, bool),
+    Path(PlaceId, Vec<usize>, bool),
     Forwarded(ValueId, bool),
 }
 
@@ -140,6 +158,7 @@ pub enum Operation {
         args: Vec<ValueId>,
     },
     BorrowBegin(PlaceId, bool),
+    BorrowBeginPath(PlaceId, Vec<usize>, bool),
     BorrowReborrow(ValueId, bool),
     BorrowEnd(ValueId),
     LoadRef(ValueId),

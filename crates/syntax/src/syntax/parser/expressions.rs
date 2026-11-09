@@ -20,9 +20,13 @@ impl Parser {
             } => {
                 self.pos += 1;
                 let mutable = self.eat(&TokenKind::Mut).is_some();
-                let (name, end) = self.name()?;
+                let (name, path, end) = self.borrow_path()?;
                 Expr {
-                    kind: ExprKind::Borrow { name, mutable },
+                    kind: ExprKind::Borrow {
+                        name,
+                        path,
+                        mutable,
+                    },
                     span: span.join(end),
                 }
             }

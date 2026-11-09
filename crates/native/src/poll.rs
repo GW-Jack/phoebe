@@ -691,6 +691,11 @@ fn compile_poll_module<M: Module>(
                                     CallArg::Borrow(place, _) => {
                                         operands.push(places[place.0][0]);
                                     }
+                                    CallArg::BorrowPath(place, path, _) => {
+                                        let offset = shapes
+                                            .field_offset(function.place_types[place.0], path);
+                                        operands.push(places[place.0][offset]);
+                                    }
                                 }
                             }
                             let result = instruction.result.expect("verified direct call result");
@@ -727,6 +732,10 @@ fn compile_poll_module<M: Module>(
                             child_layout,
                             &variables,
                             &places,
+                            FieldBorrowLayout {
+                                place_types: &function.place_types,
+                                shapes: &shapes,
+                            },
                             pointer,
                         )?;
                         for value in &point.values {
@@ -875,6 +884,10 @@ fn compile_poll_module<M: Module>(
                         | Operation::Copy(value)
                         | Operation::InferredCopy(value) => Some(get(*value, &mut builder)),
                         Operation::BorrowBegin(place, _) => Some(vec![places[place.0][0]]),
+                        Operation::BorrowBeginPath(place, path, _) => {
+                            let offset = shapes.field_offset(function.place_types[place.0], path);
+                            Some(vec![places[place.0][offset]])
+                        }
                         Operation::BorrowReborrow(parent, _) => Some(get(*parent, &mut builder)),
                         Operation::BorrowEnd(_) => None,
                         Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
@@ -1429,6 +1442,10 @@ fn compile_poll_module<M: Module>(
                             child_layout,
                             &variables,
                             &places,
+                            FieldBorrowLayout {
+                                place_types: &function.place_types,
+                                shapes: &shapes,
+                            },
                             pointer,
                         )?;
                         let transfer_args = args
@@ -1832,12 +1849,18 @@ fn word_offset(word: usize) -> i32 {
     i32::try_from(word * 8).expect("checked frame address")
 }
 
+struct FieldBorrowLayout<'a> {
+    place_types: &'a [Type],
+    shapes: &'a AbiShapes,
+}
+
 fn emit_frame_initial(
     builder: &mut FunctionBuilder<'_>,
     args: &[CallArg],
     child: &FrameWords,
     variables: &[Vec<Variable>],
     places: &[Vec<ClValue>],
+    borrow_layout: FieldBorrowLayout<'_>,
     pointer: cranelift_codegen::ir::Type,
 ) -> Result<(ClValue, i64), String> {
     let mut initial = Vec::new();
@@ -1857,6 +1880,12 @@ fn emit_frame_initial(
             }
             CallArg::Borrow(place, _) => {
                 initial.push((slot.words.start, places[place.0][0]));
+            }
+            CallArg::BorrowPath(place, path, _) => {
+                let offset = borrow_layout
+                    .shapes
+                    .field_offset(borrow_layout.place_types[place.0], path);
+                initial.push((slot.words.start, places[place.0][offset]));
             }
         }
     }
@@ -1946,6 +1975,7 @@ fn validate_poll_function(
                     | Operation::Copy(_)
                     | Operation::InferredCopy(_)
                     | Operation::BorrowBegin(_, _)
+                    | Operation::BorrowBeginPath(_, _, _)
                     | Operation::BorrowReborrow(_, _)
                     | Operation::BorrowEnd(_)
                     | Operation::PlaceInit(_, _)

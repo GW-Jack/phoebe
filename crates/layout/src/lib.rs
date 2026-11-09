@@ -229,6 +229,7 @@ impl ClosePlan {
 
 pub struct Shapes {
     data: Vec<Shape>,
+    field_offsets: Vec<Vec<(Type, usize)>>,
     capabilities: Vec<Vec<CapabilityPart>>,
     closes: Vec<ClosePlan>,
     sendable: Vec<bool>,
@@ -240,6 +241,7 @@ impl Shapes {
     pub fn new(program: &impl DataDefinitions) -> Result<Self, String> {
         let mut shapes = Self {
             data: Vec::with_capacity(program.definitions().len()),
+            field_offsets: Vec::with_capacity(program.definitions().len()),
             capabilities: Vec::with_capacity(program.definitions().len()),
             closes: Vec::with_capacity(program.definitions().len()),
             sendable: Vec::with_capacity(program.definitions().len()),
@@ -264,10 +266,12 @@ impl Shapes {
                     .flatten()
                     .all(|ty| shapes.is_sendable(*ty))
             };
+            let mut field_offsets = Vec::new();
             let (parts, close) = if !definition.fields.is_empty() {
                 let mut parts = Vec::new();
                 let mut close_fields = Vec::new();
                 for (_, ty) in &definition.fields {
+                    field_offsets.push((*ty, parts.len()));
                     let close = shapes.close_plan(*ty)?.shifted(parts.len());
                     if !close.is_empty() {
                         close_fields.push(close);
@@ -310,6 +314,7 @@ impl Shapes {
                 (vec![Part::Word; count], close)
             };
             shapes.data.push(Shape { parts });
+            shapes.field_offsets.push(field_offsets);
             shapes.capabilities.push(capability_parts);
             shapes.closes.push(close);
             shapes.sendable.push(sendable);
@@ -348,6 +353,28 @@ impl Shapes {
         Ok(Shape {
             parts: self.parts(ty)?.to_vec(),
         })
+    }
+
+    /// Resolve a checked product-field path to its type and flattened ABI
+    /// component offset. The root path has offset zero. Sums have no stable
+    /// field path because their active payload is tag dependent.
+    pub fn field_path(&self, mut ty: Type, path: &[usize]) -> Result<(Type, usize), String> {
+        let mut offset = 0usize;
+        for &index in path {
+            let Type::Data(id) = ty else {
+                return Err("field path crosses a non-product value".into());
+            };
+            let (field_ty, field_offset) = self
+                .field_offsets
+                .get(id.0)
+                .and_then(|fields| fields.get(index))
+                .ok_or("field path has no product field")?;
+            offset = offset
+                .checked_add(*field_offset)
+                .ok_or("field path ABI offset overflow")?;
+            ty = *field_ty;
+        }
+        Ok((ty, offset))
     }
 
     fn sequence(mut plans: Vec<ClosePlan>) -> ClosePlan {
@@ -454,5 +481,52 @@ impl Shapes {
             }])),
             _ => Ok(Cow::Borrowed(&[])),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Program(Vec<DataDef>);
+
+    impl DataDefinitions for Program {
+        fn definitions(&self) -> &[DataDef] {
+            &self.0
+        }
+    }
+
+    #[test]
+    fn nested_product_field_offsets_follow_flattened_layout() {
+        let program = Program(vec![
+            DataDef {
+                name: "Inner".into(),
+                variants: vec![],
+                payloads: vec![],
+                fields: vec![("flag".into(), Type::Bool), ("value".into(), Type::I64)],
+            },
+            DataDef {
+                name: "Outer".into(),
+                variants: vec![],
+                payloads: vec![],
+                fields: vec![
+                    ("head".into(), Type::I64),
+                    ("inner".into(), Type::Data(DataId(0))),
+                    ("tail".into(), Type::I64),
+                ],
+            },
+        ]);
+        let shapes = Shapes::new(&program).unwrap();
+        let root = Type::Data(DataId(1));
+        assert_eq!(shapes.field_path(root, &[]).unwrap(), (root, 0));
+        assert_eq!(
+            shapes.field_path(root, &[1]).unwrap(),
+            (Type::Data(DataId(0)), 1)
+        );
+        assert_eq!(shapes.field_path(root, &[1, 0]).unwrap(), (Type::Bool, 1));
+        assert_eq!(shapes.field_path(root, &[1, 1]).unwrap(), (Type::I64, 2));
+        assert_eq!(shapes.field_path(root, &[2]).unwrap(), (Type::I64, 3));
+        assert!(shapes.field_path(root, &[1, 2]).is_err());
+        assert!(shapes.field_path(root, &[0, 0]).is_err());
     }
 }

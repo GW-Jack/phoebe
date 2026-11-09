@@ -368,7 +368,7 @@ fn analyze_verified(program: &Program, suspendable: &[bool]) -> Result<Vec<Funct
                         retained.values[result.0] = false;
                     }
                     for arg in args {
-                        if let CallArg::Borrow(place, _) = arg {
+                        if let CallArg::Borrow(place, _) | CallArg::BorrowPath(place, _, _) = arg {
                             retained.places[place.0] = true;
                         }
                     }
@@ -399,7 +399,9 @@ fn analyze_verified(program: &Program, suspendable: &[bool]) -> Result<Vec<Funct
                 .ok_or("suspending loan has no retained call point")?;
             for root in &region.roots {
                 let place = match root {
-                    core::LoanRoot::Place(place, _) => Some(*place),
+                    core::LoanRoot::Place(place, _) | core::LoanRoot::Path(place, _, _) => {
+                        Some(*place)
+                    }
                     core::LoanRoot::Forwarded(value, _) => lexical_roots[value.0],
                 };
                 if let Some(place) = place
@@ -530,7 +532,7 @@ fn instruction_live(live: &mut Live, operation: &Operation, result: Option<Value
         }
         Operation::Call(_, args) => {
             for arg in args {
-                if let CallArg::Borrow(place, _) = arg {
+                if let CallArg::Borrow(place, _) | CallArg::BorrowPath(place, _, _) = arg {
                     live.places[place.0] = true;
                 }
             }
