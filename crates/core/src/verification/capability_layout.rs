@@ -93,6 +93,13 @@ impl Layout {
         }
     }
 
+    pub(crate) fn field_leaves(&self, id: DataId, field: usize) -> std::ops::Range<usize> {
+        let leaves = &self.products[id.0];
+        let start = leaves.partition_point(|leaf| leaf.path[0] < field);
+        let end = leaves.partition_point(|leaf| leaf.path[0] <= field);
+        start..end
+    }
+
     pub(crate) fn has_tagged(&self, ty: Type) -> bool {
         match ty {
             Type::Data(DataId(id)) => self.tagged.get(id).copied().unwrap_or(false),

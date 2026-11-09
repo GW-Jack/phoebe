@@ -511,13 +511,14 @@ impl Lowerer<'_> {
                         ));
                     }
                     let expected = fields.iter().map(|(_, ty)| *ty).collect::<Vec<_>>();
-                    if expected.len() == 2
-                        && expected
-                            .iter()
-                            .all(|ty| matches!(ty, Type::I64 | Type::Bool | Type::Unit))
-                    {
+                    if expected.len() == 2 {
                         let destination = self.place(Type::Data(id));
                         self.emit_effect(Operation::DestBegin(destination), expr.span);
+                        self.active_destinations.push(ActiveDestination {
+                            place: destination,
+                            data: id,
+                            initialized: 0,
+                        });
                         for (index, (arg, ty)) in args.iter().zip(expected).enumerate() {
                             let CallArgument::Value(value) = arg else {
                                 return Err(Diagnostic::new(
@@ -531,12 +532,17 @@ impl Lowerer<'_> {
                                 Operation::DestField(destination, index, field),
                                 value.span,
                             );
+                            self.active_destinations
+                                .last_mut()
+                                .expect("active destination")
+                                .initialized = index + 1;
                         }
                         let result = self.emit(
                             Operation::DestPublish(destination),
                             Type::Data(id),
                             expr.span,
                         );
+                        self.active_destinations.pop();
                         return Ok((result, Type::Data(id)));
                     }
                     let mut values = Vec::with_capacity(args.len());

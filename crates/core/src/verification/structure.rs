@@ -602,6 +602,7 @@ pub(crate) fn verify_structure(
                 | Operation::ArraySetPlace(place, _, _)
                 | Operation::DestField(place, _, _)
                 | Operation::DestPublish(place)
+                | Operation::DestTakeField(place, _)
                 | Operation::BorrowBegin(place, _)
                 | Operation::BorrowBeginPath(place, _, _)
                 | Operation::Store(place, _) = instruction.operation
@@ -610,11 +611,27 @@ pub(crate) fn verify_structure(
                     if destinations[place.0]
                         && !matches!(
                             instruction.operation,
-                            Operation::DestField(_, _, _) | Operation::DestPublish(_)
+                            Operation::DestField(_, _, _)
+                                | Operation::DestPublish(_)
+                                | Operation::DestTakeField(_, _)
                         )
                     {
                         return Err(format!(
                             "{}: unpublished destination cannot be read or replaced",
+                            function.name
+                        ));
+                    }
+                }
+                if let Operation::DestTakeField(place, field) = instruction.operation {
+                    let (write_block, write_index) = destination_fields[place.0][field]
+                        .ok_or_else(|| {
+                            format!("{}: taking an unwritten destination field", function.name)
+                        })?;
+                    if (write_block == block_id && write_index >= index)
+                        || (write_block != block_id && !dominators.dominates(write_block, block_id))
+                    {
+                        return Err(format!(
+                            "{}: taking an unwritten destination field",
                             function.name
                         ));
                     }
@@ -624,6 +641,12 @@ pub(crate) fn verify_structure(
                         match arg {
                             CallArg::Borrow(place, _) | CallArg::BorrowPath(place, _, _) => {
                                 check_place(*place, block_id, index)?;
+                                if destinations[place.0] {
+                                    return Err(format!(
+                                        "{}: unpublished destination cannot be borrowed",
+                                        function.name
+                                    ));
+                                }
                             }
                             _ => {}
                         }

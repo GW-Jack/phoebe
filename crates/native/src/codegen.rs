@@ -639,6 +639,27 @@ pub(super) fn compile_functions<M: Module>(
                                 })
                                 .collect(),
                         ),
+                        Operation::DestTakeField(place, index) => {
+                            let Type::Data(id) = function.place_types[place.0] else {
+                                unreachable!("verified destination type")
+                            };
+                            let fields = &program.data[id.0].fields;
+                            let offset = fields[..*index]
+                                .iter()
+                                .map(|(_, ty)| shapes.types(*ty).len())
+                                .sum::<usize>();
+                            let mut taken = Vec::new();
+                            for (ty, slot) in shapes
+                                .types(fields[*index].1)
+                                .into_iter()
+                                .zip(&places[place.0][offset..])
+                            {
+                                taken.push(builder.ins().stack_load(pointer_type, ty, *slot, 0));
+                                let empty = builder.ins().iconst(ty, 0);
+                                builder.ins().stack_store(pointer_type, empty, *slot, 0);
+                            }
+                            Some(taken)
+                        }
                         Operation::Field(owner, index) => {
                             let Type::Data(id) = function.value_types[owner.0] else {
                                 unreachable!("verified field owner")

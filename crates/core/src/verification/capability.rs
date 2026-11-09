@@ -106,6 +106,40 @@ pub(crate) fn capability_graph(
                         actions.push(CapAction::MoveGroup(moves));
                     }
                 }
+                Operation::DestField(place, field, value) => {
+                    let Type::Data(id) = function.place_types[place.0] else {
+                        unreachable!("verified destination")
+                    };
+                    let leaves = layout.field_leaves(id, *field);
+                    let destination = (places[place.0].start + leaves.start)
+                        ..(places[place.0].start + leaves.end);
+                    let moves = move_ranges(slots[value.0].clone(), destination);
+                    if !moves.is_empty() {
+                        actions.push(CapAction::MoveGroup(moves));
+                    }
+                }
+                Operation::DestPublish(place) => {
+                    let published = instruction.result.expect("verified destination result");
+                    let moves = move_ranges(places[place.0].clone(), slots[published.0].clone());
+                    if !moves.is_empty() {
+                        actions.push(CapAction::MoveGroup(moves));
+                    }
+                }
+                Operation::DestTakeField(place, field) => {
+                    let Type::Data(id) = function.place_types[place.0] else {
+                        unreachable!("verified destination")
+                    };
+                    let leaves = layout.field_leaves(id, *field);
+                    let source = (places[place.0].start + leaves.start)
+                        ..(places[place.0].start + leaves.end);
+                    let taken = instruction
+                        .result
+                        .expect("verified destination field result");
+                    let moves = move_ranges(source, slots[taken.0].clone());
+                    if !moves.is_empty() {
+                        actions.push(CapAction::MoveGroup(moves));
+                    }
+                }
                 Operation::Take(place) => {
                     let taken = instruction.result.expect("verified take has result");
                     let moves = move_ranges(places[place.0].clone(), slots[taken.0].clone());

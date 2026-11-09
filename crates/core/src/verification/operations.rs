@@ -120,12 +120,8 @@ pub(super) fn op_type(
                 return Err("destination requires a product place".into());
             };
             let fields = &program.data[id.0].fields;
-            if fields.len() != 2
-                || !fields
-                    .iter()
-                    .all(|(_, ty)| matches!(ty, Type::I64 | Type::Bool | Type::Unit))
-            {
-                return Err("destination requires a two-field closed scalar product".into());
+            if fields.len() != 2 {
+                return Err("destination requires a two-field product".into());
             }
             if matches!(operation, Operation::DestPublish(_)) {
                 Ok(Some(Type::Data(*id)))
@@ -146,6 +142,20 @@ pub(super) fn op_type(
                 return Err("destination field type mismatch".into());
             }
             Ok(None)
+        }
+        Operation::DestTakeField(place, index) => {
+            let Some(Type::Data(id)) = function.place_types.get(place.0) else {
+                return Err("destination take requires a product place".into());
+            };
+            let field = program.data[id.0]
+                .fields
+                .get(*index)
+                .map(|(_, ty)| *ty)
+                .ok_or("invalid destination field")?;
+            if layout.leaves(field) == 0 {
+                return Err("destination take requires an owned capability field".into());
+            }
+            Ok(Some(field))
         }
         Operation::Field(value, index) => {
             let Type::Data(id) = ty(*value) else {
@@ -475,6 +485,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::ArrayGetPlace(_, _)
         | Operation::DestBegin(_)
         | Operation::DestPublish(_)
+        | Operation::DestTakeField(_, _)
         | Operation::BorrowBegin(_, _) => vec![],
         Operation::BorrowBeginPath(_, _, _) => vec![],
         Operation::Add(a, b)

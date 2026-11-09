@@ -136,6 +136,7 @@ pub enum Operation {
     DestBegin(PlaceId),
     DestField(PlaceId, usize, ValueId),
     DestPublish(PlaceId),
+    DestTakeField(PlaceId, usize),
     Field(ValueId, usize),
     ReadField(PlaceId, usize),
     ArrayGetPlace(PlaceId, usize),

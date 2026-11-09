@@ -34,14 +34,14 @@ search. Native lowering expands the match into a tag dispatch; the interpreter
 selects the matching arm directly. Finite products have `product` and
 `field` operations. Their fields remain separate SSA components through native
 calls, returns, and joins; `docs/abi-shapes.md` specifies the current shape.
-Two-field products containing only `I64`, `Bool`, or `Unit` construct through
-a checked local destination: `dest.begin`, one `dest.field` per field, and
-`dest.publish`. The verifier rejects duplicate or missing field writes,
-publication before either write, and reads of an unpublished destination.
-An early `?` can leave it unpublished; these scalar fields need no resource
-cleanup. Retained frames preserve an initialized first field when the second
-field suspends. Caller-owned result destinations and capability-bearing
-products remain pending.
+Two-field products construct through a checked local destination:
+`dest.begin`, one `dest.field` per field, and `dest.publish`. The verifier
+rejects duplicate or missing field writes, publication before either write,
+and reads of an unpublished destination. An early `?` takes and closes only
+the initialized capability fields, including nested products. Retained frames
+preserve initialized fields while the next field suspends. On deadlock the
+scheduler closes each still task-owned right once. Caller-owned result
+destinations and destination construction for sum variants remain pending.
 `product.unpack` consumes a whole nominal product and passes one typed block
 parameter per field. Nested fields retain their flattened ABI shape. The
 interpreter, direct Cranelift path, retained task path, and standalone path

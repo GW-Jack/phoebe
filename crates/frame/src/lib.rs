@@ -520,7 +520,9 @@ fn instruction_live(live: &mut Live, operation: &Operation, result: Option<Value
             // A store replaces the prior value; a take consumes it.
             live.places[place.0] = matches!(operation, Operation::Take(_));
         }
-        Operation::DestField(place, _, _) | Operation::DestPublish(place) => {
+        Operation::DestField(place, _, _)
+        | Operation::DestPublish(place)
+        | Operation::DestTakeField(place, _) => {
             live.places[place.0] = true;
         }
         Operation::Load(place)
