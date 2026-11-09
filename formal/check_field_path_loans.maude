@@ -1,0 +1,29 @@
+load field_path_loans.maude
+
+--- Sanity: overlapping exclusive loans and a moved borrowed owner are bad.
+reduce in PHOEBE-FIELD-PATH-LOANS :
+  bad(st(live, shared, left, exclusive, leftZero, old)) .
+reduce in PHOEBE-FIELD-PATH-LOANS :
+  bad(st(moved, shared, right, none, root, old)) .
+
+search [1] in PHOEBE-FIELD-PATH-LOANS : initial =>* X:State
+  such that bad(X:State) == true .
+
+--- Disjoint sibling loans coexist; a parent and child can both be shared.
+search [1] in PHOEBE-FIELD-PATH-LOANS : initial =>*
+  st(live, exclusive, leftZero, exclusive, leftOne, old) .
+search [1] in PHOEBE-FIELD-PATH-LOANS : initial =>*
+  st(live, shared, left, shared, leftZero, old) .
+--- A shared right-field loan permits a write to the disjoint left field.
+search [1] in PHOEBE-FIELD-PATH-LOANS : initial =>*
+  st(live, shared, right, none, root, updated) .
+--- An owner can move after both loans end.
+search [1] in PHOEBE-FIELD-PATH-LOANS : initial =>*
+  st(moved, none, root, none, root, old) .
+
+--- An overlapping exclusive parent/child pair and movement while a loan is
+--- live cannot be reached through the authority transitions.
+search [1] in PHOEBE-FIELD-PATH-LOANS : initial =>*
+  st(live, exclusive, left, shared, leftZero, old) .
+search [1] in PHOEBE-FIELD-PATH-LOANS : initial =>*
+  st(moved, shared, right, none, root, old) .

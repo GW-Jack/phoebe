@@ -1,0 +1,112 @@
+--- Finite authority model for one product with two fields and two nested
+--- fields beneath the left field. It checks the interaction of path overlap,
+--- shared/exclusive loans, field mutation, and whole-owner transfer.
+--- Paths are symbolic here; the unbounded prefix rule is proved separately
+--- in docs/field-path-loans.md and implemented in path_language.rs.
+mod PHOEBE-FIELD-PATH-LOANS is
+  protecting BOOL .
+
+  sorts Owner Mode Path Value State .
+  ops live moved : -> Owner [ctor] .
+  ops none shared exclusive : -> Mode [ctor] .
+  ops root left right leftZero leftOne : -> Path [ctor] .
+  ops old updated : -> Value [ctor] .
+  op st : Owner Mode Path Mode Path Value -> State [ctor] .
+  op initial : -> State .
+  eq initial = st(live, none, root, none, root, old) .
+
+  vars P Q : Path .
+  vars A B : Mode .
+  var V : Value .
+
+  op overlap : Path Path -> Bool .
+  eq overlap(root, P) = true .
+  eq overlap(P, root) = true .
+  eq overlap(P, P) = true .
+  eq overlap(left, leftZero) = true .
+  eq overlap(leftZero, left) = true .
+  eq overlap(left, leftOne) = true .
+  eq overlap(leftOne, left) = true .
+  eq overlap(P, Q) = false [owise] .
+
+  op conflicts : Mode Path Mode Path -> Bool .
+  eq conflicts(none, P, B, Q) = false .
+  eq conflicts(A, P, none, Q) = false .
+  eq conflicts(shared, P, shared, Q) = false .
+  eq conflicts(A, P, B, Q) = overlap(P, Q) [owise] .
+
+  crl [borrow-first-shared-root] : st(live, none, root, B, Q, V)
+    => st(live, shared, root, B, Q, V)
+    if conflicts(shared, root, B, Q) == false .
+  crl [borrow-first-shared-left] : st(live, none, root, B, Q, V)
+    => st(live, shared, left, B, Q, V)
+    if conflicts(shared, left, B, Q) == false .
+  crl [borrow-first-shared-right] : st(live, none, root, B, Q, V)
+    => st(live, shared, right, B, Q, V)
+    if conflicts(shared, right, B, Q) == false .
+  crl [borrow-first-shared-leftZero] : st(live, none, root, B, Q, V)
+    => st(live, shared, leftZero, B, Q, V)
+    if conflicts(shared, leftZero, B, Q) == false .
+  crl [borrow-first-shared-leftOne] : st(live, none, root, B, Q, V)
+    => st(live, shared, leftOne, B, Q, V)
+    if conflicts(shared, leftOne, B, Q) == false .
+  crl [borrow-first-exclusive-root] : st(live, none, root, B, Q, V)
+    => st(live, exclusive, root, B, Q, V)
+    if conflicts(exclusive, root, B, Q) == false .
+  crl [borrow-first-exclusive-left] : st(live, none, root, B, Q, V)
+    => st(live, exclusive, left, B, Q, V)
+    if conflicts(exclusive, left, B, Q) == false .
+  crl [borrow-first-exclusive-right] : st(live, none, root, B, Q, V)
+    => st(live, exclusive, right, B, Q, V)
+    if conflicts(exclusive, right, B, Q) == false .
+  crl [borrow-first-exclusive-leftZero] : st(live, none, root, B, Q, V)
+    => st(live, exclusive, leftZero, B, Q, V)
+    if conflicts(exclusive, leftZero, B, Q) == false .
+  crl [borrow-first-exclusive-leftOne] : st(live, none, root, B, Q, V)
+    => st(live, exclusive, leftOne, B, Q, V)
+    if conflicts(exclusive, leftOne, B, Q) == false .
+  crl [borrow-second-shared-root] : st(live, A, P, none, root, V)
+    => st(live, A, P, shared, root, V)
+    if conflicts(A, P, shared, root) == false .
+  crl [borrow-second-shared-left] : st(live, A, P, none, root, V)
+    => st(live, A, P, shared, left, V)
+    if conflicts(A, P, shared, left) == false .
+  crl [borrow-second-shared-right] : st(live, A, P, none, root, V)
+    => st(live, A, P, shared, right, V)
+    if conflicts(A, P, shared, right) == false .
+  crl [borrow-second-shared-leftZero] : st(live, A, P, none, root, V)
+    => st(live, A, P, shared, leftZero, V)
+    if conflicts(A, P, shared, leftZero) == false .
+  crl [borrow-second-shared-leftOne] : st(live, A, P, none, root, V)
+    => st(live, A, P, shared, leftOne, V)
+    if conflicts(A, P, shared, leftOne) == false .
+  crl [borrow-second-exclusive-root] : st(live, A, P, none, root, V)
+    => st(live, A, P, exclusive, root, V)
+    if conflicts(A, P, exclusive, root) == false .
+  crl [borrow-second-exclusive-left] : st(live, A, P, none, root, V)
+    => st(live, A, P, exclusive, left, V)
+    if conflicts(A, P, exclusive, left) == false .
+  crl [borrow-second-exclusive-right] : st(live, A, P, none, root, V)
+    => st(live, A, P, exclusive, right, V)
+    if conflicts(A, P, exclusive, right) == false .
+  crl [borrow-second-exclusive-leftZero] : st(live, A, P, none, root, V)
+    => st(live, A, P, exclusive, leftZero, V)
+    if conflicts(A, P, exclusive, leftZero) == false .
+  crl [borrow-second-exclusive-leftOne] : st(live, A, P, none, root, V)
+    => st(live, A, P, exclusive, leftOne, V)
+    if conflicts(A, P, exclusive, leftOne) == false .
+  rl [end-first] : st(live, A, P, B, Q, V)
+    => st(live, none, root, B, Q, V) .
+  rl [end-second] : st(live, A, P, B, Q, V)
+    => st(live, A, P, none, root, V) .
+  crl [write-left] : st(live, A, P, B, Q, old)
+    => st(live, A, P, B, Q, updated)
+    if conflicts(exclusive, left, A, P) == false
+      /\ conflicts(exclusive, left, B, Q) == false .
+  rl [move-owner] : st(live, none, root, none, root, V)
+    => st(moved, none, root, none, root, V) .
+
+  op bad : State -> Bool .
+  eq bad(st(moved, A, P, B, Q, V)) = (A =/= none) or (B =/= none) .
+  eq bad(st(live, A, P, B, Q, V)) = conflicts(A, P, B, Q) .
+endm
