@@ -116,7 +116,7 @@ fn retained_mutable_place_survives_receive_without_retaining_dead_place() {
         .into_iter()
         .find(|layout| layout.function == id)
         .unwrap();
-    assert_eq!(exchange.place_types.len(), 2);
+    assert_eq!(exchange.place_types[1], core::Type::I64);
     assert_eq!(layout.places.len(), 1);
     assert_eq!(layout.places[0].id.0, 1);
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);

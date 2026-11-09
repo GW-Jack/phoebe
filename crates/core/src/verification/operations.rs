@@ -97,6 +97,38 @@ pub(super) fn op_type(
             }
             Ok(Some(Type::Data(*data_id)))
         }
+        Operation::DestBegin(place) | Operation::DestPublish(place) => {
+            let Some(Type::Data(id)) = function.place_types.get(place.0) else {
+                return Err("destination requires a product place".into());
+            };
+            let fields = &program.data[id.0].fields;
+            if fields.len() != 2
+                || !fields
+                    .iter()
+                    .all(|(_, ty)| matches!(ty, Type::I64 | Type::Bool | Type::Unit))
+            {
+                return Err("destination requires a two-field closed scalar product".into());
+            }
+            if matches!(operation, Operation::DestPublish(_)) {
+                Ok(Some(Type::Data(*id)))
+            } else {
+                Ok(None)
+            }
+        }
+        Operation::DestField(place, index, value) => {
+            let Some(Type::Data(id)) = function.place_types.get(place.0) else {
+                return Err("destination field requires a product place".into());
+            };
+            let expected = program.data[id.0]
+                .fields
+                .get(*index)
+                .map(|(_, ty)| *ty)
+                .ok_or("invalid destination field")?;
+            if ty(*value) != expected {
+                return Err("destination field type mismatch".into());
+            }
+            Ok(None)
+        }
         Operation::Field(value, index) => {
             let Type::Data(id) = ty(*value) else {
                 return Err("field access requires a product".into());
@@ -387,6 +419,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::PlaceInit(_, a)
         | Operation::Store(_, a)
         | Operation::ArraySetPlace(_, _, a)
+        | Operation::DestField(_, _, a)
         | Operation::BorrowEnd(a)
         | Operation::BorrowReborrow(a, _)
         | Operation::LoadRef(a) => vec![*a],
@@ -397,6 +430,8 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::InferredCopyPlace(_)
         | Operation::ReadField(_, _)
         | Operation::ArrayGetPlace(_, _)
+        | Operation::DestBegin(_)
+        | Operation::DestPublish(_)
         | Operation::BorrowBegin(_, _) => vec![],
         Operation::Add(a, b)
         | Operation::Sub(a, b)

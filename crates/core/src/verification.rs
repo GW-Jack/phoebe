@@ -126,6 +126,33 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                             state.places[place.0] = true;
                         }
                     }
+                    Operation::DestBegin(place) => {
+                        state.places[place.0] = true;
+                    }
+                    Operation::DestField(place, _, value) => {
+                        if !state.places[place.0] {
+                            return Err(OwnershipError {
+                                span,
+                                message: format!(
+                                    "{}: destination p{} is not live",
+                                    function.name, place.0
+                                ),
+                            });
+                        }
+                        value_use(&mut state, *value, true, span)?;
+                    }
+                    Operation::DestPublish(place) => {
+                        if !state.places[place.0] {
+                            return Err(OwnershipError {
+                                span,
+                                message: format!(
+                                    "{}: destination p{} is not live",
+                                    function.name, place.0
+                                ),
+                            });
+                        }
+                        state.places[place.0] = false;
+                    }
                     Operation::Take(place) => {
                         if !state.places[place.0] {
                             return Err(OwnershipError {

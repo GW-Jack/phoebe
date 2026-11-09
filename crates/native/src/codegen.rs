@@ -597,6 +597,33 @@ pub(super) fn compile_functions<M: Module>(
                         Operation::Product(_, fields) => {
                             Some(fields.iter().flat_map(|field| get(*field)).collect())
                         }
+                        Operation::DestBegin(_) => None,
+                        Operation::DestField(place, index, value) => {
+                            let Type::Data(id) = function.place_types[place.0] else {
+                                unreachable!("verified destination type")
+                            };
+                            let fields = &program.data[id.0].fields;
+                            let offset = fields[..*index]
+                                .iter()
+                                .map(|(_, ty)| shapes.types(*ty).len())
+                                .sum::<usize>();
+                            for (component, slot) in
+                                get(*value).into_iter().zip(&places[place.0][offset..])
+                            {
+                                builder.ins().stack_store(pointer_type, component, *slot, 0);
+                            }
+                            None
+                        }
+                        Operation::DestPublish(place) => Some(
+                            shapes
+                                .types(function.place_types[place.0])
+                                .into_iter()
+                                .zip(&places[place.0])
+                                .map(|(ty, slot)| {
+                                    builder.ins().stack_load(pointer_type, ty, *slot, 0)
+                                })
+                                .collect(),
+                        ),
                         Operation::Field(owner, index) => {
                             let Type::Data(id) = function.value_types[owner.0] else {
                                 unreachable!("verified field owner")

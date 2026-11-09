@@ -442,6 +442,31 @@ impl CoreTask {
                 self.stores[base + place.0] = Some(value);
                 return Ok(None);
             }
+            Operation::DestField(place, index, value) => {
+                let base = self.frames.last().expect("active frame").base;
+                let field = self.owned_value(*value);
+                let Some(Value::UnpublishedProduct(_, fields)) = &mut self.stores[base + place.0]
+                else {
+                    unreachable!("verified destination field")
+                };
+                fields[*index] = Some(field);
+                return Ok(None);
+            }
+            Operation::DestPublish(place) => {
+                let base = self.frames.last().expect("active frame").base;
+                let Some(Value::UnpublishedProduct(id, fields)) =
+                    self.stores[base + place.0].take()
+                else {
+                    unreachable!("verified destination publication")
+                };
+                return Ok(Some(Value::Product(
+                    id,
+                    fields
+                        .into_iter()
+                        .map(|field| field.expect("verified destination field"))
+                        .collect(),
+                )));
+            }
             _ => {}
         }
         let get = |id| self.value(id);
@@ -450,6 +475,21 @@ impl CoreTask {
             Operation::Const(x) => Some(Value::I64(*x)),
             Operation::Bool(x) => Some(Value::Bool(*x)),
             Operation::Unit => Some(Value::Unit),
+            Operation::DestBegin(place) => {
+                let Type::Data(id) = self.program.functions[self.frames.last().unwrap().function.0]
+                    .place_types[place.0]
+                else {
+                    unreachable!("verified destination type")
+                };
+                self.stores[base + place.0] = Some(Value::UnpublishedProduct(
+                    id,
+                    vec![None; self.program.data[id.0].fields.len()],
+                ));
+                None
+            }
+            Operation::DestField(_, _, _) | Operation::DestPublish(_) => {
+                unreachable!("handled destination above")
+            }
             Operation::ArrayI64(elements) => Some(Value::ArrayI64(
                 elements.iter().map(|value| as_i64(get(*value))).collect(),
             )),
@@ -1110,6 +1150,7 @@ fn as_i64(value: Value) -> i64 {
         | Value::ArrayI64(_)
         | Value::Data(_, _, _)
         | Value::Product(_, _)
+        | Value::UnpublishedProduct(_, _)
         | Value::Ref(_)
         | Value::Sender(_)
         | Value::Receiver(_)
@@ -1130,6 +1171,7 @@ fn as_bool(value: Value) -> bool {
         | Value::ArrayI64(_)
         | Value::Data(_, _, _)
         | Value::Product(_, _)
+        | Value::UnpublishedProduct(_, _)
         | Value::Ref(_)
         | Value::Sender(_)
         | Value::Receiver(_)
@@ -1231,6 +1273,11 @@ impl fmt::Display for Program {
                             }
                             write!(f, ")")?;
                         }
+                        Operation::DestBegin(place) => write!(f, "dest.begin p{}", place.0)?,
+                        Operation::DestField(place, index, value) => {
+                            write!(f, "dest.field p{}, {}, v{}", place.0, index, value.0)?
+                        }
+                        Operation::DestPublish(place) => write!(f, "dest.publish p{}", place.0)?,
                         Operation::Field(owner, index) => {
                             write!(f, "field v{}, {}", owner.0, index)?
                         }

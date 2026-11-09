@@ -223,6 +223,7 @@ pub(crate) fn verify_structure(
         let count = function.value_types.len();
         let mut definitions = vec![None; count];
         let mut place_initializers = vec![None; function.place_types.len()];
+        let mut destinations = vec![false; function.place_types.len()];
         for (block_id, block) in function.blocks.iter().enumerate() {
             for (param_index, param) in block.params.iter().enumerate() {
                 let slot = definitions
@@ -279,13 +280,17 @@ pub(crate) fn verify_structure(
                         return Err(format!("{}: duplicate value definition", function.name));
                     }
                 }
-                if let Operation::PlaceInit(place, _) = instruction.operation {
+                if let Operation::PlaceInit(place, _) | Operation::DestBegin(place) =
+                    instruction.operation
+                {
                     let slot = place_initializers
                         .get_mut(place.0)
                         .ok_or_else(|| format!("{}: invalid place ID", function.name))?;
                     if slot.replace((block_id, index)).is_some() {
                         return Err(format!("{}: duplicate place initialization", function.name));
                     }
+                    destinations[place.0] =
+                        matches!(instruction.operation, Operation::DestBegin(_));
                 }
             }
         }
@@ -466,6 +471,67 @@ pub(crate) fn verify_structure(
             return Err(format!("{}: unreachable block", function.name));
         }
         let dominators = Dominators::new(&successors, &predecessors);
+        let mut destination_fields = vec![[None; 2]; function.place_types.len()];
+        let mut destination_publishes = vec![None; function.place_types.len()];
+        for (block_id, block) in function.blocks.iter().enumerate() {
+            for (index, instruction) in block.instructions.iter().enumerate() {
+                match instruction.operation {
+                    Operation::DestField(place, field, _) => {
+                        if !destinations.get(place.0).copied().unwrap_or(false) {
+                            return Err(format!(
+                                "{}: field write needs a destination",
+                                function.name
+                            ));
+                        }
+                        let slot = destination_fields[place.0].get_mut(field).ok_or_else(|| {
+                            format!("{}: invalid destination field", function.name)
+                        })?;
+                        if slot.replace((block_id, index)).is_some() {
+                            return Err(format!("{}: duplicate destination field", function.name));
+                        }
+                    }
+                    Operation::DestPublish(place) => {
+                        if !destinations.get(place.0).copied().unwrap_or(false) {
+                            return Err(format!(
+                                "{}: publication needs a destination",
+                                function.name
+                            ));
+                        }
+                        if destination_publishes[place.0]
+                            .replace((block_id, index))
+                            .is_some()
+                        {
+                            return Err(format!(
+                                "{}: duplicate destination publication",
+                                function.name
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for (place, is_destination) in destinations.iter().copied().enumerate() {
+            if !is_destination {
+                continue;
+            }
+            let (publish_block, publish_index) = destination_publishes[place]
+                .ok_or_else(|| format!("{}: destination was not published", function.name))?;
+            for field in destination_fields[place] {
+                let (write_block, write_index) = field.ok_or_else(|| {
+                    format!("{}: destination field was not initialized", function.name)
+                })?;
+                if (write_block == publish_block && write_index >= publish_index)
+                    || (write_block != publish_block
+                        && !dominators.dominates(write_block, publish_block))
+                {
+                    return Err(format!(
+                        "{}: destination published before field initialization",
+                        function.name
+                    ));
+                }
+            }
+        }
         let check_use =
             |value: ValueId, block_id: usize, instruction_index: usize| -> Result<(), String> {
                 let (def_block, def_index) = definitions
@@ -531,10 +597,23 @@ pub(crate) fn verify_structure(
                 | Operation::ReadField(place, _)
                 | Operation::ArrayGetPlace(place, _)
                 | Operation::ArraySetPlace(place, _, _)
+                | Operation::DestField(place, _, _)
+                | Operation::DestPublish(place)
                 | Operation::BorrowBegin(place, _)
                 | Operation::Store(place, _) = instruction.operation
                 {
                     check_place(place, block_id, index)?;
+                    if destinations[place.0]
+                        && !matches!(
+                            instruction.operation,
+                            Operation::DestField(_, _, _) | Operation::DestPublish(_)
+                        )
+                    {
+                        return Err(format!(
+                            "{}: unpublished destination cannot be read or replaced",
+                            function.name
+                        ));
+                    }
                 }
                 if let Operation::Call(_, args) = &instruction.operation {
                     for arg in args {

@@ -511,6 +511,34 @@ impl Lowerer<'_> {
                         ));
                     }
                     let expected = fields.iter().map(|(_, ty)| *ty).collect::<Vec<_>>();
+                    if expected.len() == 2
+                        && expected
+                            .iter()
+                            .all(|ty| matches!(ty, Type::I64 | Type::Bool | Type::Unit))
+                    {
+                        let destination = self.place(Type::Data(id));
+                        self.emit_effect(Operation::DestBegin(destination), expr.span);
+                        for (index, (arg, ty)) in args.iter().zip(expected).enumerate() {
+                            let CallArgument::Value(value) = arg else {
+                                return Err(Diagnostic::new(
+                                    expr.span,
+                                    "product constructor requires owned fields",
+                                ));
+                            };
+                            let (field, actual) = self.expr(value, locals)?;
+                            self.require(actual, ty, value.span)?;
+                            self.emit_effect(
+                                Operation::DestField(destination, index, field),
+                                value.span,
+                            );
+                        }
+                        let result = self.emit(
+                            Operation::DestPublish(destination),
+                            Type::Data(id),
+                            expr.span,
+                        );
+                        return Ok((result, Type::Data(id)));
+                    }
                     let mut values = Vec::with_capacity(args.len());
                     for (arg, ty) in args.iter().zip(expected) {
                         let CallArgument::Value(value) = arg else {
