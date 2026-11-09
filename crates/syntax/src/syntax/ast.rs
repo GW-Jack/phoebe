@@ -55,6 +55,7 @@ pub struct Function {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TypeName {
     I64,
+    ArrayI64(usize),
     Bool,
     Unit,
     SenderI64,
@@ -77,6 +78,7 @@ impl TypeName {
     pub fn key(&self) -> String {
         match self {
             Self::I64 => "I64".into(),
+            Self::ArrayI64(len) => format!("[I64; {len}]"),
             Self::Bool => "Bool".into(),
             Self::Unit => "Unit".into(),
             Self::SenderI64 => "Sender<I64>".into(),

@@ -500,6 +500,7 @@ fn qualify_type(
 ) -> Result<(), String> {
     match ty {
         TypeName::I64
+        | TypeName::ArrayI64(_)
         | TypeName::Bool
         | TypeName::Unit
         | TypeName::SenderI64

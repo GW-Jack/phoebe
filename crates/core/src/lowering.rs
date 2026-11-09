@@ -446,6 +446,7 @@ fn lower_internal(
     let resolve = |name: &TypeName, span: Span| -> Result<Type, Diagnostic> {
         match name {
             TypeName::I64 => Ok(Type::I64),
+            TypeName::ArrayI64(len) => Ok(Type::ArrayI64(*len)),
             TypeName::Bool => Ok(Type::Bool),
             TypeName::Unit => Ok(Type::Unit),
             TypeName::SenderI64 => Ok(Type::SenderI64),

@@ -6,6 +6,29 @@ impl Parser {
     }
 
     pub(super) fn type_name_inner(&mut self, borrowed: bool) -> Result<TypeName, Diagnostic> {
+        if let Some(start) = self.eat(&TokenKind::LBracket) {
+            if borrowed {
+                return Err(Diagnostic::new(
+                    start.span,
+                    "array borrows are not implemented",
+                ));
+            }
+            self.expect(&TokenKind::Ident("I64".into()), "I64 array element type")?;
+            self.expect(&TokenKind::Semicolon, ";")?;
+            let count = self.current().clone();
+            let TokenKind::Int(len) = count.kind else {
+                return Err(Diagnostic::new(count.span, "expected fixed array length"));
+            };
+            if len > 32 {
+                return Err(Diagnostic::new(
+                    count.span,
+                    "inline I64 array exceeds 32 elements",
+                ));
+            }
+            self.pos += 1;
+            self.expect(&TokenKind::RBracket, "]")?;
+            return Ok(TypeName::ArrayI64(len as usize));
+        }
         let (name, span) = self.name()?;
         if matches!(
             name.as_str(),

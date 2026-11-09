@@ -60,6 +60,7 @@ fn register_application(
     let mut payload = |ty: &TypeName| -> Result<Type, Diagnostic> {
         match ty {
             TypeName::I64 => Ok(Type::I64),
+            TypeName::ArrayI64(len) => Ok(Type::ArrayI64(*len)),
             TypeName::Bool => Ok(Type::Bool),
             TypeName::Unit => Ok(Type::Unit),
             TypeName::SenderI64 => Ok(Type::SenderI64),
@@ -171,6 +172,7 @@ pub(super) fn lower_data(
             let payload = match variant.payload.as_ref().map(|field| &field.ty) {
                 None => None,
                 Some(TypeName::I64) => Some(Type::I64),
+                Some(TypeName::ArrayI64(len)) => Some(Type::ArrayI64(*len)),
                 Some(TypeName::Bool) => Some(Type::Bool),
                 Some(TypeName::Unit) => Some(Type::Unit),
                 Some(TypeName::SenderI64) => Some(Type::SenderI64),
@@ -228,6 +230,7 @@ pub(super) fn lower_data(
             let ty =
                 match &field.ty {
                     TypeName::I64 => Type::I64,
+                    TypeName::ArrayI64(len) => Type::ArrayI64(*len),
                     TypeName::Bool => Type::Bool,
                     TypeName::Unit => Type::Unit,
                     TypeName::SenderI64 => Type::SenderI64,
