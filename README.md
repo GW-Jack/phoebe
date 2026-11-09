@@ -37,6 +37,10 @@ call and task across all three execution paths.
 
 ## Current milestone
 
+Substantial implementation work is coordinated in the shared WhippleScript
+`phoebe` issue queue. `AGENTS.md` gives the claim and completion commands;
+`docs/decisions/` remains the record of language decisions.
+
 `docs/version-0.0.1.md` states the release gates and the exact subset that
 currently runs. The Rust workspace parses functions over I64, Bool, Unit, nominal sums
 and products with primitive, earlier nominal, or communication capability fields.
