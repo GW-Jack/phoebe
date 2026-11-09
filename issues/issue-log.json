@@ -1045,5 +1045,60 @@
     "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged f706a6b: checked single-block wide product construction writes directly to caller result buffer, with effectful fallback and interpreter/JIT/standalone agreement; Cargo/Buck/formal passed.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/21\"}",
     "actor": "cli",
     "created_at": "2026-11-09 11:10:07"
+  },
+  {
+    "event_id": "e844f187ff8785d900dcedaf31103d9ff6a745d79570887dc146925c98ec7bc6",
+    "parents": [
+      "ccd45e267799473a4d4844fce1e3696c407a6efdcfdd39d72bf4b69a8b198cac"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"PRs #17, #19, and #21 merged. Remaining WS-2 acceptance: general caller-owned destination construction across suspension and fallible calls, plus broader sum-variant selection and exact managed closed-storage cleanup on all abandonment paths. Releasing claim while implementing WS-1 early-error managed cleanup.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:10:45"
+  },
+  {
+    "event_id": "b0ce5146f5f2acbf5344d07d37197ebdad264329cd4e16835df67fb3f575cdfc",
+    "parents": [
+      "e844f187ff8785d900dcedaf31103d9ff6a745d79570887dc146925c98ec7bc6"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex:phoebe-memory-manager\",\"lease_id\":\"4e0f9e808fc718028b2e171d3120c9466f017b8a494b21636acadaf294f7f780\",\"released_at\":\"2026-11-09 11:11:51\"}",
+    "actor": "codex:phoebe-memory-manager",
+    "created_at": "2026-11-09 11:11:51"
+  },
+  {
+    "event_id": "7e801a77e2fccc0068ab7caa29fb7b8ca3973f08ac86be1a68dcd7616828227d",
+    "parents": [
+      "f54b8db93155465022c1d2da5b2b798442262efb8c795d0816122661266a04b4"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "claim.acquired",
+    "payload_json": "{\"actor\":\"codex:phoebe-memory-manager\",\"expires_at\":\"2026-11-09 13:11:54\"}",
+    "actor": "codex:phoebe-memory-manager",
+    "created_at": "2026-11-09 11:11:54"
+  },
+  {
+    "event_id": "13025a76a91ccc30c1ea36ee2a27496fbdd4045b87b8035e6f8fee1795f73530",
+    "parents": [
+      "e2124f7d36edff2c192f80f993e01eda482186fae60063228ab1ecfd6374eb4a"
+    ],
+    "issue_id": "e2124f7d36edff2c192f80f993e01eda482186fae60063228ab1ecfd6374eb4a",
+    "kind": "claim.acquired",
+    "payload_json": "{\"actor\":\"codex:phoebe-native-abi\",\"expires_at\":\"2026-11-09 13:12:41\"}",
+    "actor": "codex:phoebe-native-abi",
+    "created_at": "2026-11-09 11:12:41"
+  },
+  {
+    "event_id": "f59495bdf3ac463faeddabce2f0cd22780e131dd56163bd41c101efc1639a40d",
+    "parents": [
+      "7e801a77e2fccc0068ab7caa29fb7b8ca3973f08ac86be1a68dcd7616828227d"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"Managed 256-word arrays now stay selected through direct Result matches, including early ? returns. A new test checks Err and Ok/COW paths in interpreter, JIT, and standalone, with zero live managed allocations after each interpreter/JIT run. Full workspace Cargo tests and strict Clippy pass. Remaining: managed storage in retained frames and embedded data, plus recoverable native allocation failures.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:16:39"
   }
 ]
