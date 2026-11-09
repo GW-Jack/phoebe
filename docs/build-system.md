@@ -1,6 +1,6 @@
 # Build graph
 
-Phoebe has twelve library crates and a root facade/CLI. Dependencies point in
+Phoebe has thirteen library crates and a root facade/CLI. Dependencies point in
 one direction:
 
 `package` and `syntax` feed `project`. `syntax` feeds `layout`, which joins
@@ -15,6 +15,9 @@ root facade and CLI sit atop this graph.
 - `phoebe-package`: content-pinned local dependency graph and lockfile.
 - `phoebe-project`: manifest and module loading.
 - `phoebe-capability`: independent capability-flow facts and verifier.
+- `phoebe-collection-plan`: isolated experimental collection requirement join,
+  bounded layout selection, and possible storage effects. It is not yet wired
+  to source or Core IR and adds no dependency to the compiler's normal path.
 - `phoebe-runtime`: scheduler, channels, reply rights, and native ABI.
 - `phoebe-layout`: concrete types, data declarations, flattened transport
   shapes, and structural capability close plans shared by Core and native code.

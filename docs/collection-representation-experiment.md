@@ -1,8 +1,10 @@
 # Collection representation experiment — draft 0.2
 
-Status: exploratory design and isolated Rust benchmark, 2026-11-08. No Phoebe
-collection syntax, collection IR operation, representation selector, or
-collection runtime is implemented. This document does not amend Decision 0003.
+Status: exploratory design, isolated Rust benchmark, and pure requirement
+planner, 2026-11-08. `crates/collection-plan` selects from a checked summary
+in constant-size rule logic; it is not yet fed by Phoebe source or Core IR.
+No Phoebe collection syntax, collection operation, or runtime is implemented.
+This document does not amend Decision 0003.
 
 ## The semantic boundary
 
@@ -116,6 +118,18 @@ This explanation is an inspectable planning result. The normal build does not
 benchmark alternatives or prove them anew. A profile-guided build may replace
 the default among semantically eligible representations, with its measured
 workload and objective recorded separately.
+
+The first executable kernel is in `crates/collection-plan`. `summarize_path`
+folds one checked use sequence; `Requirements::join` conservatively merges
+paths; `select` applies a bounded rule table and returns possible reserve,
+grow, relocate, shift, and chunk-allocation effects. Fixed-size selections
+have no growth effect, and removal-only selections do not acquire one. A
+stable element loan spanning append excludes the moving contiguous layout.
+The kernel explicitly rejects a stable-handle plus indexed-access mix because
+none of its current candidates supports both without an additional index.
+It also rejects a layout choice escaping an unknown ABI boundary. Tests cover
+these cases in Cargo and Buck2. The upstream loan analysis and representation
+implementations are still required; these tests do not prove their claims.
 
 The first pass obligations are mechanical: inferred requirements must be a
 sound over-approximation of every reachable use; the selected layout must

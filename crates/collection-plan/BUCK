@@ -1,0 +1,15 @@
+rust_library(
+    name = "phoebe_collection_plan",
+    crate_root = "src/lib.rs",
+    srcs = ["src/lib.rs"],
+    edition = "2024",
+    visibility = ["PUBLIC"],
+    tests = [":unit_tests"],
+)
+
+rust_test(
+    name = "unit_tests",
+    crate_root = "src/lib.rs",
+    srcs = ["src/lib.rs"],
+    edition = "2024",
+)

@@ -429,6 +429,10 @@ name = "phoebe-capability"
 version = "0.0.1"
 
 [[package]]
+name = "phoebe-collection-plan"
+version = "0.0.1"
+
+[[package]]
 name = "phoebe-core"
 version = "0.0.1"
 dependencies = [
