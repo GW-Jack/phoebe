@@ -79,9 +79,11 @@ forward a lexical alias through an ordinary call. See
 
 Closed nominal source values may be reused. Reading a closed nominal `val`
 emits `inferred.copy`; reading a closed nominal `var` emits
-`inferred.copy.place`. CFG liveness turns a final SSA use into `move`. Explicit
-`copy(x)` emits `copy.value` and preserves the source. Each copy kind has a
-distinct static cost reason. A product field read uses `field` on a live SSA
+`inferred.copy.place`. CFG liveness turns a final SSA use into `move` and a
+final closed place use into `place.take`; a later store kills the old place
+value, while loop backedges keep it live. Places with any loan remain
+conservatively copied. Explicit `copy(x)` emits `copy.value` and preserves the
+source. Each copy kind has a distinct static cost reason. A product field read uses `field` on a live SSA
 owner or `place.field` on a live place and preserves the parent, including
 closed nominal fields. A value containing a communication right still emits
 `move` or `place.take` for an owning name use. Its closed sibling fields can be
@@ -91,8 +93,9 @@ value and place states through the CFG, consumes them at owning calls,
 constructions, jumps, returns, and matches, and intersects them at joins.
 Using an owner after a move receives a source-located diagnostic. The native
 `move` reuses the same scalar components; `place.field` loads only the selected
-component. The interpreter's boxed values remain a reference implementation,
-not a native allocation model. `affine-ownership.md` gives the abstract
+component. The interpreter transfers boxed nominal values through owning Core
+operations instead of cloning them at those boundaries. Its boxed values remain
+a reference implementation, not a native allocation model. `affine-ownership.md` gives the abstract
 transition rules and their evidence boundary.
 
 The structural verifier checks unique SSA definitions, operand dominance,

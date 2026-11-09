@@ -23,7 +23,7 @@ destination or regular expression is exposed.
 
 Decision 0006 makes that value behavior part of the language contract. The
 current compiler realizes it with fixed-size component copies on name use and
-CFG-aware last-use moves; it does not yet infer borrow versus retain or
+CFG-aware last-use transfers for SSA values and `var` places; it does not yet infer borrow versus retain or
 use shared storage.
 
 ## Executable artifacts

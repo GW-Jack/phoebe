@@ -65,9 +65,10 @@ Comparison operands evaluate left to right; each comparison is one typed Core
 operation and one Cranelift integer comparison.
 Closed nominal values now remain usable across ordinary `T` calls and field
 projections. Source lowering emits an inferred value copy for repeated uses;
-CFG liveness turns a final closed SSA use into a move. These are
-currently fixed-size component copies, not reference-counted sharing or
-copy-on-write. `copy(x)` still requests an explicit independent value. The
+CFG liveness turns a final closed SSA use into a move and a final closed
+`var` use into a place transfer, including across branches and loops. Remaining
+copies use fixed-size components; reference-counted sharing and copy-on-write
+are not implemented. `copy(x)` still requests an explicit independent value. The
 cost ledger distinguishes explicit copies, inferred name uses, and inferred
 nominal field values. Capability-bearing values remain affine: whole-value
 transfers consume the source, and CFG joins reject reuse after a move. Products
