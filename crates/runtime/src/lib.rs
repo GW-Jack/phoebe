@@ -326,6 +326,11 @@ impl std::error::Error for ResourceError {}
 /// A synchronous native call borrows the current task context for its duration.
 mod native;
 pub use native::*;
+mod managed_words;
+pub use managed_words::{
+    ManagedWords, SharedWords, WordsError, phoebe_words_get, phoebe_words_new,
+    phoebe_words_release, phoebe_words_retain, phoebe_words_set,
+};
 mod native_reply;
 mod native_scope;
 pub use native_reply::*;
