@@ -1329,5 +1329,38 @@
     "payload_json": "{\"author\":\"cli\",\"body\":\"Direct single-call wrappers returning a wide product now forward the caller-owned result buffer to the callee, avoiding a temporary result slot. Capability-bearing product witness agrees across interpreter/JIT/standalone and CLIF shows no wrapper stack slot. Full Cargo workspace and strict Clippy pass. General caller-owned destination construction across suspension and fallible calls remains.\"}",
     "actor": "cli",
     "created_at": "2026-11-09 14:36:26"
+  },
+  {
+    "event_id": "7667c224992541f4068c663e8f318619ca0ecde8282fc062b7b9edb570fb0e3f",
+    "parents": [
+      "5e1dac6567d2a672f1fc01c456dbf4df2c65c35c50f3b85c7c67433002174166"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged ed66d48: direct one-call wrappers forward wide capability-bearing results through caller sret, eliminating wrapper result slots; interpreter/JIT/standalone and Cargo/Buck/formal checks passed.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/26\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 14:39:38"
+  },
+  {
+    "event_id": "0940a158a776ea5c7e22365007068f552bd69acd8ad30f3f6dd039d1d3b0398d",
+    "parents": [
+      "7667c224992541f4068c663e8f318619ca0ecde8282fc062b7b9edb570fb0e3f"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"PR #26 merged. Remaining WS-2 work: caller-owned destination construction when fields can suspend or fail; exact managed closed-storage cleanup once embedded managed fields exist; broaden active sum destination selection where it changes physical work. Current tail forwarding is restricted to direct single-call wrappers.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 14:39:55"
+  },
+  {
+    "event_id": "8357e85fc4d691a3f1857599c27688257413f37a2d42e5fe79f705eeb8e4bb37",
+    "parents": [
+      "0940a158a776ea5c7e22365007068f552bd69acd8ad30f3f6dd039d1d3b0398d"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex:phoebe-memory-manager\",\"lease_id\":\"a74b1d135df95a6451c7a41440743a9982e20589c49d211b2969267e155d6e61\",\"released_at\":\"2026-11-09 14:39:58\"}",
+    "actor": "codex:phoebe-memory-manager",
+    "created_at": "2026-11-09 14:39:58"
   }
 ]
