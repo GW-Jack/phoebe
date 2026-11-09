@@ -4,7 +4,7 @@
 use super::TypedRightPlan;
 
 const VERSION: u64 = 1;
-pub(crate) const MAX_WORDS: usize = 4096;
+pub const MAX_WORDS: usize = 4096;
 const MAX_DEPTH: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

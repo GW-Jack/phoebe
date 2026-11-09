@@ -347,7 +347,10 @@ and encodes and decodes the two words using the same flattened layout table.
 Checked Core also verifies and interprets a typed channel family for nominal
 messages. Source `channel<T>` lowers concrete nominal sends and receives,
 including a closed send that returns an aggregate with its reply right intact.
-Native typed code generation remains open.
+Cranelift JIT and standalone code now emit typed create, send, and receive
+through the checked descriptor and versioned runtime ABI. Source regressions
+cover a nominal boolean field, a zero-width message, full-queue parking, and
+transfer of a reply right inside a nominal product across all three engines.
 The native runtime now exposes versioned typed-channel create, send, and
 receive shims. A host ABI witness passes a two-word message with a reply right
 through them and checks that a closed send retains its original right.
@@ -371,8 +374,8 @@ limits, and allocation failure without publishing partial endpoint pairs.
 Task body boxing now fails before spawn transfers commit; an injected
 allocation failure test checks intact child and channel-right recovery.
 Uncontrolled host OOM, including error-string allocation, is not yet covered.
-`docs/runtime-kernel.md` describes the kernel and the compiler,
-general typed-message, and native-runtime integration still required.
+`docs/runtime-kernel.md` describes the kernel and the remaining typed-message
+right kinds, failure-edge checks, and allocation measurements.
 `crates/capability` separately checks exact slot ownership in abstract
 control-flow graphs and derives failure/suspension live-slot maps. Core IR
 now produces those graphs for hand-built `channel.new.i64`, endpoint closes,

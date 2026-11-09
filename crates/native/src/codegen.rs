@@ -2,7 +2,9 @@ use super::*;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use super::runtime_imports::{declare_reply_imports, declare_request_imports};
+use super::runtime_imports::{
+    declare_reply_imports, declare_request_imports, declare_typed_imports,
+};
 
 /// Phoebe currently flattens only integer and pointer-shaped return parts.
 /// Cranelift's supported host conventions allow eight such return registers
@@ -91,6 +93,15 @@ impl AbiShapes {
         self.shapes
             .close_plan(ty)
             .expect("checked Core type has a structural close plan")
+    }
+
+    pub(super) fn message_descriptor(
+        &self,
+        message: core::MessageType,
+    ) -> Result<phoebe_message::RuntimeMessageDescriptor, String> {
+        phoebe_message::runtime_message_descriptor(
+            &self.shapes.message_layout(message.value_type())?,
+        )
     }
 
     /// Native spawn transfer descriptors use one runtime kind and token per
@@ -267,6 +278,11 @@ pub(super) fn compile_functions<M: Module>(
     };
     let request_imports = if uses_runtime {
         Some(declare_request_imports(module, pointer_type)?)
+    } else {
+        None
+    };
+    let typed_imports = if uses_runtime {
+        Some(declare_typed_imports(module, pointer_type)?)
     } else {
         None
     };
@@ -795,10 +811,10 @@ pub(super) fn compile_functions<M: Module>(
                 let get =
                     |id: core::ValueId| values[id.0].clone().expect("verified value is defined");
                 match &block.terminator {
-                    Terminator::TypedChannelNew { .. }
-                    | Terminator::TypedSend { .. }
-                    | Terminator::TypedReceive { .. } => {
-                        return Err("native typed channel lowering is not implemented".into());
+                    Terminator::TypedSend { .. } | Terminator::TypedReceive { .. } => {
+                        return Err(
+                            "native typed channel traffic requires retained task frames".into()
+                        );
                     }
                     Terminator::Yield { .. } => {
                         return Err("native yield requires retained task frames".into());
@@ -935,6 +951,71 @@ pub(super) fn compile_functions<M: Module>(
                             &[status.into()],
                         );
                         builder.switch_to_block(success_load);
+                        let sender =
+                            builder
+                                .ins()
+                                .stack_load(pointer_type, types::I64, sender_slot, 0);
+                        let receiver =
+                            builder
+                                .ins()
+                                .stack_load(pointer_type, types::I64, receiver_slot, 0);
+                        builder
+                            .ins()
+                            .jump(blocks[success.0], &[sender.into(), receiver.into()]);
+                    }
+                    Terminator::TypedChannelNew {
+                        message,
+                        capacity,
+                        success,
+                        failure,
+                    } => {
+                        let imports = typed_imports.expect("typed runtime imports");
+                        let callee = module.declare_func_in_func(imports.create, builder.func);
+                        let descriptor = shapes.message_descriptor(*message)?;
+                        let (plan, plan_len) =
+                            typed::plan_pointer(&mut builder, pointer_type, &descriptor)?;
+                        let sender_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let receiver_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                        let sender_out = builder.ins().stack_addr(pointer_type, sender_slot, 0);
+                        let receiver_out = builder.ins().stack_addr(pointer_type, receiver_slot, 0);
+                        let type_id = builder.ins().iconst(types::I64, descriptor.type_id as i64);
+                        let width = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(descriptor.width)
+                                .map_err(|_| "typed message width exceeds native ABI")?,
+                        );
+                        let call = builder.ins().call(
+                            callee,
+                            &[
+                                runtime_context.expect("runtime context"),
+                                get(*capacity)[0],
+                                type_id,
+                                width,
+                                plan,
+                                plan_len,
+                                sender_out,
+                                receiver_out,
+                            ],
+                        );
+                        let status = builder.inst_results(call)[0];
+                        let succeeded = builder.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                        let created = builder.create_block();
+                        builder.ins().brif(
+                            succeeded,
+                            created,
+                            &[],
+                            blocks[failure.0],
+                            &[status.into()],
+                        );
+                        builder.switch_to_block(created);
                         let sender =
                             builder
                                 .ins()

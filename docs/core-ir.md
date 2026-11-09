@@ -217,5 +217,7 @@ type at each edge, including nominal identity rather than ABI width alone.
 Hand-built checked Core programs exercise a closed nominal product and a
 product containing `ReplyToI64` in the interpreter. Source `channel<T>` now
 lowers concrete nominal messages through these terminators, including a closed
-send returning a product with an owned reply right. Native code generation for
-this family remains open.
+send returning a product with an owned reply right. Cranelift JIT and
+standalone emission now use the versioned typed runtime ABI for these
+terminators; source regressions cover nominal values, a `Unit` message,
+backpressure, and a transferred reply right inside a nominal product.

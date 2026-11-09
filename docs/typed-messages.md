@@ -109,7 +109,9 @@ tree: version `1`, then `Empty = [0]`, `ReplyTo(part) = [1, part]`,
 encoding before publishing either endpoint. Native send and receive shims pass
 the same type ID and a contiguous word slice; success moves active rights,
 while pending and closed sends retain the caller's words. Generated Cranelift
-calls to these shims remain to be implemented.
+calls now pass the checked descriptor and flattened words through these shims
+for concrete admitted messages. Zero-width messages pass a null word pointer
+and still occupy a queue slot.
 
 ## Implementation gates
 
@@ -121,7 +123,9 @@ calls to these shims remain to be implemented.
    recursive layout rejection. Native integration tests cover
    equal-width type distinction, active-arm offsets, and a tagged runtime
    transfer. The interpreter's concrete request and checked typed channel
-   creation paths request it; generated native creation remains open.
+   creation paths request it; generated native creation uses the same
+   descriptor. Source regressions compare nominal, boolean-field, zero-width,
+   and reply-right aggregate messages across interpreter, JIT, and standalone.
 2. Extend the runtime's preallocated typed slots beyond `ReplyTo<I64>` rights.
    The current path checks type identity and width, validates all active reply
    rights before changing any owner, transfers multiple rights on enqueue and
@@ -130,19 +134,18 @@ calls to these shims remain to be implemented.
    invalid rights, and a two-task full queue. Injected precommit allocation
    failure and transfer of channel handles remain open.
 3. Complete source `channel<T>` and native code generation through the checked
-   typed Core family. The interpreter path handles nominal and reply-right
-   aggregate messages, and source lowering covers concrete nominal traffic;
-   native code generation remains open. The existing
-   concrete `Request<I64>` native operations run through typed runtime adapters.
-   The general native ABI must pass
-   descriptor identity and flattened words, never treating a matching word
-   count as type identity.
+   typed Core family. The interpreter, Cranelift JIT, and standalone paths now
+   handle concrete nominal and reply-right aggregate messages. The existing
+   concrete `Request<I64>` operations also run through typed runtime adapters.
+   The native ABI passes descriptor identity and flattened words, never
+   treating a matching word count as type identity. Transfer of channel
+   handles and other right kinds is still outside this subset.
 4. Extend the bounded Maude model to cover a two-message queue containing
    differently tagged aggregates. Its finite search is design evidence; an
    explicit refinement argument or independent executable tests are still
    needed for compiler and runtime behavior.
-5. Compare interpreter, JIT, and standalone runs for success and every
-   recoverable/failure edge, then measure allocation count and send cost.
+5. Compare interpreter, JIT, and standalone runs for the remaining
+   recoverable/failure edges, then measure allocation count and send cost.
 
 The release gate is met only when these transitions work for the documented
 message subset, including a capability-bearing aggregate beyond the current

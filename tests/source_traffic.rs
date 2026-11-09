@@ -446,18 +446,21 @@ fn main() -> I64 {
 #[test]
 fn source_nominal_message_uses_checked_typed_channel() {
     let source = r#"
-data Number { value: I64 }
+data Number { value: I64, valid: Bool }
 
 fn exchange() -> Result<I64, ResourceError> {
   val (sender, receiver) = channel<Number>(capacity = 1)?;
-  val sent = sender.send(Number(42));
+  val sent = sender.send(Number(42, true));
   sender.close();
   when (sent) {
     Send<Number>.Sent -> {
       val received = receiver.receive();
       receiver.close();
       when (received) {
-        Receive<Number>.Value(number) -> { Result<I64, ResourceError>.Ok(number.value) },
+        Receive<Number>.Value(number) -> {
+          if (number.valid) { Result<I64, ResourceError>.Ok(number.value) }
+          else { Result<I64, ResourceError>.Ok(-1) }
+        },
         Receive<Number>.End -> { Result<I64, ResourceError>.Ok(-1) }
       }
     },
@@ -481,11 +484,8 @@ fn main() -> I64 {
     assert!(printed.contains("channel.send.typed"));
     assert!(printed.contains("channel.receive.typed"));
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
-    let error = native::run(&program, "main", &[]).unwrap_err();
-    assert!(
-        error.contains("native typed channel lowering is not implemented"),
-        "{error}"
-    );
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "typed-nominal", 42);
 }
 
 #[test]
@@ -520,6 +520,8 @@ fn main() -> I64 = when (exchange()) {
 "#;
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "typed-closed-right", 42);
 }
 
 #[test]
@@ -559,4 +561,107 @@ fn main() -> I64 {
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
     assert_eq!(program.data.len(), 1);
     assert_eq!(program.data[0].name, "Send<I64>");
+}
+
+#[test]
+fn zero_width_unit_message_occupies_a_typed_queue_slot() {
+    let source = r#"
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<Unit>(capacity = 1)?;
+  val sent = sender.send(Unit);
+  sender.close();
+  when (sent) {
+    Send<Unit>.Sent -> {
+      val received = receiver.receive();
+      receiver.close();
+      when (received) {
+        Receive<Unit>.Value(unit) -> { Result<I64, ResourceError>.Ok(42) },
+        Receive<Unit>.End -> { Result<I64, ResourceError>.Ok(-1) }
+      }
+    },
+    Send<Unit>.Closed(unit) -> {
+      receiver.close();
+      Result<I64, ResourceError>.Ok(-2)
+    }
+  }
+}
+fn main() -> I64 = when (exchange()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { -3 },
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "typed-unit", 42);
+}
+
+#[test]
+fn typed_producer_parks_on_full_queue_and_resumes_after_receive() {
+    let source = include_str!("../examples/channel_exchange.phoebe")
+        .replace("fn producer", "data Number { value: I64 }\nfn producer")
+        .replace("Sender<I64>", "Sender<Number>")
+        .replace("channel<I64>", "channel<Number>")
+        .replace("Send<I64>", "Send<Number>")
+        .replace("Receive<I64>", "Receive<Number>")
+        .replace("send(20)", "send(Number(20))")
+        .replace("send(22)", "send(Number(22))")
+        .replace(
+            "Closed(unsent) -> { unsent }",
+            "Closed(unsent) -> { unsent.value }",
+        )
+        .replace("Ok(a + b)", "Ok(a.value + b.value)")
+        .replace("Ok(a)", "Ok(a.value)");
+    let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "typed-full-queue", 42);
+}
+
+#[test]
+fn native_typed_message_moves_reply_right_inside_nominal_product() {
+    let source = r#"
+data Envelope { number: I64, right: ReplyTo<I64> }
+
+fn exchange() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<Envelope>(capacity = 1)?;
+  val (right, answer) = reply<I64>()?;
+  val sent = sender.send(Envelope(42, right));
+  sender.close();
+  when (sent) {
+    Send<Envelope>.Sent -> {
+      val received = receiver.receive();
+      receiver.close();
+      when (received) {
+        Receive<Envelope>.Value(envelope) -> {
+          val (number, moved_right) = envelope.unpack();
+          moved_right.close();
+          answer.close();
+          Result<I64, ResourceError>.Ok(number)
+        },
+        Receive<Envelope>.End -> {
+          answer.close();
+          Result<I64, ResourceError>.Ok(-1)
+        }
+      }
+    },
+    Send<Envelope>.Closed(envelope) -> {
+      val (number, returned_right) = envelope.unpack();
+      returned_right.close();
+      receiver.close();
+      answer.close();
+      Result<I64, ResourceError>.Ok(-2)
+    }
+  }
+}
+
+fn main() -> I64 = when (exchange()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { -3 },
+}
+"#;
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    assert_standalone(&program, "typed-reply-right", 42);
 }

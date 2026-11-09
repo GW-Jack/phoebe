@@ -141,6 +141,18 @@ fn compile_poll_jit_impl(
         "phoebe_rt_v1_receive_request_i64",
         runtime::phoebe_receive_request_i64 as *const u8,
     );
+    jit.symbol(
+        "phoebe_rt_v1_typed_channel_new",
+        runtime::phoebe_typed_channel_new as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_send_typed_words",
+        runtime::phoebe_send_typed_words as *const u8,
+    );
+    jit.symbol(
+        "phoebe_rt_v1_receive_typed_words",
+        runtime::phoebe_receive_typed_words as *const u8,
+    );
     let mut module = JITModule::new(jit);
     let (entry, layout, clif) = compile_poll_module(&mut module, program, linked, name, None)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
@@ -420,6 +432,7 @@ fn compile_poll_module<M: Module>(
         .map_err(|e| e.to_string())?;
     let reply_imports = runtime_imports::declare_reply_imports(module, pointer)?;
     let request_imports = runtime_imports::declare_request_imports(module, pointer)?;
+    let typed_imports = runtime_imports::declare_typed_imports(module, pointer)?;
     let mut signature = module.make_signature();
     signature
         .params
@@ -620,6 +633,10 @@ fn compile_poll_module<M: Module>(
             let request_send_ref = module.declare_func_in_func(request_imports.send, builder.func);
             let request_receive_ref =
                 module.declare_func_in_func(request_imports.receive, builder.func);
+            let typed_new_ref = module.declare_func_in_func(typed_imports.create, builder.func);
+            let typed_send_ref = module.declare_func_in_func(typed_imports.send, builder.func);
+            let typed_receive_ref =
+                module.declare_func_in_func(typed_imports.receive, builder.func);
             for (block_id, block) in function.blocks.iter().enumerate() {
                 builder.switch_to_block(blocks[block_id]);
                 for (instruction_id, instruction) in block.instructions.iter().enumerate() {
@@ -1041,11 +1058,6 @@ fn compile_poll_module<M: Module>(
                     }
                 }
                 match &block.terminator {
-                    Terminator::TypedChannelNew { .. }
-                    | Terminator::TypedSend { .. }
-                    | Terminator::TypedReceive { .. } => {
-                        return Err("native typed channel lowering is not implemented".into());
-                    }
                     Terminator::Return(value) => {
                         for (part, (var, ty)) in variables[value.0]
                             .iter()
@@ -1162,6 +1174,12 @@ fn compile_poll_module<M: Module>(
                         success,
                         failure,
                     }
+                    | Terminator::TypedChannelNew {
+                        capacity,
+                        success,
+                        failure,
+                        ..
+                    }
                     | Terminator::RequestChannelNew {
                         capacity,
                         success,
@@ -1180,15 +1198,44 @@ fn compile_poll_module<M: Module>(
                         let sender_out = builder.ins().stack_addr(pointer, sender_slot, 0);
                         let receiver_out = builder.ins().stack_addr(pointer, receiver_slot, 0);
                         let capacity = builder.use_var(variables[capacity.0][0]);
-                        let create =
-                            if matches!(block.terminator, Terminator::RequestChannelNew { .. }) {
-                                request_new_ref
-                            } else {
-                                create_ref
-                            };
-                        let created = builder
-                            .ins()
-                            .call(create, &[bridge, capacity, sender_out, receiver_out]);
+                        let created = if let Terminator::TypedChannelNew { message, .. } =
+                            block.terminator
+                        {
+                            let descriptor = shapes.message_descriptor(message)?;
+                            let (plan, plan_len) =
+                                typed::plan_pointer(&mut builder, pointer, &descriptor)?;
+                            let type_id =
+                                builder.ins().iconst(types::I64, descriptor.type_id as i64);
+                            let width = builder.ins().iconst(
+                                types::I64,
+                                i64::try_from(descriptor.width)
+                                    .map_err(|_| "typed message width exceeds native ABI")?,
+                            );
+                            builder.ins().call(
+                                typed_new_ref,
+                                &[
+                                    bridge,
+                                    capacity,
+                                    type_id,
+                                    width,
+                                    plan,
+                                    plan_len,
+                                    sender_out,
+                                    receiver_out,
+                                ],
+                            )
+                        } else {
+                            let create =
+                                if matches!(block.terminator, Terminator::RequestChannelNew { .. })
+                                {
+                                    request_new_ref
+                                } else {
+                                    create_ref
+                                };
+                            builder
+                                .ins()
+                                .call(create, &[bridge, capacity, sender_out, receiver_out])
+                        };
                         let status = builder.inst_results(created)[0];
                         let valid = builder.ins().icmp_imm_s(IntCC::NotEqual, status, 255);
                         let check = builder.create_block();
@@ -1411,6 +1458,8 @@ fn compile_poll_module<M: Module>(
                     | Terminator::ScopeJoin { .. }
                     | Terminator::ChannelReceive { .. }
                     | Terminator::ChannelSend { .. }
+                    | Terminator::TypedReceive { .. }
+                    | Terminator::TypedSend { .. }
                     | Terminator::ReplyReceive { .. }
                     | Terminator::RequestSend { .. }
                     | Terminator::RequestReceive { .. } => {
@@ -1443,6 +1492,17 @@ fn compile_poll_module<M: Module>(
                             3,
                         )),
                     ))
+                } else {
+                    None
+                };
+                let typed_output = if let Terminator::TypedReceive { receiver, .. } = terminator {
+                    let Type::TypedReceiver(message) = function.value_types[receiver.0] else {
+                        unreachable!("verified typed receiver")
+                    };
+                    let descriptor = shapes.message_descriptor(message)?;
+                    let (address, slot) =
+                        typed::output_words(&mut builder, pointer, descriptor.width)?;
+                    Some((descriptor, address, slot))
                 } else {
                     None
                 };
@@ -1481,6 +1541,21 @@ fn compile_poll_module<M: Module>(
                             .call(request_receive_ref, &[bridge, token, value_out, right_out]);
                         builder.inst_results(call)[0]
                     }
+                    Terminator::TypedReceive { receiver, .. } => {
+                        let token = builder.use_var(variables[receiver.0][0]);
+                        let (descriptor, output, _) =
+                            typed_output.as_ref().expect("typed output buffer");
+                        let type_id = builder.ins().iconst(types::I64, descriptor.type_id as i64);
+                        let width = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(descriptor.width)
+                                .map_err(|_| "typed message width exceeds native ABI")?,
+                        );
+                        let call = builder
+                            .ins()
+                            .call(typed_receive_ref, &[bridge, token, type_id, *output, width]);
+                        builder.inst_results(call)[0]
+                    }
                     Terminator::ChannelSend {
                         sender, message, ..
                     } => {
@@ -1498,6 +1573,30 @@ fn compile_poll_module<M: Module>(
                         let call = builder
                             .ins()
                             .call(request_send_ref, &[bridge, token, value, right]);
+                        builder.inst_results(call)[0]
+                    }
+                    Terminator::TypedSend {
+                        sender, message, ..
+                    } => {
+                        let Type::TypedSender(message_type) = function.value_types[sender.0] else {
+                            unreachable!("verified typed sender")
+                        };
+                        let descriptor = shapes.message_descriptor(message_type)?;
+                        let token = builder.use_var(variables[sender.0][0]);
+                        let parts = variables[message.0]
+                            .iter()
+                            .map(|var| builder.use_var(*var))
+                            .collect::<Vec<_>>();
+                        let words = typed::input_words(&mut builder, pointer, &parts)?;
+                        let type_id = builder.ins().iconst(types::I64, descriptor.type_id as i64);
+                        let width = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(descriptor.width)
+                                .map_err(|_| "typed message width exceeds native ABI")?,
+                        );
+                        let call = builder
+                            .ins()
+                            .call(typed_send_ref, &[bridge, token, type_id, words, width]);
                         builder.inst_results(call)[0]
                     }
                     _ => unreachable!("verified channel retry"),
@@ -1556,6 +1655,9 @@ fn compile_poll_module<M: Module>(
                     Terminator::ChannelSend { sent, .. } => {
                         builder.ins().jump(blocks[sent.0], &[]);
                     }
+                    Terminator::TypedSend { sent, .. } => {
+                        builder.ins().jump(blocks[sent.0], &[]);
+                    }
                     Terminator::ScopeJoin { resume, .. } => {
                         builder.ins().jump(blocks[resume.0], &[]);
                     }
@@ -1566,6 +1668,25 @@ fn compile_poll_module<M: Module>(
                         let param = function.blocks[value.0].params[0];
                         builder.def_var(variables[param.0][0], received);
                         builder.def_var(variables[param.0][1], right);
+                        builder.ins().jump(blocks[value.0], &[]);
+                    }
+                    Terminator::TypedReceive {
+                        value, receiver, ..
+                    } => {
+                        let Type::TypedReceiver(message) = function.value_types[receiver.0] else {
+                            unreachable!("verified typed receiver")
+                        };
+                        let (_, _, slot) = typed_output.as_ref().expect("typed output buffer");
+                        let param = function.blocks[value.0].params[0];
+                        let parts = typed::load_output_words(
+                            &mut builder,
+                            pointer,
+                            *slot,
+                            &shapes.types(message.value_type()),
+                        )?;
+                        for (var, part) in variables[param.0].iter().zip(parts) {
+                            builder.def_var(*var, part);
+                        }
                         builder.ins().jump(blocks[value.0], &[]);
                     }
                     Terminator::RequestSend { sent, .. } => {
@@ -1581,7 +1702,8 @@ fn compile_poll_module<M: Module>(
                 match terminator {
                     Terminator::ChannelReceive { end, .. }
                     | Terminator::ReplyReceive { end, .. }
-                    | Terminator::RequestReceive { end, .. } => {
+                    | Terminator::RequestReceive { end, .. }
+                    | Terminator::TypedReceive { end, .. } => {
                         builder.ins().jump(blocks[end.0], &[]);
                     }
                     Terminator::ChannelSend {
@@ -1599,6 +1721,18 @@ fn compile_poll_module<M: Module>(
                         let param = function.blocks[closed.0].params[0];
                         for (source, destination) in
                             variables[request.0].iter().zip(&variables[param.0])
+                        {
+                            let component = builder.use_var(*source);
+                            builder.def_var(*destination, component);
+                        }
+                        builder.ins().jump(blocks[closed.0], &[]);
+                    }
+                    Terminator::TypedSend {
+                        message, closed, ..
+                    } => {
+                        let param = function.blocks[closed.0].params[0];
+                        for (source, destination) in
+                            variables[message.0].iter().zip(&variables[param.0])
                         {
                             let component = builder.use_var(*source);
                             builder.def_var(*destination, component);

@@ -48,6 +48,7 @@ fn main() -> I64 = when (exchange()) {
     let loaded = project::load(&path).unwrap();
     let program = core::lower(&loaded.ast).unwrap();
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
     std::fs::remove_dir_all(path).unwrap();
 }
 

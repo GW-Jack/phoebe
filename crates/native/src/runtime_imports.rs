@@ -17,6 +17,67 @@ pub(super) struct RequestImports {
     pub receive: FuncId,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct TypedImports {
+    pub create: FuncId,
+    pub send: FuncId,
+    pub receive: FuncId,
+}
+
+pub(super) fn declare_typed_imports<M: Module>(
+    module: &mut M,
+    pointer: cranelift_codegen::ir::Type,
+) -> Result<TypedImports, String> {
+    let mut create_sig = module.make_signature();
+    create_sig.params.extend([
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+        AbiParam::new(types::I64),
+        AbiParam::new(types::I64),
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+        AbiParam::new(pointer),
+        AbiParam::new(pointer),
+    ]);
+    create_sig.returns.push(AbiParam::new(types::I64));
+    let create = module
+        .declare_function(
+            "phoebe_rt_v1_typed_channel_new",
+            Linkage::Import,
+            &create_sig,
+        )
+        .map_err(|error| error.to_string())?;
+
+    let mut traffic_sig = module.make_signature();
+    traffic_sig.params.extend([
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+        AbiParam::new(types::I64),
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+    ]);
+    traffic_sig.returns.push(AbiParam::new(types::I64));
+    let send = module
+        .declare_function(
+            "phoebe_rt_v1_send_typed_words",
+            Linkage::Import,
+            &traffic_sig,
+        )
+        .map_err(|error| error.to_string())?;
+    let receive = module
+        .declare_function(
+            "phoebe_rt_v1_receive_typed_words",
+            Linkage::Import,
+            &traffic_sig,
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(TypedImports {
+        create,
+        send,
+        receive,
+    })
+}
+
 pub(super) fn declare_request_imports<M: Module>(
     module: &mut M,
     pointer: cranelift_codegen::ir::Type,

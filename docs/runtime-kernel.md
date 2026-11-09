@@ -7,7 +7,9 @@ channel creation, traffic, endpoint close, and task spawn through it. Cranelift
 JIT and standalone object code call the same kernel through a C ABI shim.
 Source syntax covers fallible `I64` channel creation, explicit endpoint
 close, task spawn, and `I64` send/receive outcomes. Native call continuations
-run in the supported poll subset; general typed messages remain open.
+run in the supported poll subset. Concrete typed messages with scalar fields
+and `ReplyTo<I64>` leaves now use the same kernel in interpreter, JIT, and
+standalone paths.
 
 The Rust `typed_words_channel` and `typed_right_channel` APIs reserve a flat
 ring of `capacity × width` words when the channel is created. Send and receive
@@ -24,8 +26,9 @@ Descriptor generation for a checked ABI layout is available in
 `phoebe_native`. Versioned native typed-channel shims now create a queue from
 that descriptor and send or receive flattened words. A host ABI witness moves
 a reply right through the queue and checks closed-send retention. Generated
-Cranelift calls for general `channel<T>` and other
-transferable right kinds are the next steps in
+Cranelift calls now cover concrete `channel<T>` messages in the supported
+layout subset. Channel handles and other transferable right kinds, plus the
+remaining failure-edge comparisons, are next steps in
 [`typed-messages.md`](typed-messages.md).
 
 `Scheduler` owns bounded tables of task records, lexical scope slots,

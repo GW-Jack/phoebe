@@ -35,6 +35,7 @@ mod poll;
 mod reachability;
 mod runtime_imports;
 mod transfer;
+mod typed;
 
 pub use build_session::{NativeBuildReport, NativeBuildSession};
 pub use cache::{
@@ -272,6 +273,18 @@ fn compile_jit_impl(
         jit.symbol(
             "phoebe_rt_v1_receive_request_i64",
             runtime::phoebe_receive_request_i64 as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_typed_channel_new",
+            runtime::phoebe_typed_channel_new as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_send_typed_words",
+            runtime::phoebe_send_typed_words as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_receive_typed_words",
+            runtime::phoebe_receive_typed_words as *const u8,
         );
     }
     let mut module = JITModule::new(jit);

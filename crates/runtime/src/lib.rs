@@ -98,6 +98,7 @@ pub struct TaskId(usize);
 mod scopes;
 pub use scopes::ScopeId;
 mod typed_queue;
+pub use typed_queue::NATIVE_PLAN_MAX_WORDS as NATIVE_TYPED_PLAN_MAX_WORDS;
 use typed_queue::TypedQueue;
 pub use typed_queue::TypedRightPlan;
 

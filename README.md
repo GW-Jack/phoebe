@@ -24,6 +24,10 @@ standalone executable.
 request channel across the same three backends.
 `examples/request_backpressure.phoebe` sends two owned requests through a
 one-slot queue, parking and resuming both sides.
+Concrete `channel<T>` messages, including nominal products with
+`ReplyTo<I64>` fields and zero-width `Unit`, now run in the interpreter,
+Cranelift JIT, and standalone executables. The typed-message boundary and
+remaining right kinds are described in `docs/typed-messages.md`.
 Source `scope { ... }` joins tasks started inside the block, including their
 descendants. Early `?` exits join before returning. A scope that cannot spawn
 is erased from Core; `examples/scoped_spawn.phoebe` shows the source form.
