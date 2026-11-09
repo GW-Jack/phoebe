@@ -90,6 +90,42 @@ mod allocation_tests {
         assert_eq!(scheduler.stats().tasks_created, 1);
         scheduler.verify().unwrap();
     }
+
+    #[test]
+    fn failed_fork_reservation_keeps_both_original_handles_and_counts() {
+        let mut scheduler = Scheduler::new(FailedSpawnRoot, 1, 1, 0).unwrap();
+        let mut context = Context {
+            scheduler: &mut scheduler,
+            task: TaskId(0),
+            wait: None,
+        };
+        let (sender, receiver) = context.channel(1).unwrap();
+        let channel = context
+            .scheduler
+            .check_handle(TaskId(0), sender.token(), HandleKind::Sender)
+            .unwrap();
+        let original_handles = context.scheduler.handles.len();
+        for (token, kind) in [
+            (sender.token(), HandleKind::Sender),
+            (receiver.token(), HandleKind::Receiver),
+        ] {
+            assert_eq!(
+                context.fork_handle_with(token, kind, |_| Err(ResourceError::Allocation)),
+                Ok(Err(ResourceError::Allocation))
+            );
+            assert_eq!(context.scheduler.handles.len(), original_handles);
+            assert_eq!(context.scheduler.channels[channel].senders, 1);
+            assert_eq!(context.scheduler.channels[channel].receivers, 1);
+            context.scheduler.verify().unwrap();
+        }
+        let extra_sender = context.fork_sender_typed(&sender).unwrap().unwrap();
+        let extra_receiver = context.fork_receiver_typed(&receiver).unwrap().unwrap();
+        context.close_sender(extra_sender).unwrap();
+        context.close_receiver(extra_receiver).unwrap();
+        context.close_sender(sender).unwrap();
+        context.close_receiver(receiver).unwrap();
+        context.scheduler.verify().unwrap();
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1502,25 +1538,12 @@ impl Context<'_> {
         &mut self,
         sender: &Sender,
     ) -> Result<Result<Sender, ResourceError>, String> {
-        let channel = self
-            .scheduler
-            .check_handle(self.task, sender.token, HandleKind::Sender)?;
-        if self.scheduler.handles.len() >= self.scheduler.max_handles {
-            return Ok(Err(ResourceError::HandleLimit));
-        }
-        if self.scheduler.handles.try_reserve(1).is_err() {
-            return Ok(Err(ResourceError::Allocation));
-        }
-        self.scheduler.channels[channel].senders += 1;
-        let fork = Sender {
-            token: Token(self.scheduler.handles.len()),
-        };
-        self.scheduler.handles.push(Handle {
-            channel,
-            kind: HandleKind::Sender,
-            owner: Some(self.task),
-        });
-        Ok(Ok(fork))
+        self.fork_handle_with(sender.token, HandleKind::Sender, |handles| {
+            handles
+                .try_reserve(1)
+                .map_err(|_| ResourceError::Allocation)
+        })
+        .map(|result| result.map(|token| Sender { token }))
     }
 
     pub fn fork_receiver(&mut self, receiver: &Receiver) -> Result<Receiver, String> {
@@ -1532,22 +1555,35 @@ impl Context<'_> {
         &mut self,
         receiver: &Receiver,
     ) -> Result<Result<Receiver, ResourceError>, String> {
-        let channel =
-            self.scheduler
-                .check_handle(self.task, receiver.token, HandleKind::Receiver)?;
+        self.fork_handle_with(receiver.token, HandleKind::Receiver, |handles| {
+            handles
+                .try_reserve(1)
+                .map_err(|_| ResourceError::Allocation)
+        })
+        .map(|result| result.map(|token| Receiver { token }))
+    }
+
+    fn fork_handle_with(
+        &mut self,
+        token: Token,
+        kind: HandleKind,
+        reserve: impl FnOnce(&mut Vec<Handle>) -> Result<(), ResourceError>,
+    ) -> Result<Result<Token, ResourceError>, String> {
+        let channel = self.scheduler.check_handle(self.task, token, kind)?;
         if self.scheduler.handles.len() >= self.scheduler.max_handles {
             return Ok(Err(ResourceError::HandleLimit));
         }
-        if self.scheduler.handles.try_reserve(1).is_err() {
-            return Ok(Err(ResourceError::Allocation));
+        if let Err(error) = reserve(&mut self.scheduler.handles) {
+            return Ok(Err(error));
         }
-        self.scheduler.channels[channel].receivers += 1;
-        let fork = Receiver {
-            token: Token(self.scheduler.handles.len()),
-        };
+        match kind {
+            HandleKind::Sender => self.scheduler.channels[channel].senders += 1,
+            HandleKind::Receiver => self.scheduler.channels[channel].receivers += 1,
+        }
+        let fork = Token(self.scheduler.handles.len());
         self.scheduler.handles.push(Handle {
             channel,
-            kind: HandleKind::Receiver,
+            kind,
             owner: Some(self.task),
         });
         Ok(Ok(fork))

@@ -407,9 +407,12 @@ one independently owned handle on success. The original remains live on both
 edges, and a resource failure creates no new handle. Core checks the fresh
 slot and requires the original right on each edge. Direct code, retained
 tasks, the interpreter, and standalone binaries run the same fork operation;
-`examples/fork_channel.phoebe` exercises both handle kinds. Allocation
-failure is represented in the ABI but has not been forced in a test. A scope
-now also bounds total channel handles minted (default 256); a handle-limit
+`examples/fork_channel.phoebe` exercises both handle kinds. An injected
+handle-table reservation failure now checks both fork kinds in the kernel:
+neither changes the original token, handle table, or endpoint counts, and a
+later successful fork still works. The generated native allocation-failure
+edge has not been forced. A scope now also bounds total channel handles minted
+(default 256); a handle-limit
 failure is tested in the kernel, native ABI, interpreter, and JIT. Closed
 tokens are not reused, so a close does not refund that budget.
 Source `send` and `receive` now yield explicit `Send<I64>` and `Receive<I64>`

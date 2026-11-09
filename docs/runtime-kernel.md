@@ -86,8 +86,12 @@ a typed handle-limit or allocation failure before changing channel counts or
 publishing a handle; invalid tokens remain internal faults. Handle tokens are
 never reused in a scope, so the handle budget counts total minted handles,
 including closed ones. Source binds the new right
-with `val another = sender.fork()?` or `receiver.fork()?`. `spawn`
-validates all transfers before changing their owners. The Rust
+with `val another = sender.fork()?` or `receiver.fork()?`.
+Both fork kinds use one pre-commit reservation path. A kernel test injects a
+failed handle-table reservation and verifies that the original handles, table
+length, channel endpoint counts, and later successful forks remain valid. It
+does not force host allocator failure in generated native code.
+`spawn` validates all transfers before changing their owners. The Rust
 `spawn_capabilities_owned` entry also transfers reply rights and reply
 receivers, returning the child frame intact on failure. A successful send
 copies a closed `I64` into a pre-reserved FIFO slot. If no receiver remains,
