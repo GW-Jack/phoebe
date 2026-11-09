@@ -1,6 +1,7 @@
 //! Compare the selected managed ABI with the inline fallback on the same
-//! reachable Phoebe functions. The unreachable `force_inline` function makes
-//! the conservative planner choose its inline fallback for the baseline.
+//! reachable Phoebe functions. The unreachable `force_inline` function carries
+//! the array through a retained frame, so the planner chooses the inline
+//! fallback for the baseline.
 
 use phoebe::{core, native, syntax};
 use std::hint::black_box;
@@ -23,7 +24,7 @@ fn run(len: usize) {
     let managed = core::lower(&syntax::parse(&source).unwrap()).unwrap();
     let inline = core::lower(
         &syntax::parse(&format!(
-            "{source}\nfn force_inline() -> I64 {{ yield; 0 }}"
+            "{source}\nfn force_inline(xs: [I64; {len}]) -> I64 {{ yield; xs[0] }}"
         ))
         .unwrap(),
     )

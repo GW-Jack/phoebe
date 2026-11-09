@@ -153,6 +153,24 @@ fn compile_poll_jit_impl(
         "phoebe_rt_v1_receive_typed_words",
         runtime::phoebe_receive_typed_words as *const u8,
     );
+    if core::StoragePlan::for_program(program).has_shared_arrays() {
+        jit.symbol(
+            "phoebe_rt_v1_words_new",
+            runtime::phoebe_words_new as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_words_retain",
+            runtime::phoebe_words_retain as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_words_release",
+            runtime::phoebe_words_release as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_words_set",
+            runtime::phoebe_words_set as *const u8,
+        );
+    }
     let mut module = JITModule::new(jit);
     let (entry, layout, clif) = compile_poll_module(&mut module, program, linked, name, None)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
