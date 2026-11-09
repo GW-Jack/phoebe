@@ -196,6 +196,43 @@ impl Parser {
                 statements.push(Statement::Yield(start.span));
                 continue;
             }
+            let array_assignment = matches!(self.current().kind, TokenKind::Ident(_))
+                && self
+                    .tokens
+                    .get(self.pos + 1)
+                    .is_some_and(|next| next.kind == TokenKind::LBracket)
+                && matches!(
+                    self.tokens.get(self.pos + 2).map(|next| &next.kind),
+                    Some(TokenKind::Int(_))
+                )
+                && self
+                    .tokens
+                    .get(self.pos + 3)
+                    .is_some_and(|next| next.kind == TokenKind::RBracket)
+                && self
+                    .tokens
+                    .get(self.pos + 4)
+                    .is_some_and(|next| next.kind == TokenKind::Equal);
+            if array_assignment {
+                let (name, start) = self.name()?;
+                self.expect(&TokenKind::LBracket, "[")?;
+                let Token {
+                    kind: TokenKind::Int(index),
+                    span,
+                } = self.current().clone()
+                else {
+                    unreachable!("checked array assignment index")
+                };
+                let index = usize::try_from(index)
+                    .map_err(|_| Diagnostic::new(span, "fixed array index exceeds target size"))?;
+                self.pos += 1;
+                let end = self.expect(&TokenKind::RBracket, "]")?.span;
+                self.expect(&TokenKind::Equal, "=")?;
+                let value = self.expr(0)?;
+                self.expect(&TokenKind::Semicolon, "; after assignment")?;
+                statements.push(Statement::ArrayAssign(name, index, start.join(end), value));
+                continue;
+            }
             let assignment = matches!(self.current().kind, TokenKind::Ident(_))
                 && self
                     .tokens

@@ -471,6 +471,14 @@ impl CoreTask {
                 };
                 Some(Value::I64(words[*index]))
             }
+            Operation::ArraySetPlace(place, index, value) => {
+                let value = as_i64(get(*value));
+                let Some(Value::ArrayI64(words)) = &mut self.stores[base + place.0] else {
+                    unreachable!("verified array place")
+                };
+                words[*index] = value;
+                None
+            }
             Operation::Move(_)
             | Operation::Variant(_, _, _)
             | Operation::Product(_, _)
@@ -1231,6 +1239,9 @@ impl fmt::Display for Program {
                         }
                         Operation::ArrayGetPlace(place, index) => {
                             write!(f, "place.array.get p{}, {}", place.0, index)?
+                        }
+                        Operation::ArraySetPlace(place, index, value) => {
+                            write!(f, "place.array.set p{}, {}, v{}", place.0, index, value.0)?
                         }
                         Operation::Neg(a) => write!(f, "neg v{}", a.0)?,
                         Operation::Not(a) => write!(f, "not v{}", a.0)?,

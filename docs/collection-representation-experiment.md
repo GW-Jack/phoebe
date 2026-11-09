@@ -8,12 +8,12 @@ and selects by constant-size rule logic; it is not yet fed by Phoebe source or
 Core IR. `crates/collection-storage` exercises selected fixed and contiguous
 layouts, but is not yet Phoebe's interpreter or native runtime.
 Checked Core supports inline `[I64; N]` for `N <= 32`, literal indexed reads,
-and length. Source accepts local literals such as `[40, 2]`, `array[0]`, and
-`array.len`. Both `val` and `var` element reads select one component; the
+indexed updates of mutable places, and length. Source accepts local literals
+such as `[40, 2]`, `array[0]`, `array[0] = 42`, and `array.len`. Both `val` and `var` element reads select one component; the
 direct and retained Cranelift paths and interpreter execute the same program.
-Array types in source signatures, dynamic indexing, element mutation, larger
+Array types in source signatures, dynamic indexing, larger
 fixed storage, and source-use inference remain open.
-This document does not amend Decision 0003.
+Decision 0006 supersedes the ordinary-value copy rule in Decision 0003.
 
 ## The semantic boundary
 
@@ -26,8 +26,9 @@ observable behavior unspecified. The first common contract is:
 - `with element = &sequence[index] { ... }` borrows an existing element. A
   structural mutation that could move or remove that element is rejected while
   the loan is live.
-- Moving the sequence transfers all its elements and storage authority;
-  copying it requires an explicit `copy(sequence)` and an independent store.
+- Ordinary closed-value uses preserve the source value; a final use may transfer
+  storage, while an earlier use may borrow, retain, or copy as inferred by the
+  compiler. `copy(sequence)` requests independent storage explicitly.
 - Sending it to another task transfers the whole closed sequence by ownership.
   Borrowed element references never enter a message.
 

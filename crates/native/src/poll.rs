@@ -825,6 +825,16 @@ fn compile_poll_module<M: Module>(
                             places[place.0][*index],
                             0,
                         )]),
+                        Operation::ArraySetPlace(place, index, value) => {
+                            let component = get(*value, &mut builder)[0];
+                            builder.ins().store(
+                                MemFlagsData::new(),
+                                component,
+                                places[place.0][*index],
+                                0,
+                            );
+                            None
+                        }
                         Operation::ArrayLen(array) => {
                             let Type::ArrayI64(len) = function.value_types[array.0] else {
                                 unreachable!("verified array length")
@@ -1900,6 +1910,7 @@ fn validate_poll_function(
                     | Operation::ArrayI64(_)
                     | Operation::ArrayGet(_, _)
                     | Operation::ArrayGetPlace(_, _)
+                    | Operation::ArraySetPlace(_, _, _)
                     | Operation::ArrayLen(_)
                     | Operation::Move(_)
                     | Operation::Copy(_)

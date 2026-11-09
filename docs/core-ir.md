@@ -98,6 +98,12 @@ operations instead of cloning them at those boundaries. Its boxed values remain
 a reference implementation, not a native allocation model. `affine-ownership.md` gives the abstract
 transition rules and their evidence boundary.
 
+Fixed inline arrays have a checked `place.array.set` operation for a constant
+index. The operation requires an initialized mutable array place and an `I64`
+operand. It updates that one component; a prior ordinary copy is an independent
+inline value. The verifier rejects out-of-range indices, writes after a place
+transfer, and writes through a lexical loan.
+
 The structural verifier checks unique SSA definitions, operand dominance,
 block reachability, parameter, call, and return types, branch targets, call modes,
 one dominating initializer per place, and the restricted borrow rules in

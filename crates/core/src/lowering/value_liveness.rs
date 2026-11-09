@@ -53,6 +53,7 @@ fn place_transfer(live: &mut HashSet<PlaceId>, operation: &Operation) {
         }
         Operation::ReadField(place, _)
         | Operation::ArrayGetPlace(place, _)
+        | Operation::ArraySetPlace(place, _, _)
         | Operation::Load(place)
         | Operation::Take(place)
         | Operation::CopyPlace(place)

@@ -549,6 +549,16 @@ pub(super) fn compile_functions<M: Module>(
                                 0,
                             )])
                         }
+                        Operation::ArraySetPlace(place, index, value) => {
+                            let component = one(*value);
+                            builder.ins().stack_store(
+                                pointer_type,
+                                component,
+                                places[place.0][*index],
+                                0,
+                            );
+                            None
+                        }
                         Operation::ArrayLen(array) => {
                             let Type::ArrayI64(len) = function.value_types[array.0] else {
                                 unreachable!("verified array length")

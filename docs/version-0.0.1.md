@@ -78,9 +78,12 @@ Checked Core and local source bindings support bounded inline `[I64; N]` values
 for `N <= 32`: `[40, 2]`, `array[0]`, and `array.len`. The verifier rejects
 out-of-range literal indices; direct and retained native lowering read the
 selected component without allocation or a dynamic bounds check. Mutable
-array places read one component without copying the whole array. Explicit
+array places read and update one component with `array[0] = value`; an earlier
+ordinary copy retains its logical value through the update. Direct, retained,
+and standalone execution agree. This inline operation does not allocate or
+perform reference-counted copy-on-write. Explicit
 array copies record a `copy.value` cost site. Source array type annotations,
-dynamic indices, and structural mutation remain pending.
+dynamic indices, and variable-size structural mutation remain pending.
 Source `spawn` records a `task.create` cost site with its source span; this
 ledger identifies static sites rather than counting successful creations.
 Recursion is rejected until task stacks have safe growth limits. Arithmetic

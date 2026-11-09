@@ -606,6 +606,7 @@ fn rewrite_body(
             Statement::Val(_, _, expr)
             | Statement::Var(_, _, expr)
             | Statement::Assign(_, _, expr)
+            | Statement::ArrayAssign(_, _, _, expr)
             | Statement::Expr(expr) => rewrite(expr)?,
             Statement::While(condition, body) => {
                 rewrite(condition)?;
@@ -904,6 +905,10 @@ fn shift_body(body: &mut Body, offset: usize) {
             Statement::Val(_, span, value)
             | Statement::Var(_, span, value)
             | Statement::Assign(_, span, value) => {
+                shift_span(span, offset);
+                shift_expr(value, offset);
+            }
+            Statement::ArrayAssign(_, _, span, value) => {
                 shift_span(span, offset);
                 shift_expr(value, offset);
             }
