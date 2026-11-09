@@ -2,6 +2,9 @@
 //! It consumes facts that a source/Core analysis has already established;
 //! it neither parses source nor proves that those facts are sound.
 
+mod flow;
+pub use flow::{Block, GraphError, summarize_graph};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Extent {
     Static(usize),
@@ -78,6 +81,42 @@ impl Requirements {
             escapes: self.escapes || other.escapes,
         }
     }
+
+    fn record(&mut self, operation: Use) -> Result<(), AnalysisError> {
+        match operation {
+            Use::Append => {
+                if self.frozen_after_build {
+                    return Err(AnalysisError::MutationAfterFreeze);
+                }
+                self.mutation = self.mutation.max(Mutation::Append);
+                self.appends = true;
+            }
+            Use::RemoveByIndex | Use::RemoveByHandle => {
+                if self.frozen_after_build {
+                    return Err(AnalysisError::MutationAfterFreeze);
+                }
+                self.mutation = Mutation::Structural;
+                if matches!(operation, Use::RemoveByHandle) {
+                    self.access.stable_handle = true;
+                } else {
+                    self.access.index = true;
+                }
+            }
+            Use::Scan => self.access.scan = true,
+            Use::Index => self.access.index = true,
+            Use::LoanSpansAppend => {
+                if self.frozen_after_build {
+                    return Err(AnalysisError::MutationAfterFreeze);
+                }
+                self.mutation = self.mutation.max(Mutation::Append);
+                self.appends = true;
+                self.loan_spans_append = true;
+            }
+            Use::Freeze => self.frozen_after_build = true,
+            Use::Escape => self.escapes = true,
+        }
+        Ok(())
+    }
 }
 
 /// Events in one already-checked path. `LoanSpansAppend` is supplied by the
@@ -102,38 +141,7 @@ pub enum AnalysisError {
 pub fn summarize_path(extent: Extent, uses: &[Use]) -> Result<Requirements, AnalysisError> {
     let mut requirements = Requirements::new(extent);
     for operation in uses {
-        match operation {
-            Use::Append => {
-                if requirements.frozen_after_build {
-                    return Err(AnalysisError::MutationAfterFreeze);
-                }
-                requirements.mutation = requirements.mutation.max(Mutation::Append);
-                requirements.appends = true;
-            }
-            Use::RemoveByIndex | Use::RemoveByHandle => {
-                if requirements.frozen_after_build {
-                    return Err(AnalysisError::MutationAfterFreeze);
-                }
-                requirements.mutation = Mutation::Structural;
-                if matches!(operation, Use::RemoveByHandle) {
-                    requirements.access.stable_handle = true;
-                } else {
-                    requirements.access.index = true;
-                }
-            }
-            Use::Scan => requirements.access.scan = true,
-            Use::Index => requirements.access.index = true,
-            Use::LoanSpansAppend => {
-                if requirements.frozen_after_build {
-                    return Err(AnalysisError::MutationAfterFreeze);
-                }
-                requirements.mutation = requirements.mutation.max(Mutation::Append);
-                requirements.appends = true;
-                requirements.loan_spans_append = true;
-            }
-            Use::Freeze => requirements.frozen_after_build = true,
-            Use::Escape => requirements.escapes = true,
-        }
+        requirements.record(*operation)?;
     }
     Ok(requirements)
 }
