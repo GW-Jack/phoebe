@@ -143,6 +143,9 @@ error, module, and ABI-shape generic policies; `docs/language-features.md`
 develops them and lists the next questions.
 `docs/decisions/0004-structural-capability-cleanup.md` specifies cleanup of
 communication capabilities inside rejected or discarded messages.
+`docs/collection-representation-experiment.md` compares three candidate
+sequence layouts and sketches the checked IR facts needed for future selection;
+collection selection is exploratory and not part of the executable compiler.
 `docs/concurrency-pressure-tests.md` compares scoped tasks and actors on
 stateful and asynchronous workloads and records the resulting design gates.
 The eleven finite models in `formal/` explore ownership, nested borrows, task
