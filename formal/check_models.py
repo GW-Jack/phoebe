@@ -18,6 +18,7 @@ CASES = (
     ("check_sum_capabilities.maude", 4, 22, 3),
     ("check_tagged_queue.maude", 3, 9, 3),
     ("check_mutable_right_places.maude", 3, 11, 2),
+    ("check_collection_selector.maude", 1, 7, 1),
 )
 
 

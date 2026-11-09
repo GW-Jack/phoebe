@@ -401,4 +401,97 @@ mod tests {
         assert!(joined.escapes);
         assert!(!joined.frozen_after_build);
     }
+
+    #[test]
+    fn bounded_use_space_never_selects_unneeded_storage_effects() {
+        let operations = [
+            Use::Append,
+            Use::RemoveByIndex,
+            Use::RemoveByHandle,
+            Use::Scan,
+            Use::Index,
+            Use::LoanSpansAppend,
+            Use::Freeze,
+            Use::Escape,
+        ];
+        for extent in [
+            Extent::Static(0),
+            Extent::Static(1),
+            Extent::Static(32),
+            Extent::Static(33),
+            Extent::Runtime,
+        ] {
+            for mask in 0..(1 << operations.len()) {
+                let uses = operations
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, operation)| {
+                        (mask & (1 << index) != 0).then_some(*operation)
+                    })
+                    .collect::<Vec<_>>();
+                let Ok(requirements) = summarize_path(extent, &uses) else {
+                    continue;
+                };
+                let result = select(requirements, LOCAL);
+                if requirements.escapes {
+                    assert_eq!(result, Err(SelectionError::UnknownEscapeLayout));
+                    continue;
+                }
+                let Ok(plan) = result else {
+                    assert!(
+                        requirements.access.stable_handle && requirements.access.index
+                            || requirements.loan_spans_append
+                                && requirements.mutation == Mutation::Structural
+                    );
+                    continue;
+                };
+                assert!(!plan.effects.grow || requirements.appends);
+                assert!(!plan.effects.relocate_elements || requirements.appends);
+                assert!(
+                    !plan.effects.shift_elements || requirements.mutation == Mutation::Structural
+                );
+                assert!(!plan.effects.allocate_chunk || requirements.appends);
+                match plan.representation {
+                    Representation::FixedInline => {
+                        assert!(matches!(extent, Extent::Static(0..=32)));
+                        assert_eq!(requirements.mutation, Mutation::None);
+                        assert_eq!(plan.effects, Effects::default());
+                    }
+                    Representation::FixedRegion => {
+                        assert_eq!(requirements.mutation, Mutation::None);
+                        assert!(!matches!(extent, Extent::Static(0..=32)));
+                        assert_eq!(
+                            plan.effects,
+                            Effects {
+                                reserve: true,
+                                ..Effects::default()
+                            }
+                        );
+                    }
+                    Representation::Contiguous => {
+                        assert_ne!(requirements.mutation, Mutation::None);
+                        assert!(!requirements.loan_spans_append);
+                        assert!(!requirements.access.stable_handle);
+                        assert_eq!(
+                            plan.effects.shift_elements,
+                            requirements.mutation == Mutation::Structural
+                        );
+                    }
+                    Representation::Segmented => {
+                        assert!(requirements.loan_spans_append);
+                        assert_eq!(requirements.mutation, Mutation::Append);
+                        assert!(!plan.effects.relocate_elements);
+                        assert!(!plan.effects.shift_elements);
+                    }
+                    Representation::RegionLinked => {
+                        assert!(requirements.access.stable_handle);
+                        assert_eq!(requirements.mutation, Mutation::Structural);
+                        assert!(!requirements.access.index);
+                        assert!(!plan.effects.relocate_elements);
+                        assert!(!plan.effects.shift_elements);
+                    }
+                }
+            }
+        }
+    }
 }

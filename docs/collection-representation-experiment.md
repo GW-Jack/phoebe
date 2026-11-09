@@ -196,6 +196,15 @@ append-only summary must emit no shrink operation, and a no-index program
 must not acquire an indexed bounds check. These are useful proof targets even
 when the default layout choice itself is a heuristic.
 
+The bounded selector now has two separate checks. The Maude rule-table model
+in `formal/collection_selector.maude` explores 337 states and finds no encoded
+unneeded effect, with witnesses for every representation and rejection case.
+The Rust selector test enumerates five extents and all subsets of eight checked
+uses and checks the corresponding effect and choice constraints. The model
+does not prove its Rust counterpart, and neither check establishes that the
+source analysis captures every reachable use or that a layout implements the
+abstract sequence contract. Those remain integration obligations.
+
 ## Candidate layouts
 
 | Layout | `push_back` | Indexed `get` | Element address across growth | Storage and caveat |

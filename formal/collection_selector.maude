@@ -1,0 +1,102 @@
+mod PHOEBE-COLLECTION-SELECTOR is
+  protecting BOOL .
+
+  sorts Size Mutation Choice State .
+  ops small large runtime : -> Size [ctor] .
+  ops fixed append structural : -> Mutation [ctor] .
+  ops fixedInline fixedRegion contiguous segmented regionLinked reject : -> Choice [ctor] .
+  op seed : -> State [ctor] .
+  op size : Size -> State [ctor] .
+  op mutation : Size Mutation -> State [ctor] .
+  op handles : Size Mutation Bool -> State [ctor] .
+  op indexed : Size Mutation Bool Bool -> State [ctor] .
+  op loans : Size Mutation Bool Bool Bool -> State [ctor] .
+  op appends : Size Mutation Bool Bool Bool Bool -> State [ctor] .
+  op out : Size Mutation Bool Bool Bool Bool Choice -> State [ctor] .
+
+  vars S : Size .
+  vars M : Mutation .
+  vars H I L A : Bool .
+  var C : Choice .
+
+  op valid : Mutation Bool Bool Bool -> Bool .
+  eq valid(fixed, H, L, A) = not H and not L and not A .
+  eq valid(append, H, L, A) = not H and A .
+  eq valid(structural, H, L, A) = not L or A .
+
+  op choice : Size Mutation Bool Bool Bool Bool -> Choice .
+  eq choice(S, M, H, I, L, A) =
+    if M == fixed then
+      (if S == small then fixedInline else fixedRegion fi)
+    else if H then
+      (if I then reject else regionLinked fi)
+    else if L then
+      (if M == structural then reject else segmented fi)
+    else contiguous fi fi fi .
+
+  op grow : Choice Bool -> Bool .
+  eq grow(contiguous, A) = A .
+  eq grow(segmented, A) = A .
+  eq grow(regionLinked, A) = A .
+  eq grow(C, A) = false [owise] .
+
+  op reserve : Choice -> Bool .
+  eq reserve(fixedInline) = false .
+  eq reserve(reject) = false .
+  eq reserve(C) = true [owise] .
+
+  op relocate : Choice Bool -> Bool .
+  eq relocate(contiguous, A) = A .
+  eq relocate(C, A) = false [owise] .
+
+  op shift : Choice Mutation -> Bool .
+  eq shift(contiguous, structural) = true .
+  eq shift(C, M) = false [owise] .
+
+  op chunk : Choice Bool -> Bool .
+  eq chunk(segmented, A) = A .
+  eq chunk(regionLinked, A) = A .
+  eq chunk(C, A) = false [owise] .
+
+  op bad : State -> Bool .
+  eq bad(out(S, M, H, I, L, A, C)) =
+    (grow(C, A) and not A)
+    or (relocate(C, A) and not A)
+    or (shift(C, M) and not (M == structural))
+    or (chunk(C, A) and not A)
+    or (L and relocate(C, A))
+    or (M == fixed and not (C == fixedInline or C == fixedRegion))
+    or (S == small and M == fixed and not (C == fixedInline))
+    or (not (S == small) and M == fixed and not (C == fixedRegion))
+    or ((C == fixedInline or C == fixedRegion) and not (M == fixed))
+    or (C == segmented and not L)
+    or (C == regionLinked and not H)
+    or (C == contiguous and (H or L))
+    or (C == fixedInline and reserve(C))
+    or (H and I and not (C == reject)) .
+  eq bad(seed) = false .
+  eq bad(size(S)) = false .
+  eq bad(mutation(S, M)) = false .
+  eq bad(handles(S, M, H)) = false .
+  eq bad(indexed(S, M, H, I)) = false .
+  eq bad(loans(S, M, H, I, L)) = false .
+  eq bad(appends(S, M, H, I, L, A)) = false .
+
+  rl [small] : seed => size(small) .
+  rl [large] : seed => size(large) .
+  rl [runtime] : seed => size(runtime) .
+  rl [fixed] : size(S) => mutation(S, fixed) .
+  rl [append] : size(S) => mutation(S, append) .
+  rl [structural] : size(S) => mutation(S, structural) .
+  rl [handles-no] : mutation(S, M) => handles(S, M, false) .
+  rl [handles-yes] : mutation(S, M) => handles(S, M, true) .
+  rl [index-no] : handles(S, M, H) => indexed(S, M, H, false) .
+  rl [index-yes] : handles(S, M, H) => indexed(S, M, H, true) .
+  rl [loan-no] : indexed(S, M, H, I) => loans(S, M, H, I, false) .
+  rl [loan-yes] : indexed(S, M, H, I) => loans(S, M, H, I, true) .
+  rl [append-no] : loans(S, M, H, I, L) => appends(S, M, H, I, L, false) .
+  rl [append-yes] : loans(S, M, H, I, L) => appends(S, M, H, I, L, true) .
+  crl [select] : appends(S, M, H, I, L, A)
+    => out(S, M, H, I, L, A, choice(S, M, H, I, L, A))
+    if valid(M, H, L, A) == true .
+endm
