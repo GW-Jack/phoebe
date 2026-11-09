@@ -15,6 +15,7 @@ pub enum GraphError {
     InvalidEntry(usize),
     InvalidSuccessor { block: usize, successor: usize },
     MutationAfterFreeze { block: usize },
+    UnknownCall { block: usize },
 }
 
 /// Infer the union of requirements on every reachable path from `entry`.
@@ -52,8 +53,11 @@ pub fn summarize_graph(
         let mut local = Requirements::new(extent);
         local.frozen_after_build = frozen;
         for &operation in blocks[block].uses {
-            if let Err(AnalysisError::MutationAfterFreeze) = local.record(operation) {
-                return Err(GraphError::MutationAfterFreeze { block });
+            if let Err(error) = local.record(operation) {
+                return Err(match error {
+                    AnalysisError::MutationAfterFreeze => GraphError::MutationAfterFreeze { block },
+                    AnalysisError::UnknownCall => GraphError::UnknownCall { block },
+                });
             }
         }
         let next_frozen = local.frozen_after_build;
@@ -76,7 +80,7 @@ pub fn summarize_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Constraints, Representation, SelectionError, select};
+    use crate::{CallEffects, Constraints, Representation, SelectionError, select};
 
     const LOCAL: Constraints = Constraints {
         element_bytes: 8,
@@ -234,6 +238,59 @@ mod tests {
                 block: 0,
                 successor: 2
             })
+        );
+    }
+
+    #[test]
+    fn checked_call_effects_join_with_local_uses() {
+        let graph = [
+            Block {
+                uses: &[Use::Call(CallEffects {
+                    appends: true,
+                    scans: true,
+                    ..CallEffects::default()
+                })],
+                successors: &[1],
+            },
+            Block {
+                uses: &[Use::Index],
+                successors: &[],
+            },
+        ];
+        let plan = select(
+            summarize_graph(Extent::Static(0), &graph, 0).unwrap(),
+            LOCAL,
+        )
+        .unwrap();
+        assert_eq!(plan.representation, Representation::Contiguous);
+        assert!(plan.effects.grow);
+        assert!(!plan.effects.shift_elements);
+    }
+
+    #[test]
+    fn unknown_call_and_mutating_call_after_freeze_are_rejected() {
+        let unknown = [Block {
+            uses: &[Use::UnknownCall],
+            successors: &[],
+        }];
+        assert_eq!(
+            summarize_graph(Extent::Static(4), &unknown, 0),
+            Err(GraphError::UnknownCall { block: 0 })
+        );
+
+        let frozen = [Block {
+            uses: &[
+                Use::Freeze,
+                Use::Call(CallEffects {
+                    appends: true,
+                    ..CallEffects::default()
+                }),
+            ],
+            successors: &[],
+        }];
+        assert_eq!(
+            summarize_graph(Extent::Static(4), &frozen, 0),
+            Err(GraphError::MutationAfterFreeze { block: 0 })
         );
     }
 }

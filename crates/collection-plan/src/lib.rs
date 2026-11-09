@@ -114,6 +114,30 @@ impl Requirements {
             }
             Use::Freeze => self.frozen_after_build = true,
             Use::Escape => self.escapes = true,
+            Use::Call(effects) => {
+                if effects.appends {
+                    self.record(Use::Append)?;
+                }
+                if effects.removes_by_index {
+                    self.record(Use::RemoveByIndex)?;
+                }
+                if effects.removes_by_handle {
+                    self.record(Use::RemoveByHandle)?;
+                }
+                if effects.scans {
+                    self.record(Use::Scan)?;
+                }
+                if effects.indexes {
+                    self.record(Use::Index)?;
+                }
+                if effects.loan_spans_append {
+                    self.record(Use::LoanSpansAppend)?;
+                }
+                if effects.escapes {
+                    self.record(Use::Escape)?;
+                }
+            }
+            Use::UnknownCall => return Err(AnalysisError::UnknownCall),
         }
         Ok(())
     }
@@ -131,11 +155,27 @@ pub enum Use {
     LoanSpansAppend,
     Freeze,
     Escape,
+    /// Effects from a checked callee summary for this collection argument.
+    Call(CallEffects),
+    /// A call without a checked summary cannot justify a representation.
+    UnknownCall,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct CallEffects {
+    pub appends: bool,
+    pub removes_by_index: bool,
+    pub removes_by_handle: bool,
+    pub scans: bool,
+    pub indexes: bool,
+    pub loan_spans_append: bool,
+    pub escapes: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnalysisError {
     MutationAfterFreeze,
+    UnknownCall,
 }
 
 pub fn summarize_path(extent: Extent, uses: &[Use]) -> Result<Requirements, AnalysisError> {

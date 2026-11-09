@@ -149,8 +149,10 @@ worklist over already-checked collection uses. It tracks building and frozen
 states separately at joins and loops, so one frozen path makes a later append
 invalid even if another path remains in the build phase. It ignores
 unreachable uses and grants a freeze guarantee only when every reachable exit
-is frozen. Call effects must be expanded from checked summaries before this
-analysis; unknown calls cannot be silently treated as pure.
+is frozen. Calls are explicit uses: a checked callee contributes its
+collection-specific effect summary, and an unknown call is rejected rather
+than treated as pure. Those summaries still have to be derived from Phoebe
+functions and stored at module boundaries.
 `Requirements::join` conservatively merges use facts; `select` applies a
 bounded rule table and returns possible reserve, grow, relocate, shift, and
 chunk-allocation effects. Fixed-size selections have no growth effect, and
