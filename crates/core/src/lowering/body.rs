@@ -21,13 +21,30 @@ impl Lowerer<'_> {
                 "with requires a communication capability",
             ));
         }
-        let mut scoped_locals = locals.clone();
-        if scoped_locals
-            .insert(name.to_owned(), Binding::Val(owner))
-            .is_some()
-        {
+        if locals.contains_key(name) {
             return Err(Diagnostic::new(span, format!("duplicate local {name}")));
         }
+        let projected_fields = field_move_scan::projected_fields(body);
+        let scoped_owner = if let Type::Data(id) = ty
+            && self.data[id.0].fields.iter().any(|(field, field_ty)| {
+                self.capability_layout.leaves(*field_ty) > 0
+                    && projected_fields.contains(&(name.to_owned(), field.clone()))
+            }) {
+            let place = self.place(ty);
+            self.immutable_places[place.0] = true;
+            self.emit_effect(Operation::PlaceInit(place, owner), span);
+            verification::SlotOwner::Place(place)
+        } else {
+            verification::SlotOwner::Value(owner)
+        };
+        let mut scoped_locals = locals.clone();
+        scoped_locals.insert(
+            name.to_owned(),
+            match scoped_owner {
+                verification::SlotOwner::Place(place) => Binding::Var(place),
+                verification::SlotOwner::Value(value) => Binding::Val(value),
+            },
+        );
         let result = self.body(body, &mut scoped_locals)?;
         if let Some((_, ty)) = result
             && self.capability_layout.leaves(ty) > 0
@@ -47,7 +64,7 @@ impl Lowerer<'_> {
             self.terminate(Terminator::Jump(next, vec![]));
             None
         };
-        self.scoped_cleanup_exits.push((exit, owner, span));
+        self.scoped_cleanup_exits.push((exit, scoped_owner, span));
         self.current = next;
         Ok(output)
     }

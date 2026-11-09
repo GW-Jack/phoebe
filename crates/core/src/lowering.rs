@@ -32,7 +32,7 @@ struct FunctionSignature {
 
 struct CleanupSites {
     returns: Vec<(BlockId, Span)>,
-    scopes: Vec<(BlockId, ValueId, Span)>,
+    scopes: Vec<(BlockId, verification::SlotOwner, Span)>,
     task_returns: Vec<(BlockId, Vec<(TaskScopeId, Span)>)>,
 }
 
@@ -67,7 +67,7 @@ struct Lowerer<'a> {
     return_type: Type,
     current: BlockId,
     implicit_cleanup_returns: Vec<(BlockId, Span)>,
-    scoped_cleanup_exits: Vec<(BlockId, ValueId, Span)>,
+    scoped_cleanup_exits: Vec<(BlockId, verification::SlotOwner, Span)>,
     task_scope_stack: Vec<(TaskScopeId, Span)>,
     task_scope_returns: Vec<(BlockId, Vec<(TaskScopeId, Span)>)>,
     lexical_loans: Vec<ValueId>,
@@ -751,17 +751,47 @@ fn lower_internal(
         for (block, _, span) in &exits.scopes {
             spans[block.0] = Some(*span);
         }
+        let mut place_bases = HashMap::new();
+        for (slot, owner) in owners.iter().enumerate() {
+            if let verification::SlotOwner::Place(place) = owner {
+                place_bases.entry(*place).or_insert(slot);
+            }
+        }
         for (block, slot) in facts.lexical_closes {
             let span = spans[block].expect("lexical close belongs to a with exit");
-            let verification::SlotOwner::Value(value) = owners[slot.0] else {
-                unreachable!("with cleanup owns an SSA value")
-            };
-            let operation = cleanup::close_operation(value, function.value_types[value.0]);
-            function.blocks[block].instructions.push(Instruction {
-                result: None,
-                operation,
-                span,
-            });
+            match owners[slot.0] {
+                verification::SlotOwner::Value(value) => {
+                    let operation = cleanup::close_operation(value, function.value_types[value.0]);
+                    function.blocks[block].instructions.push(Instruction {
+                        result: None,
+                        operation,
+                        span,
+                    });
+                }
+                verification::SlotOwner::Place(place) => {
+                    let Type::Data(id) = function.place_types[place.0] else {
+                        unreachable!("scoped field cleanup requires a product place")
+                    };
+                    let base = place_bases[&place];
+                    let offset = slot.0 - base;
+                    let field = (0..capability_layout.field_count(id))
+                        .find(|field| capability_layout.field_leaves(id, *field).contains(&offset))
+                        .expect("scoped field capability slot");
+                    let ty = program.data[id.0].fields[field].1;
+                    let taken = ValueId(function.value_types.len());
+                    function.value_types.push(ty);
+                    function.blocks[block].instructions.push(Instruction {
+                        result: Some(taken),
+                        operation: Operation::TakeField(place, field),
+                        span,
+                    });
+                    function.blocks[block].instructions.push(Instruction {
+                        result: None,
+                        operation: cleanup::close_operation(taken, ty),
+                        span,
+                    });
+                }
+            }
         }
     }
     // Treat only source `?` returns as cleanup exits. The exact checker gives

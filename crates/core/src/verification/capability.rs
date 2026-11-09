@@ -24,7 +24,7 @@ pub(crate) fn capability_graph(
     function: &Function,
     layout: &Layout,
     implicit_cleanup_returns: &[BlockId],
-    scoped_cleanup_exits: &[(BlockId, ValueId, Span)],
+    scoped_cleanup_exits: &[(BlockId, SlotOwner, Span)],
 ) -> Option<(capability_flow::Graph, Vec<SlotOwner>)> {
     // Capability flow only needs ownership state for rights, not for every
     // scalar SSA value in the function. Keep this numbering separate from
@@ -75,9 +75,25 @@ pub(crate) fn capability_graph(
     };
     let moves_between =
         |from: ValueId, to: ValueId| move_ranges(slots[from.0].clone(), slots[to.0].clone());
-    let mut lexical = vec![None; function.blocks.len()];
-    for (block, value, _) in scoped_cleanup_exits {
-        lexical[block.0] = Some(slots[value.0].clone());
+    let mut lexical = vec![Vec::new(); function.blocks.len()];
+    for (block, owner, _) in scoped_cleanup_exits {
+        match *owner {
+            SlotOwner::Value(value) => lexical[block.0].push(slots[value.0].clone()),
+            SlotOwner::Place(place) => {
+                let range = places[place.0].clone();
+                if let Type::Data(id) = function.place_types[place.0] {
+                    for field in (0..layout.field_count(id)).rev() {
+                        let leaves = layout.field_leaves(id, field);
+                        if !leaves.is_empty() {
+                            lexical[block.0]
+                                .push((range.start + leaves.start)..(range.start + leaves.end));
+                        }
+                    }
+                } else {
+                    lexical[block.0].push(range);
+                }
+            }
+        }
     }
     let mut cleanup_return = vec![false; function.blocks.len()];
     for block in implicit_cleanup_returns {
@@ -261,7 +277,7 @@ pub(crate) fn capability_graph(
                 _ => {}
             }
         }
-        if let Some(range) = &lexical[block_id] {
+        for range in &lexical[block_id] {
             let leaves = range.clone().map(capability_flow::Slot).collect::<Vec<_>>();
             if leaves.len() == 1 {
                 actions.push(CapAction::CloseIfLive(leaves[0]));
