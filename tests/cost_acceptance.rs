@@ -78,6 +78,54 @@ fn unit_identity_has_no_scalar_argument_result_or_instruction() {
 }
 
 #[test]
+fn typed_channel_plan_is_static_module_data() {
+    let source = include_str!("../examples/cost/typed_descriptor.phoebe");
+    for (index, source) in [
+        source.to_owned(),
+        source.replace(
+            "  val (sender, receiver)",
+            "  yield;\n  val (sender, receiver)",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+        let clif = native::clif(&program).unwrap();
+        let make = if index == 0 {
+            clif.split("; Phoebe function make\n")
+                .nth(1)
+                .unwrap()
+                .split("; Phoebe function main\n")
+                .next()
+                .unwrap()
+        } else {
+            &clif
+        };
+        assert!(make.contains("symbol_value"), "{make}");
+        if index == 0 {
+            assert_eq!(make.matches("explicit_slot").count(), 2, "{make}");
+            assert!(!make.contains("stack_store"), "{make}");
+        }
+        assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+        assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+        let path = std::env::temp_dir().join(format!(
+            "phoebe-static-typed-plan-{}-{index}",
+            std::process::id()
+        ));
+        native::build_executable(&program, &path).unwrap();
+        let output = Command::new(&path).output().unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"42\n");
+    }
+}
+
+#[test]
 fn each_source_spawn_has_one_attributed_task_creation_site() {
     let source = include_str!("../examples/spawn_pair.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

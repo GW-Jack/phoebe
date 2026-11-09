@@ -2,6 +2,8 @@
 
 use super::*;
 use cranelift_codegen::ir::StackSlot;
+use cranelift_module::{DataDescription, DataId as ModuleDataId};
+use std::collections::HashMap;
 
 fn slot_bytes(words: usize) -> Result<u32, String> {
     words
@@ -17,29 +19,52 @@ fn offset(part: usize) -> Result<i32, String> {
         .ok_or("typed message part offset exceeds native limit".into())
 }
 
-pub(super) fn plan_pointer(
-    builder: &mut FunctionBuilder<'_>,
-    pointer: cranelift_codegen::ir::Type,
-    descriptor: &phoebe_message::RuntimeMessageDescriptor,
-) -> Result<(ClValue, ClValue), String> {
-    let words = descriptor.rights.encode_native_words();
-    if words.len() > runtime::NATIVE_TYPED_PLAN_MAX_WORDS {
-        return Err("typed message right plan exceeds native ABI limit".into());
+/// One immutable copy per distinct plan in a native module. A channel
+/// creation site only materializes its address and length, never its words.
+#[derive(Default)]
+pub(super) struct PlanData {
+    ids: HashMap<Vec<u64>, ModuleDataId>,
+}
+
+impl PlanData {
+    pub(super) fn pointer<M: Module>(
+        &mut self,
+        module: &mut M,
+        builder: &mut FunctionBuilder<'_>,
+        pointer: cranelift_codegen::ir::Type,
+        descriptor: &phoebe_message::RuntimeMessageDescriptor,
+    ) -> Result<(ClValue, ClValue), String> {
+        let words = descriptor.rights.encode_native_words();
+        if words.len() > runtime::NATIVE_TYPED_PLAN_MAX_WORDS {
+            return Err("typed message right plan exceeds native ABI limit".into());
+        }
+        let length = words.len();
+        let id = if let Some(id) = self.ids.get(&words) {
+            *id
+        } else {
+            let id = module
+                .declare_anonymous_data(false, false)
+                .map_err(|error| error.to_string())?;
+            let mut data = DataDescription::new();
+            data.define(
+                words
+                    .iter()
+                    .flat_map(|word| word.to_ne_bytes())
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            );
+            data.set_align(8);
+            module
+                .define_data(id, &data)
+                .map_err(|error| error.to_string())?;
+            self.ids.insert(words, id);
+            id
+        };
+        let global = module.declare_data_in_func(id, builder.func);
+        let address = builder.ins().symbol_value(pointer, global);
+        let length = builder.ins().iconst(types::I64, length as i64);
+        Ok((address, length))
     }
-    let slot = builder.create_sized_stack_slot(StackSlotData::new(
-        StackSlotKind::ExplicitSlot,
-        slot_bytes(words.len())?,
-        3,
-    ));
-    for (part, word) in words.iter().enumerate() {
-        let value = builder.ins().iconst(types::I64, *word as i64);
-        builder
-            .ins()
-            .stack_store(pointer, value, slot, offset(part)?);
-    }
-    let address = builder.ins().stack_addr(pointer, slot, 0);
-    let length = builder.ins().iconst(types::I64, words.len() as i64);
-    Ok((address, length))
 }
 
 pub(super) fn input_words(

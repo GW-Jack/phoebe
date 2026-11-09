@@ -1,8 +1,10 @@
 # Cost acceptance examples
 
-`identity.phoebe`, `product_identity.phoebe`, `unit_identity.phoebe`, and
-`empty_scope.phoebe` compile today. Their executable acceptance tests check
-zero Phoebe cost events and no runtime calls in Cranelift IR. The other files
+`identity.phoebe`, `product_identity.phoebe`, `unit_identity.phoebe`,
+`typed_descriptor.phoebe`, and `empty_scope.phoebe` compile today. The identity
+and empty-scope acceptance tests check zero Phoebe cost events and no runtime
+calls in Cranelift IR. Typed channel creation necessarily calls the runtime,
+but its descriptor plan lives in immutable module data. The other files
 use draft syntax and cannot compile yet. The snippets below describe the
 checked IR shape required by the non-pessimization contract.
 `cost.*` denotes a logical event with source and reason metadata. Ordinary
@@ -35,6 +37,14 @@ call through that body.
 The `Unit` parameter and result have zero native ABI components. The direct
 Cranelift function has an empty signature and a bare return, with no scalar
 constant, stack slot, runtime call, or cost event.
+
+## `typed_descriptor.phoebe`
+
+The native emitter stores each distinct structural right plan once as
+immutable module data. Channel creation passes its address and length to the
+runtime; it does not write the plan words into a stack slot on every call.
+The acceptance test checks the direct and retained Cranelift IR and executes
+both paths through the interpreter, JIT, and standalone binary.
 
 ## `borrow_length.phoebe`
 

@@ -1,0 +1,11 @@
+fn make() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<Bool>(capacity = 1)?;
+  sender.close();
+  receiver.close();
+  Result<I64, ResourceError>.Ok(42)
+}
+
+fn main() -> I64 = when (make()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { -1 },
+}

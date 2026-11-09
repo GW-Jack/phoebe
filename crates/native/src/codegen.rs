@@ -398,6 +398,7 @@ pub(super) fn compile_functions<M: Module>(
     }
     let mut ctx = module.make_context();
     let mut builder_context = FunctionBuilderContext::new();
+    let mut typed_plans = typed::PlanData::default();
     for (index, function) in program.functions.iter().enumerate() {
         if suspendable[index] || selected.is_some_and(|set| !set[index]) {
             continue;
@@ -973,7 +974,7 @@ pub(super) fn compile_functions<M: Module>(
                         let callee = module.declare_func_in_func(imports.create, builder.func);
                         let descriptor = shapes.message_descriptor(*message)?;
                         let (plan, plan_len) =
-                            typed::plan_pointer(&mut builder, pointer_type, &descriptor)?;
+                            typed_plans.pointer(module, &mut builder, pointer_type, &descriptor)?;
                         let sender_slot = builder.create_sized_stack_slot(StackSlotData::new(
                             StackSlotKind::ExplicitSlot,
                             8,

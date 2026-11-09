@@ -351,6 +351,8 @@ Cranelift JIT and standalone code now emit typed create, send, and receive
 through the checked descriptor and versioned runtime ABI. Source regressions
 cover a nominal boolean field, a zero-width message, full-queue parking, and
 transfer of a reply right inside a nominal product across all three engines.
+Native creation refers to one immutable right-plan data object per distinct
+plan in the emitted module instead of materializing its words on each call.
 The native runtime now exposes versioned typed-channel create, send, and
 receive shims. A host ABI witness passes a two-word message with a reply right
 through them and checks that a closed send retains its original right.

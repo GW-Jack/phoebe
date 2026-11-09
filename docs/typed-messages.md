@@ -112,7 +112,10 @@ the same type ID and a contiguous word slice; success moves active rights,
 while pending and closed sends retain the caller's words. Generated Cranelift
 calls now pass the checked descriptor and flattened words through these shims
 for concrete admitted messages. Zero-width messages pass a null word pointer
-and still occupy a queue slot.
+and still occupy a queue slot. The native emitter deduplicates immutable plan
+words within each module and passes a static data address at creation, avoiding
+per-call stack writes of those descriptor constants. This removes emitted
+setup instructions; its end-to-end speed effect has not been measured.
 
 ## Implementation gates
 

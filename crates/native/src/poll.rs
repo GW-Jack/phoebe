@@ -464,6 +464,7 @@ fn compile_poll_module<M: Module>(
         );
     }
     let entry = ids[root.0].expect("declared root poll");
+    let mut typed_plans = typed::PlanData::default();
     for id in reachable {
         let function = &program.functions[id.0];
         let layout = layouts[id.0].as_ref().expect("validated poll frame");
@@ -1203,7 +1204,7 @@ fn compile_poll_module<M: Module>(
                         {
                             let descriptor = shapes.message_descriptor(message)?;
                             let (plan, plan_len) =
-                                typed::plan_pointer(&mut builder, pointer, &descriptor)?;
+                                typed_plans.pointer(module, &mut builder, pointer, &descriptor)?;
                             let type_id =
                                 builder.ins().iconst(types::I64, descriptor.type_id as i64);
                             let width = builder.ins().iconst(
