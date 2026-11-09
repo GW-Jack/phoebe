@@ -34,11 +34,11 @@ search. Native lowering expands the match into a tag dispatch; the interpreter
 selects the matching arm directly. Finite products have `product` and
 `field` operations. Their fields remain separate SSA components through native
 calls, returns, and joins; `docs/abi-shapes.md` specifies the current shape.
-When the second field of a two-field product directly uses `?`, construction
-uses a checked local destination: `dest.begin`, one `dest.field` per field,
-and `dest.publish`. Other products remain in SSA components without an
-avoidable stack round trip. The verifier
-rejects duplicate or missing field writes, publication before either write,
+When a later field directly uses `?`, or an earlier field owns rights,
+construction uses a checked local destination: `dest.begin`, one `dest.field`
+per field, and `dest.publish`. This works for any nonempty product. Other
+products remain in SSA components without an avoidable stack round trip. The
+verifier rejects duplicate or missing field writes, premature publication,
 and reads of an unpublished destination. An early `?` takes and closes only
 the initialized capability fields, including nested products. Retained frames
 preserve initialized fields while the next field suspends. On deadlock the
