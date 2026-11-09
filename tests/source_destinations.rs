@@ -319,6 +319,7 @@ fn build(first: Sender<I64>, second: Sender<I64>) -> Result<I64, I64> {
   envelope.close_caps();
   Result<I64, I64>.Ok(number)
 }
+
 fn entry() -> Result<I64, ResourceError> {
   val (first, first_receiver) = channel<I64>(capacity = 1)?;
   first_receiver.close();
@@ -388,6 +389,126 @@ fn main() -> I64 = when (entry()) {
     std::fs::remove_file(path).unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn active_variant_destination_publishes_only_its_payload() {
+    for (second, expected) in [
+        ("yield; Result<I64, I64>.Ok(42)", 42),
+        ("Result<I64, I64>.Err(7)", 7),
+    ] {
+        let source = format!(
+            "fn second() -> Result<I64, I64> {{ {second} }}\n\
+             fn build() -> Result<I64, I64> = Result<I64, I64>.Ok(second()?)\n\
+             fn main() -> I64 = when (build()) {{\n\
+               Result<I64, I64>.Ok(value) -> {{ value }},\n\
+               Result<I64, I64>.Err(error) -> {{ error }},\n\
+             }}"
+        );
+        let program = lower(&source);
+        let ir = program.to_string();
+        assert!(ir.contains("dest.begin.variant"), "{ir}");
+        assert!(ir.contains("dest.publish"), "{ir}");
+        for kind in ["destination.zero", "destination.write"] {
+            assert!(program.cost_events().iter().any(|event| {
+                event.function == "build" && event.kind == kind && event.span.end > event.span.start
+            }));
+        }
+        assert_eq!(program.interpret("main", &[]).unwrap(), expected);
+        assert_eq!(native::run(&program, "main", &[]).unwrap(), expected);
+        let path = std::env::temp_dir().join(format!(
+            "phoebe-variant-destination-{}-{expected}",
+            std::process::id()
+        ));
+        native::build_executable(&program, &path).unwrap();
+        let output = Command::new(&path).output().unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, format!("{expected}\n").as_bytes());
+    }
+}
+
+#[test]
+fn active_variant_destination_transfers_a_right_across_suspension() {
+    let source = r#"
+fn second() -> Result<Sender<I64>, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  receiver.close();
+  yield;
+  Result<Sender<I64>, ResourceError>.Ok(sender)
+}
+
+fn build() -> Result<Option<Sender<I64>>, ResourceError> =
+  Result<Option<Sender<I64>>, ResourceError>.Ok(Option<Sender<I64>>.Some(second()?))
+fn main() -> I64 = when (build()) {
+  Result<Option<Sender<I64>>, ResourceError>.Ok(value) -> { value.close_caps(); 42 },
+  Result<Option<Sender<I64>>, ResourceError>.Err(error) -> { 0 },
+}
+"#;
+    let program = lower(source);
+    let ir = program.to_string();
+    assert!(ir.contains("dest.begin.variant"), "{ir}");
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!(
+        "phoebe-right-variant-destination-{}",
+        std::process::id()
+    ));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn verifier_rejects_incomplete_or_wrong_variant_destinations() {
+    let source = "fn second() -> Result<I64, I64> = Result<I64, I64>.Ok(42)\n\
+        fn build() -> Result<I64, I64> = Result<I64, I64>.Ok(second()?)\n\
+        fn main() -> I64 = when (build()) {\n\
+          Result<I64, I64>.Ok(value) -> { value },\n\
+          Result<I64, I64>.Err(error) -> { error },\n\
+        }";
+    let program = lower(source);
+    let build_index = program
+        .functions
+        .iter()
+        .position(|function| function.name == "build")
+        .unwrap();
+
+    let mut missing = program.clone();
+    for block in &mut missing.functions[build_index].blocks {
+        block.instructions.retain(|instruction| {
+            !matches!(instruction.operation, core::Operation::DestField(_, _, _))
+        });
+    }
+    assert!(
+        core::verify(&missing)
+            .unwrap_err()
+            .contains("destination field was not initialized")
+    );
+
+    let mut wrong_tag = program.clone();
+    let begin = wrong_tag.functions[build_index]
+        .blocks
+        .iter_mut()
+        .flat_map(|block| &mut block.instructions)
+        .find(|instruction| {
+            matches!(
+                instruction.operation,
+                core::Operation::DestBeginVariant(_, _)
+            )
+        })
+        .unwrap();
+    let core::Operation::DestBeginVariant(_, tag) = &mut begin.operation else {
+        unreachable!()
+    };
+    *tag = 1;
+    assert!(
+        core::verify(&wrong_tag)
+            .unwrap_err()
+            .contains("active variant")
+    );
 }
 
 #[test]

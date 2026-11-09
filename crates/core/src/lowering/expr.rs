@@ -180,6 +180,19 @@ impl Lowerer<'_> {
                     })?;
                 let expected = self.data[id.0].payloads[tag]
                     .ok_or_else(|| Diagnostic::new(expr.span, "variant has no payload"))?;
+                if matches!(payload.kind, ExprKind::Try(_)) {
+                    let destination = self.place(Type::Data(id));
+                    self.emit_effect(Operation::DestBeginVariant(destination, tag), expr.span);
+                    let (value, actual) = self.expr(payload, locals)?;
+                    self.require(actual, expected, payload.span)?;
+                    self.emit_effect(Operation::DestField(destination, tag, value), payload.span);
+                    let result = self.emit(
+                        Operation::DestPublish(destination),
+                        Type::Data(id),
+                        expr.span,
+                    );
+                    return Ok((result, Type::Data(id)));
+                }
                 let (value, actual) = self.expr(payload, locals)?;
                 self.require(actual, expected, payload.span)?;
                 (Operation::Variant(id, tag, Some(value)), Type::Data(id))

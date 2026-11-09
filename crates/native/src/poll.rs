@@ -820,16 +820,34 @@ fn compile_poll_module<M: Module>(
                         }
                         Operation::Unit => Some(Vec::new()),
                         Operation::DestBegin(_) => None,
+                        Operation::DestBeginVariant(place, tag) => {
+                            for (index, (ty, address)) in shapes
+                                .types(function.place_types[place.0])
+                                .into_iter()
+                                .zip(&places[place.0])
+                                .enumerate()
+                            {
+                                let value = builder
+                                    .ins()
+                                    .iconst(ty, if index == 0 { *tag as i64 } else { 0 });
+                                builder.ins().store(MemFlagsData::new(), value, *address, 0);
+                            }
+                            None
+                        }
                         Operation::DestField(place, index, value)
                         | Operation::StoreField(place, index, value) => {
                             let Type::Data(id) = function.place_types[place.0] else {
                                 unreachable!("verified destination type")
                             };
                             let fields = &program.data[id.0].fields;
-                            let offset = fields[..*index]
-                                .iter()
-                                .map(|(_, ty)| shapes.types(*ty).len())
-                                .sum::<usize>();
+                            let offset = if fields.is_empty() {
+                                1
+                            } else {
+                                fields[..*index]
+                                    .iter()
+                                    .map(|(_, ty)| shapes.types(*ty).len())
+                                    .sum::<usize>()
+                            };
                             for (component, address) in get(*value, &mut builder)
                                 .into_iter()
                                 .zip(&places[place.0][offset..])
@@ -2016,6 +2034,7 @@ fn validate_poll_function(
                     | Operation::Variant(_, _, _)
                     | Operation::Product(_, _)
                     | Operation::DestBegin(_)
+                    | Operation::DestBeginVariant(_, _)
                     | Operation::DestField(_, _, _)
                     | Operation::StoreField(_, _, _)
                     | Operation::DestPublish(_)

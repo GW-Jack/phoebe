@@ -126,7 +126,7 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                             state.places[place.0] = true;
                         }
                     }
-                    Operation::DestBegin(place) => {
+                    Operation::DestBegin(place) | Operation::DestBeginVariant(place, _) => {
                         state.places[place.0] = true;
                     }
                     Operation::DestField(place, _, value) => {

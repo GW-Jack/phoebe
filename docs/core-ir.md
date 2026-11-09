@@ -43,7 +43,12 @@ and reads of an unpublished destination. An early `?` takes and closes only
 the initialized capability fields, including nested products. Retained frames
 preserve initialized fields while the next field suspends. On deadlock the
 scheduler closes each still task-owned right once. Caller-owned result
-destinations and destination construction for sum variants remain pending.
+destinations remain pending. A payload-bearing sum constructor whose payload
+directly uses `?` also uses a checked local destination. `dest.begin.variant`
+fixes the active tag; `dest.field` accepts only that tag's payload, and
+`dest.publish` requires the payload first. Other variants retain SSA
+construction. The cost ledger reports possible `destination.zero` and
+`destination.write` sites for physical destination initialization and writes.
 `product.unpack` consumes a whole nominal product and passes one typed block
 parameter per field. Nested fields retain their flattened ABI shape. The
 interpreter, direct Cranelift path, retained task path, and standalone path

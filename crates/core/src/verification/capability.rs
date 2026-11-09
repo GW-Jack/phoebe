@@ -126,9 +126,12 @@ pub(crate) fn capability_graph(
                     let Type::Data(id) = function.place_types[place.0] else {
                         unreachable!("verified destination")
                     };
-                    let leaves = layout.field_leaves(id, *field);
-                    let destination = (places[place.0].start + leaves.start)
-                        ..(places[place.0].start + leaves.end);
+                    let destination = if layout.field_count(id) == 0 {
+                        places[place.0].clone()
+                    } else {
+                        let leaves = layout.field_leaves(id, *field);
+                        (places[place.0].start + leaves.start)..(places[place.0].start + leaves.end)
+                    };
                     let moves = move_ranges(slots[value.0].clone(), destination);
                     if !moves.is_empty() {
                         actions.push(CapAction::MoveGroup(moves));

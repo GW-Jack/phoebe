@@ -515,6 +515,7 @@ fn instruction_live(live: &mut Live, operation: &Operation, result: Option<Value
     match operation {
         Operation::PlaceInit(place, _)
         | Operation::DestBegin(place)
+        | Operation::DestBeginVariant(place, _)
         | Operation::Store(place, _)
         | Operation::Take(place) => {
             // A store replaces the prior value; a take consumes it.
