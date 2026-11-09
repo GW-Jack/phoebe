@@ -442,5 +442,93 @@
     "payload_json": "{\"added_by\":null,\"at_cut\":null,\"basis\":null,\"basis_fingerprint\":null,\"kind\":\"cuts\",\"note\":null,\"reference\":\"intent(b8b5bdcc560d4550cf5378500309c57ab3fa01e7ff4f8131b6047a6ffe037ede)\"}",
     "actor": null,
     "created_at": "2026-11-09 08:31:54"
+  },
+  {
+    "event_id": "fa70b86b1b506656d7306394f4e585a582136d93365d23ea255242f96de94e56",
+    "parents": [
+      "053f98aad904ba5a346c04cfe77bbe5111ddc7e39219b495b2cd259e033379a0"
+    ],
+    "issue_id": "053f98aad904ba5a346c04cfe77bbe5111ddc7e39219b495b2cd259e033379a0",
+    "kind": "claim.acquired",
+    "payload_json": "{\"actor\":\"codex:phoebe-field-loans\",\"expires_at\":\"2026-11-09 10:34:49\"}",
+    "actor": "codex:phoebe-field-loans",
+    "created_at": "2026-11-09 08:34:49"
+  },
+  {
+    "event_id": "5cdbad98887bb41960777a4c8435711dc10b41119d0113a337312e94b55cb7e0",
+    "parents": [
+      "4f044508e3d1302b4bd69b9bf64ace5f2a76a73b7ff8903162cd8919291e5d7a"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged checked local two-field scalar destinations with verifier, interpreter, JIT, retained frame, and standalone coverage.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/7\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 08:48:54"
+  },
+  {
+    "event_id": "79b01c461db7df64c317556b11c6002ba90361ef7fb1f715dc90762d3a69be89",
+    "parents": [
+      "5cdbad98887bb41960777a4c8435711dc10b41119d0113a337312e94b55cb7e0"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"PR #7 merged (e129807): two-field I64/Bool/Unit destinations, early ? abandonment, and suspension survival. Remaining: caller-owned return destination, active sum variants, capability-bearing field initialization, exact initialized-field cleanup on failure/cancellation/deadlock, and material cost sites.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 08:48:54"
+  },
+  {
+    "event_id": "16a00b35a47af126c33971be056f1d23580054f7438d67c635388fc4f1c9d3a6",
+    "parents": [
+      "fa70b86b1b506656d7306394f4e585a582136d93365d23ea255242f96de94e56"
+    ],
+    "issue_id": "053f98aad904ba5a346c04cfe77bbe5111ddc7e39219b495b2cd259e033379a0",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged exact terminating field-path overlap algebra and verifier integration for whole-place loans.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/6\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 09:00:45"
+  },
+  {
+    "event_id": "fe162690713b561d4f02b6ccc8756c6d7e320c61e3d0a9f36df385957b83a8f5",
+    "parents": [
+      "16a00b35a47af126c33971be056f1d23580054f7438d67c635388fc4f1c9d3a6"
+    ],
+    "issue_id": "053f98aad904ba5a346c04cfe77bbe5111ddc7e39219b495b2cd259e033379a0",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Scalar nested field loans in source, Core, interpreter, direct and retained native, standalone; CI pending.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/8\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 09:00:45"
+  },
+  {
+    "event_id": "3a92933405d482acab0c42c6996a447c545ed52624bd840489a1b13b46b68ac2",
+    "parents": [
+      "fe162690713b561d4f02b6ccc8756c6d7e320c61e3d0a9f36df385957b83a8f5"
+    ],
+    "issue_id": "053f98aad904ba5a346c04cfe77bbe5111ddc7e39219b495b2cd259e033379a0",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"Remaining after PR #8: whole-product parent references, field loans into partial capability-bearing records (depends on WS-3), and corresponding parent/child move tests. Keep WS-4 open.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 09:00:45"
+  },
+  {
+    "event_id": "8aad77455721a572bc7ae6ddabd6b113bec508a016110bbf164c9bbcc6ee439d",
+    "parents": [
+      "3a92933405d482acab0c42c6996a447c545ed52624bd840489a1b13b46b68ac2"
+    ],
+    "issue_id": "053f98aad904ba5a346c04cfe77bbe5111ddc7e39219b495b2cd259e033379a0",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"PR #8 merged (dc35ca4): nested scalar field loans, direct and retained native addresses, CFG/call alias checks, forged Core path rejection, and interpreter/JIT/standalone agreement. Whole-product parent references and capability-bearing partial records remain.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 09:03:20"
+  },
+  {
+    "event_id": "ec46d0edd916a7ba2ce8ed210898ecd0cdb8f89c88b97dd09b4f85797b20947d",
+    "parents": [
+      "8aad77455721a572bc7ae6ddabd6b113bec508a016110bbf164c9bbcc6ee439d"
+    ],
+    "issue_id": "053f98aad904ba5a346c04cfe77bbe5111ddc7e39219b495b2cd259e033379a0",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex:phoebe-field-loans\",\"lease_id\":\"fa70b86b1b506656d7306394f4e585a582136d93365d23ea255242f96de94e56\",\"released_at\":\"2026-11-09 09:03:20\"}",
+    "actor": "codex:phoebe-field-loans",
+    "created_at": "2026-11-09 09:03:20"
   }
 ]
