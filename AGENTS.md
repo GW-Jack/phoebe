@@ -18,3 +18,14 @@ add a note about what remains and release the claim. Commit changes to
 
 The issue queue coordinates work. Accepted language semantics live in
 `docs/decisions/`, and the release contract lives in `docs/version-0.0.1.md`.
+
+## Trunk development
+
+`main` is the integration branch. Start each substantial change from the
+current `origin/main` in a short-lived worktree and claim its issue first.
+Keep independent agents in separate worktrees; do not edit another agent's
+uncommitted files. Push a focused pull request, rebase when trunk advances,
+and merge it after its required checks pass. Delete the topic branch after
+merge. Publish completed work frequently so later agents start from the same
+trunk. Use the shared issue queue to record ownership and remaining work;
+do not use a long-lived feature branch as a second backlog.
