@@ -135,8 +135,9 @@ and still occupy a queue slot.
    closed sends. Tests exercise active and inactive tagged arms, duplicate or
    invalid rights, and a two-task full queue. A dedicated allocation-counting
    test checks zero heap allocations for successful typed send and receive
-   after channel creation. Injected precommit allocation failure on a parked
-   send and transfer of channel handles remain open.
+   after channel creation. The same test injects waiter-allocation failure on
+   a full queue and verifies that the queued right and unsent right survive
+   until receive and retry. Transfer of channel handles remains open.
 3. Complete source `channel<T>` and native code generation through the checked
    typed Core family. The interpreter, Cranelift JIT, and standalone paths now
    handle concrete nominal and reply-right aggregate messages. The existing
