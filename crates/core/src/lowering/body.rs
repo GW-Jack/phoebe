@@ -526,6 +526,35 @@ impl Lowerer<'_> {
                         }
                     }
                 }
+                Statement::FieldAssign(name, field, span, expr) => {
+                    let Some(Binding::Var(place)) = locals.get(name).copied() else {
+                        return Err(Diagnostic::new(
+                            *span,
+                            format!("field assignment requires a var product binding {name}"),
+                        ));
+                    };
+                    if self.immutable_places[place.0] {
+                        return Err(Diagnostic::new(
+                            *span,
+                            format!("cannot assign to val {name}"),
+                        ));
+                    }
+                    let Type::Data(id) = self.place_types[place.0] else {
+                        return Err(Diagnostic::new(
+                            *span,
+                            "field assignment requires a product",
+                        ));
+                    };
+                    let index = self.data[id.0]
+                        .fields
+                        .iter()
+                        .position(|(candidate, _)| candidate == field)
+                        .ok_or_else(|| Diagnostic::new(*span, format!("unknown field {field}")))?;
+                    let expected = self.data[id.0].fields[index].1;
+                    let (value, actual) = self.expr(expr, locals)?;
+                    self.require(actual, expected, expr.span)?;
+                    self.emit_effect(Operation::StoreField(place, index, value), *span);
+                }
                 Statement::ArrayAssign(name, index, span, expr) => {
                     let Some(Binding::Var(place)) = locals.get(name).copied() else {
                         return Err(Diagnostic::new(

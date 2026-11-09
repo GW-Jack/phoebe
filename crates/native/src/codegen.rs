@@ -613,7 +613,8 @@ pub(super) fn compile_functions<M: Module>(
                             Some(fields.iter().flat_map(|field| get(*field)).collect())
                         }
                         Operation::DestBegin(_) => None,
-                        Operation::DestField(place, index, value) => {
+                        Operation::DestField(place, index, value)
+                        | Operation::StoreField(place, index, value) => {
                             let Type::Data(id) = function.place_types[place.0] else {
                                 unreachable!("verified destination type")
                             };

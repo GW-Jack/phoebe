@@ -521,6 +521,7 @@ fn instruction_live(live: &mut Live, operation: &Operation, result: Option<Value
             live.places[place.0] = matches!(operation, Operation::Take(_));
         }
         Operation::DestField(place, _, _)
+        | Operation::StoreField(place, _, _)
         | Operation::DestPublish(place)
         | Operation::DestTakeField(place, _) => {
             live.places[place.0] = true;

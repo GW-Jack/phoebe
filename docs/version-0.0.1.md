@@ -88,8 +88,12 @@ and an early `?` closes rights still present in the partial record. Owned
 product parameters have the same field behavior. Lowering materializes a
 private place for a `val` product only when a right field is projected;
 assignment and exclusive borrows of that `val` remain rejected. Whole-record
-transfer is rejected while a right field is missing. Reinitializing an empty
-field and moving rights from a scoped `with` product binding remain unsupported.
+transfer is rejected while a right field is missing. A mutable product binding
+can assign a top-level field with `record.field = value`; a right-bearing field
+must be empty before it can receive a new owner. When every right-bearing field
+is present again, whole-record transfer is available. The same assignment on a
+`val` product remains rejected. Moving rights from a scoped `with` product
+binding remains unsupported.
 Checked Core and source support bounded inline `[I64; N]` values
 for `N <= 32`: `[40, 2]`, `array[0]`, and `array.len`. Owning function
 parameters and returns, product fields, variant payloads, and module interfaces

@@ -136,6 +136,7 @@ pub(super) fn body_can_spawn(body: &Body, effects: &HashMap<String, bool>) -> bo
         Statement::Val(_, _, value)
         | Statement::Var(_, _, value)
         | Statement::Assign(_, _, value)
+        | Statement::FieldAssign(_, _, _, value)
         | Statement::ArrayAssign(_, _, _, value)
         | Statement::Expr(value) => expr(value, effects),
         Statement::ChannelVal { capacity, .. } | Statement::RequestChannelVal { capacity, .. } => {
@@ -278,6 +279,7 @@ impl Scan<'_> {
             Statement::Val(_, _, value)
             | Statement::Var(_, _, value)
             | Statement::Assign(_, _, value)
+            | Statement::FieldAssign(_, _, _, value)
             | Statement::ArrayAssign(_, _, _, value)
             | Statement::Expr(value) => self.expr(value),
             Statement::ChannelVal { capacity, .. }

@@ -53,6 +53,9 @@ fn statement(a: &Statement, b: &Statement, delta: isize) -> bool {
         (Statement::ArrayAssign(an, ai, asp, ae), Statement::ArrayAssign(bn, bi, bsp, be)) => {
             an == bn && ai == bi && span(*asp, *bsp, delta) && expr(ae, be, delta)
         }
+        (Statement::FieldAssign(an, ai, asp, ae), Statement::FieldAssign(bn, bi, bsp, be)) => {
+            an == bn && ai == bi && span(*asp, *bsp, delta) && expr(ae, be, delta)
+        }
         (
             Statement::ChannelVal {
                 mutable: am,

@@ -141,6 +141,18 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                         }
                         value_use(&mut state, *value, true, span)?;
                     }
+                    Operation::StoreField(place, _, value) => {
+                        if !state.places[place.0] {
+                            return Err(OwnershipError {
+                                span,
+                                message: format!(
+                                    "{}: use after move of p{}",
+                                    function.name, place.0
+                                ),
+                            });
+                        }
+                        value_use(&mut state, *value, true, span)?;
+                    }
                     Operation::DestPublish(place) => {
                         if !state.places[place.0] {
                             return Err(OwnershipError {
