@@ -472,7 +472,16 @@ def integration_tests(rust_test):
     rust_test(
         name = "source_with_product_tests",
         crate_root = "tests/source_with_product.rs",
-        srcs = ["tests/source_with_product.rs", "examples/with_product.phoebe"],
+        srcs = ["tests/source_with_product.rs", "examples/with_product.phoebe", "examples/partial_scope_cancel.phoebe"],
+        edition = "2024",
+        deps = [":phoebe_lib"],
+        resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
+    )
+
+    rust_test(
+        name = "standalone_partial_scope_tests",
+        crate_root = "tests/standalone_partial_scope.rs",
+        srcs = ["tests/standalone_partial_scope.rs", "examples/partial_scope_cancel.phoebe"],
         edition = "2024",
         deps = [":phoebe_lib"],
         resources = {"libphoebe_runtime.a": "//crates/runtime:runtime_archive"},
