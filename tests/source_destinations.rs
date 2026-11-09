@@ -561,6 +561,7 @@ fn wait(receiver: Receiver<I64>) -> Result<I64, ResourceError> {
   receiver.close();
   Result<I64, ResourceError>.Ok(22)
 }
+
 fn build() -> Result<I64, ResourceError> {
   val (sender, receiver) = channel<I64>(capacity = 1)?;
   val envelope = Envelope(sender, wait(receiver)?);
@@ -594,4 +595,84 @@ fn main() -> I64 = when (build()) {
     std::fs::remove_file(path).unwrap();
     assert!(!output.status.success());
     assert_eq!(output.stderr, b"phoebe runtime failed: scope deadlocked\n");
+}
+
+#[test]
+fn wide_product_result_constructs_into_caller_storage() {
+    let source = r#"
+data Large {
+  right: Sender<I64>, a: I64, b: I64, c: I64, d: I64,
+  e: I64, f: I64, g: I64, h: I64, i: I64
+}
+fn make(right: Sender<I64>) -> Large = Large(right, 33, 2, 3, 4, 5, 6, 7, 8, 9)
+fn entry() -> Result<I64, ResourceError> {
+  val (sender, receiver) = channel<I64>(capacity = 1)?;
+  receiver.close();
+  val large = make(sender);
+  val total = large.a + large.i;
+  large.close_caps();
+  Result<I64, ResourceError>.Ok(total)
+}
+fn main() -> I64 = when (entry()) {
+  Result<I64, ResourceError>.Ok(value) -> { value },
+  Result<I64, ResourceError>.Err(error) -> { 0 },
+}
+"#;
+    let program = lower(source);
+    let make = program
+        .functions
+        .iter()
+        .find(|function| function.name == "make")
+        .unwrap();
+    assert!(matches!(
+        make.blocks[0].instructions.last().unwrap().operation,
+        core::Operation::DestPublish(_)
+    ));
+    let clif = native::clif(&program).unwrap();
+    let make_clif = clif
+        .split("; Phoebe function make\n")
+        .nth(1)
+        .unwrap()
+        .split("; Phoebe function ")
+        .next()
+        .unwrap();
+    assert!(make_clif.contains(" sret)"), "{make_clif}");
+    assert!(make_clif.contains("store "), "{make_clif}");
+    assert!(!make_clif.contains("explicit_slot"), "{make_clif}");
+    assert!(!make_clif.contains("stack_store"), "{make_clif}");
+    assert!(!make_clif.contains("stack_load"), "{make_clif}");
+    assert_eq!(
+        program
+            .cost_events()
+            .iter()
+            .filter(|event| event.function == "make" && event.kind == "destination.write")
+            .count(),
+        10
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!(
+        "phoebe-caller-product-destination-{}",
+        std::process::id()
+    ));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+    let with_call = source.replace(
+        "fn make(right: Sender<I64>) -> Large = Large(right, 33, 2, 3, 4, 5, 6, 7, 8, 9)",
+        "fn field() -> I64 = 33\nfn make(right: Sender<I64>) -> Large = Large(right, field(), 2, 3, 4, 5, 6, 7, 8, 9)",
+    );
+    let guarded = lower(&with_call);
+    let clif = native::clif(&guarded).unwrap();
+    let guarded_make = clif
+        .split("; Phoebe function make\n")
+        .nth(1)
+        .unwrap()
+        .split("; Phoebe function ")
+        .next()
+        .unwrap();
+    assert!(guarded_make.contains("explicit_slot"), "{guarded_make}");
+    assert_eq!(native::run(&guarded, "main", &[]).unwrap(), 42);
 }

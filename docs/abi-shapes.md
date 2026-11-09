@@ -64,6 +64,12 @@ and narrowed on load. This follows the available return registers without
 Cranelift's deprecated implicit multi-return buffer. The
 interpreter uses an explicit product value; its internal allocations are not
 part of the native runtime.
+A checked single-block product constructor built from literals and moves can
+write each field directly into that wide-result caller buffer. Selection
+requires a direct return of the complete destination and excludes calls and
+other effects after partial initialization. The direct Cranelift path then
+omits the intermediate product stack loads and stores; retained tasks and
+more complex constructors still use local destinations.
 The shape table also records the part offset and kind of each capability leaf
 in a product. A `Request<I64>` contributes its reply right at its second
 part. Reverse traversal of this table gives structural close order without

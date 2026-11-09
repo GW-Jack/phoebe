@@ -187,7 +187,9 @@ diagnostic variants with a caller-owned 512-byte error buffer.
 Finite products also cross calls and returns by flattened scalar
 components, without native heap allocation. Direct returns wider than the
 target's register return capacity use a caller-owned stack buffer, so x86-64
-and AArch64 both support finite nested results. `docs/abi-shapes.md` records the current internal
+and AArch64 both support finite nested results. A checked single-block
+product constructor made from literals and moves can fill that buffer directly,
+without an intermediate local product copy. `docs/abi-shapes.md` records the current internal
 calling convention and its unmeasured argument cost threshold. Core IR
 constructs nonempty products with a direct `?` in a later field or an owned
 right in an earlier field in checked local destinations with write-once fields
@@ -196,8 +198,8 @@ components. An early `?` closes only initialized rights, including nested
 rights, and a retained frame preserves initialized fields across suspension.
 Payload-bearing sum variants with a direct `?` payload also use a checked
 local destination. Its active tag and payload must agree before publication,
-including when the payload owns a right. Caller-owned result destinations
-remain pending. The cost ledger reports possible `destination.zero` and
+including when the payload owns a right. General caller-owned result
+destinations, including suspension, remain pending. The cost ledger reports possible `destination.zero` and
 `destination.write` sites for local destination work. Core IR has typed values,
 conditional branches, variant matches, block parameters,
 and task-local places for `var`. `val (a, b, ...) = product.unpack();`

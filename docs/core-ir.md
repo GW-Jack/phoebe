@@ -42,8 +42,11 @@ verifier rejects duplicate or missing field writes, premature publication,
 and reads of an unpublished destination. An early `?` takes and closes only
 the initialized capability fields, including nested products. Retained frames
 preserve initialized fields while the next field suspends. On deadlock the
-scheduler closes each still task-owned right once. Caller-owned result
-destinations remain pending. A payload-bearing sum constructor whose payload
+scheduler closes each still task-owned right once. A direct single-block
+product constructor with only literal and move operations writes its checked
+destination straight into a caller-owned wide-result buffer when the ABI uses
+one. General caller-owned destinations, including suspension, remain pending.
+A payload-bearing sum constructor whose payload
 directly uses `?` also uses a checked local destination. `dest.begin.variant`
 fixes the active tag; `dest.field` accepts only that tag's payload, and
 `dest.publish` requires the payload first. Other variants retain SSA
