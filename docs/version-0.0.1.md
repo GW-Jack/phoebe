@@ -97,6 +97,12 @@ is present again, whole-record transfer is available. The same assignment on a
 top-level right fields; scope exit closes each right still present, while a
 right transferred out remains with its new owner. A private place is created
 only when the scoped body projects a right-bearing field.
+Ordinary function returns may transfer bare communication rights as well as
+products containing them. The verifier rejects reference returns and checks
+that every capability leaf has exactly one owner after the return. Source
+regressions cover a sender field returned from a product parameter and a
+multiword `Request<I64>` return across suspension, plus branch joins, loop
+backedges, and a moved reply field sent through a typed channel.
 Checked Core and source support bounded `[I64; N]` values
 for `N <= 256`: `[40, 2]`, `array[0]`, and `array.len`. Owning function
 parameters and returns, product fields, variant payloads, and module interfaces
