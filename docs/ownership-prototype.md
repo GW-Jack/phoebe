@@ -23,8 +23,10 @@ destination or regular expression is exposed.
 
 Decision 0006 makes that value behavior part of the language contract. The
 current compiler realizes it with fixed-size component copies on name use and
-CFG-aware last-use moves; it does not yet infer borrow versus retain or
-use shared storage.
+CFG-aware last-use transfers for SSA values and `var` places; it does not yet infer borrow versus retain or
+use shared storage. The runtime now has a separate managed-word kernel with
+retain, release, and failure-atomic copy-on-write; `managed-storage.md` records
+its ABI and the remaining compiler integration.
 
 ## Executable artifacts
 

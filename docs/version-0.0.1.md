@@ -65,9 +65,10 @@ Comparison operands evaluate left to right; each comparison is one typed Core
 operation and one Cranelift integer comparison.
 Closed nominal values now remain usable across ordinary `T` calls and field
 projections. Source lowering emits an inferred value copy for repeated uses;
-CFG liveness turns a final closed SSA use into a move. These are
-currently fixed-size component copies, not reference-counted sharing or
-copy-on-write. `copy(x)` still requests an explicit independent value. The
+CFG liveness turns a final closed SSA use into a move and a final closed
+`var` use into a place transfer, including across branches and loops. Remaining
+copies use fixed-size components; reference-counted sharing and copy-on-write
+are not implemented. `copy(x)` still requests an explicit independent value. The
 cost ledger distinguishes explicit copies, inferred name uses, and inferred
 nominal field values. Capability-bearing values remain affine: whole-value
 transfers consume the source, and CFG joins reject reuse after a move. Products
@@ -77,9 +78,12 @@ Checked Core and local source bindings support bounded inline `[I64; N]` values
 for `N <= 32`: `[40, 2]`, `array[0]`, and `array.len`. The verifier rejects
 out-of-range literal indices; direct and retained native lowering read the
 selected component without allocation or a dynamic bounds check. Mutable
-array places read one component without copying the whole array. Explicit
+array places read and update one component with `array[0] = value`; an earlier
+ordinary copy retains its logical value through the update. Direct, retained,
+and standalone execution agree. This inline operation does not allocate or
+perform reference-counted copy-on-write. Explicit
 array copies record a `copy.value` cost site. Source array type annotations,
-dynamic indices, and structural mutation remain pending.
+dynamic indices, and variable-size structural mutation remain pending.
 Source `spawn` records a `task.create` cost site with its source span; this
 ledger identifies static sites rather than counting successful creations.
 Recursion is rejected until task stacks have safe growth limits. Arithmetic

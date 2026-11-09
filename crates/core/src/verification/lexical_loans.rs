@@ -268,6 +268,7 @@ pub(super) fn verify_lexical_loans(program: &Program) -> Result<(), String> {
                     }
                     Operation::PlaceInit(place, _)
                     | Operation::Store(place, _)
+                    | Operation::ArraySetPlace(place, _, _)
                     | Operation::Take(place)
                         if conflict(&state.active, &loans, &roots, *place, true) =>
                     {

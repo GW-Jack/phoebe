@@ -383,6 +383,22 @@ impl CoreTask {
             .expect("verified value is defined")
     }
 
+    fn transfer_value(&mut self, id: ValueId) -> Value {
+        self.frames.last_mut().expect("active frame").values[id.0]
+            .take()
+            .expect("verified owned value is defined")
+    }
+
+    fn owned_value(&mut self, id: ValueId) -> Value {
+        let frame = self.frames.last().expect("active frame");
+        let ty = self.program.functions[frame.function.0].value_types[id.0];
+        if matches!(ty, Type::Data(_) | Type::ArrayI64(_)) {
+            self.transfer_value(id)
+        } else {
+            self.value(id)
+        }
+    }
+
     fn enter(&mut self, target: BlockId, args: Vec<Value>) {
         let function = self.frames.last().expect("active frame").function;
         let frame = self.frames.last_mut().expect("active frame");
@@ -402,6 +418,32 @@ impl CoreTask {
         instruction: &Instruction,
         mut context: Option<&mut Context<'_>>,
     ) -> Result<Option<Value>, String> {
+        match &instruction.operation {
+            Operation::Move(value) => return Ok(Some(self.owned_value(*value))),
+            Operation::Variant(id, tag, payload) => {
+                return Ok(Some(Value::Data(
+                    *id,
+                    *tag,
+                    payload.map(|value| Box::new(self.owned_value(value))),
+                )));
+            }
+            Operation::Product(id, fields) => {
+                return Ok(Some(Value::Product(
+                    *id,
+                    fields
+                        .iter()
+                        .map(|field| self.owned_value(*field))
+                        .collect(),
+                )));
+            }
+            Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
+                let base = self.frames.last().expect("active frame").base;
+                let value = self.owned_value(*value);
+                self.stores[base + place.0] = Some(value);
+                return Ok(None);
+            }
+            _ => {}
+        }
         let get = |id| self.value(id);
         let base = self.frames.last().expect("active frame").base;
         Ok(match &instruction.operation {
@@ -429,18 +471,20 @@ impl CoreTask {
                 };
                 Some(Value::I64(words[*index]))
             }
-            Operation::Move(value) | Operation::Copy(value) | Operation::InferredCopy(value) => {
-                Some(get(*value))
+            Operation::ArraySetPlace(place, index, value) => {
+                let value = as_i64(get(*value));
+                let Some(Value::ArrayI64(words)) = &mut self.stores[base + place.0] else {
+                    unreachable!("verified array place")
+                };
+                words[*index] = value;
+                None
             }
-            Operation::Variant(id, tag, payload) => Some(Value::Data(
-                *id,
-                *tag,
-                payload.map(|value| Box::new(get(value))),
-            )),
-            Operation::Product(id, fields) => Some(Value::Product(
-                *id,
-                fields.iter().map(|field| get(*field)).collect(),
-            )),
+            Operation::Move(_)
+            | Operation::Variant(_, _, _)
+            | Operation::Product(_, _)
+            | Operation::PlaceInit(_, _)
+            | Operation::Store(_, _) => unreachable!("handled owned transfer above"),
+            Operation::Copy(value) | Operation::InferredCopy(value) => Some(get(*value)),
             Operation::Field(owner, index) => {
                 let Value::Product(_, fields) = get(*owner) else {
                     unreachable!("verified product")
@@ -471,11 +515,6 @@ impl CoreTask {
                 args.iter().map(|value| get(*value)).collect(),
                 0,
             )?),
-            Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
-                let value = get(*value);
-                self.stores[base + place.0] = Some(value);
-                None
-            }
             Operation::Load(place)
             | Operation::CopyPlace(place)
             | Operation::InferredCopyPlace(place) => {
@@ -570,7 +609,8 @@ impl CoreTask {
                     let args = args
                         .iter()
                         .map(|arg| match arg {
-                            CallArg::Value(value) | CallArg::Ref(value, _) => self.value(*value),
+                            CallArg::Value(value) => self.owned_value(*value),
+                            CallArg::Ref(value, _) => self.value(*value),
                             CallArg::Borrow(place, _) => Value::Ref(base + place.0),
                         })
                         .collect();
@@ -610,7 +650,7 @@ impl CoreTask {
                     }
                 }
                 Terminator::Return(value) => {
-                    let result = self.value(value);
+                    let result = self.owned_value(value);
                     let frame = self.frames.pop().expect("active frame");
                     self.stores.truncate(frame.base);
                     if let Some(parent) = self.frames.last_mut() {
@@ -623,7 +663,7 @@ impl CoreTask {
                     }
                 }
                 Terminator::Jump(target, args) => {
-                    let args = args.into_iter().map(|arg| self.value(arg)).collect();
+                    let args = args.into_iter().map(|arg| self.owned_value(arg)).collect();
                     self.enter(target, args);
                 }
                 Terminator::Branch {
@@ -641,14 +681,19 @@ impl CoreTask {
                     );
                 }
                 Terminator::Match { subject, arms } => {
-                    let original = self.value(subject);
-                    let Value::Data(_, tag, payload) = &original else {
+                    let original = self.owned_value(subject);
+                    let Value::Data(_, tag, _) = &original else {
                         unreachable!("verified sum")
                     };
                     let arm = arms[*tag];
                     let args = match arm.binding {
                         MatchBinding::Discard => Vec::new(),
-                        MatchBinding::Payload => vec![*payload.clone().expect("verified payload")],
+                        MatchBinding::Payload => {
+                            let Value::Data(_, _, payload) = original else {
+                                unreachable!("verified sum")
+                            };
+                            vec![*payload.expect("verified payload")]
+                        }
                         MatchBinding::Whole => vec![original],
                     };
                     self.enter(arm.target, args);
@@ -764,7 +809,7 @@ impl CoreTask {
                     self.enter(next, vec![Value::I64(value), Value::ReplyTo(right)]);
                 }
                 Terminator::ProductUnpack { product, next } => {
-                    let Value::Product(_, fields) = self.value(product) else {
+                    let Value::Product(_, fields) = self.owned_value(product) else {
                         unreachable!("verified product")
                     };
                     self.enter(next, fields);
@@ -1194,6 +1239,9 @@ impl fmt::Display for Program {
                         }
                         Operation::ArrayGetPlace(place, index) => {
                             write!(f, "place.array.get p{}, {}", place.0, index)?
+                        }
+                        Operation::ArraySetPlace(place, index, value) => {
+                            write!(f, "place.array.set p{}, {}, v{}", place.0, index, value.0)?
                         }
                         Operation::Neg(a) => write!(f, "neg v{}", a.0)?,
                         Operation::Not(a) => write!(f, "not v{}", a.0)?,

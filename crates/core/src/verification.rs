@@ -140,6 +140,7 @@ pub(super) fn verify_ownership(program: &Program) -> Result<(), OwnershipError> 
                     }
                     Operation::ReadField(place, _)
                     | Operation::ArrayGetPlace(place, _)
+                    | Operation::ArraySetPlace(place, _, _)
                     | Operation::CopyPlace(place)
                     | Operation::InferredCopyPlace(place) => {
                         if !state.places[place.0] {

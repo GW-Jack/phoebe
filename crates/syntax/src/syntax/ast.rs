@@ -176,6 +176,7 @@ pub enum Statement {
     Yield(Span),
     Var(String, Span, Expr),
     Assign(String, Span, Expr),
+    ArrayAssign(String, usize, Span, Expr),
     While(Expr, Body),
     Expr(Expr),
 }

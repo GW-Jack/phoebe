@@ -520,6 +520,29 @@ impl Lowerer<'_> {
                         }
                     }
                 }
+                Statement::ArrayAssign(name, index, span, expr) => {
+                    let Some(Binding::Var(place)) = locals.get(name).copied() else {
+                        return Err(Diagnostic::new(
+                            *span,
+                            format!("array assignment requires a var binding {name}"),
+                        ));
+                    };
+                    let Type::ArrayI64(len) = self.place_types[place.0] else {
+                        return Err(Diagnostic::new(
+                            *span,
+                            "indexed assignment requires a fixed I64 array",
+                        ));
+                    };
+                    if *index >= len {
+                        return Err(Diagnostic::new(
+                            *span,
+                            "constant array index is out of bounds",
+                        ));
+                    }
+                    let (value, ty) = self.expr(expr, locals)?;
+                    self.require(ty, Type::I64, expr.span)?;
+                    self.emit_effect(Operation::ArraySetPlace(place, *index, value), *span);
+                }
                 Statement::While(condition, loop_body) => {
                     if let Some(tail) = &loop_body.tail {
                         return Err(Diagnostic::new(

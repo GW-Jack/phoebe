@@ -1100,6 +1100,93 @@ fn closed_nominal_place_remains_live_after_call() {
 }
 
 #[test]
+fn final_closed_place_use_transfers_across_calls_branches_and_reassignment() {
+    let cases = [
+        (
+            "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { var p = Pair(20, 22); val first = use(p); first + use(p) }",
+            40,
+            1,
+            1,
+        ),
+        (
+            "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { var p = Pair(20, 22); val first = if (true) { use(p) } else { 0 }; first + use(p) }",
+            40,
+            1,
+            1,
+        ),
+        (
+            "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { var p = Pair(20, 22); val first = use(p); p = Pair(22, 20); first + use(p) }",
+            42,
+            0,
+            2,
+        ),
+    ];
+    for (source, expected, copies, takes) in cases {
+        let program = compile(source);
+        let (main, _) = program.function("main").unwrap();
+        let operations = program.functions[main.0]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .map(|instruction| &instruction.operation)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            operations
+                .iter()
+                .filter(|operation| matches!(operation, core::Operation::InferredCopyPlace(_)))
+                .count(),
+            copies
+        );
+        assert_eq!(
+            operations
+                .iter()
+                .filter(|operation| matches!(operation, core::Operation::Take(_)))
+                .count(),
+            takes
+        );
+        assert_eq!(
+            program
+                .cost_events()
+                .iter()
+                .filter(|event| event.kind == "copy.value")
+                .count(),
+            copies
+        );
+        assert_eq!(program.interpret("main", &[]).unwrap(), expected);
+        assert_eq!(native::run(&program, "main", &[]).unwrap(), expected);
+    }
+}
+
+#[test]
+fn loop_backedge_keeps_closed_place_live() {
+    let source = "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { var p = Pair(20, 22); var i = 0; while (i < 2) { use(p); i = i + 1; } use(p) + 22 }";
+    let program = compile(source);
+    let (main, _) = program.function("main").unwrap();
+    let operations = program.functions[main.0]
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .map(|instruction| &instruction.operation)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        operations
+            .iter()
+            .filter(|operation| matches!(operation, core::Operation::InferredCopyPlace(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        operations
+            .iter()
+            .filter(|operation| matches!(operation, core::Operation::Take(_)))
+            .count(),
+        1
+    );
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
 fn verifier_rejects_forged_second_nominal_move() {
     let mut program = compile(
         "data Pair { left: I64, right: I64 } fn use(p: Pair) -> I64 = p.left fn main() -> I64 { val first = Pair(20, 22); val n = use(first); n + use(first) }",
@@ -1152,7 +1239,7 @@ fn explicit_nominal_copies_preserve_owners_and_record_costs() {
             .iter()
             .filter(|event| event.reason == "inferred value use")
             .count(),
-        1
+        0
     );
     assert!(
         events

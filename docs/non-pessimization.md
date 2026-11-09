@@ -50,8 +50,9 @@ instructions for one event or eliminate instructions when semantics allow it.
 1. Scalars and references copy by value. Closed nominal data has source value
    semantics under Decision 0006: ordinary reuse needs no `copy(x)`. The
    current compiler copies fixed-size components at inferred reuse sites and
-   moves a final SSA use according to CFG liveness. Cranelift may remove redundant
-   machine moves. Shared storage and copy-on-write are not implemented.
+   moves a final SSA or closed place use according to CFG liveness. Cranelift
+   may remove redundant machine moves. Shared storage and copy-on-write are
+   not implemented.
 2. Variable-size closed values must follow the same source contract. The
    intended representation can borrow, transfer a sole owner, or retain shared
    immutable storage; a later write may copy. `&T` and `&mut T` remain explicit

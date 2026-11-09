@@ -115,6 +115,7 @@ pub enum Operation {
     Field(ValueId, usize),
     ReadField(PlaceId, usize),
     ArrayGetPlace(PlaceId, usize),
+    ArraySetPlace(PlaceId, usize, ValueId),
     Neg(ValueId),
     Not(ValueId),
     Add(ValueId, ValueId),

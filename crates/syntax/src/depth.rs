@@ -63,6 +63,7 @@ pub(crate) fn body_height(body: &Body) -> usize {
             Statement::Val(_, _, value)
             | Statement::Var(_, _, value)
             | Statement::Assign(_, _, value)
+            | Statement::ArrayAssign(_, _, _, value)
             | Statement::Expr(value) => expr_height(value),
             Statement::ChannelVal { capacity, .. }
             | Statement::RequestChannelVal { capacity, .. } => expr_height(capacity),

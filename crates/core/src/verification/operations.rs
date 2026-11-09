@@ -45,6 +45,18 @@ pub(super) fn op_type(
             }
             Ok(Some(Type::I64))
         }
+        Operation::ArraySetPlace(place, index, value) => {
+            let Some(Type::ArrayI64(len)) = function.place_types.get(place.0) else {
+                return Err("place array.set requires an I64 array".into());
+            };
+            if *index >= *len {
+                return Err("constant array index is out of bounds".into());
+            }
+            if ty(*value) != Type::I64 {
+                return Err("array.set expects I64".into());
+            }
+            Ok(None)
+        }
         Operation::Move(value) => {
             if !matches!(ty(*value), Type::Data(_) | Type::ArrayI64(_)) {
                 return Err("move requires a nominal value".into());
@@ -374,6 +386,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::Not(a)
         | Operation::PlaceInit(_, a)
         | Operation::Store(_, a)
+        | Operation::ArraySetPlace(_, _, a)
         | Operation::BorrowEnd(a)
         | Operation::BorrowReborrow(a, _)
         | Operation::LoadRef(a) => vec![*a],
