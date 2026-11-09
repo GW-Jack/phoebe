@@ -992,5 +992,58 @@
     "payload_json": "{\"author\":\"cli\",\"body\":\"Direct one-block wide product construction now writes checked destination fields into the caller-owned result buffer when built from literals and moves. No intermediate product stack slots/loads/stores appear in CLIF; calls retain local fallback. Interpreter/JIT/standalone outputs agree, and full Cargo workspace plus strict Clippy pass. Caller-owned destinations across suspension and fallible construction remain.\"}",
     "actor": "cli",
     "created_at": "2026-11-09 11:06:45"
+  },
+  {
+    "event_id": "e2124f7d36edff2c192f80f993e01eda482186fae60063228ab1ecfd6374eb4a",
+    "parents": [],
+    "issue_id": "e2124f7d36edff2c192f80f993e01eda482186fae60063228ab1ecfd6374eb4a",
+    "kind": "issue.created",
+    "payload_json": "{\"assigned_to\":null,\"body\":\"On Linux CI and local Buck2, adding native::run(&program, \\\"main\\\", &[]) to tests/source_with_product.rs child_failure_cancels_parent_with_partially_moved_product makes the successful path fail with task 0 failed: native runtime ABI fault. The same source succeeds under macOS Cargo and tight-limit cancellation passes. Investigate platform/ABI behavior, restore the normal native assertion, and cover standalone.\",\"filed_by\":\"codex:phoebe-nested-fields\",\"labels\":[\"native\"],\"metadata\":{\"kind\":\"task\"},\"queue\":\"phoebe\",\"title\":\"Fix native runtime ABI fault on nested scoped calls\"}",
+    "actor": "codex:phoebe-nested-fields",
+    "created_at": "2026-11-09 11:07:22"
+  },
+  {
+    "event_id": "b0e5f1326d134462b4af781f41a094730288d788f3040d5315fd4235d35ea01a",
+    "parents": [
+      "373b99321e34995650ea252005414304d9ff18eb95b7212d72ac0e287cb3ef98"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"PR #20 merged: child failure cancels a suspended parent whose scoped product has one moved right and one retained right. Native scheduler reports zero open handles and verifies after cancellation; interpreter/JIT tight-limit paths and Cargo/Buck2/formal CI pass. Remaining: nested partial moves and any broader cancellation cases; WS-10 tracks the newly exposed successful-path native ABI fault.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:09:25"
+  },
+  {
+    "event_id": "bccbafab5375c780ffa2a29c41ac612a4594032178e660c40cf9a5cb86efcc3f",
+    "parents": [
+      "b0e5f1326d134462b4af781f41a094730288d788f3040d5315fd4235d35ea01a"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged cancellation witness for partially moved scoped product; checks passed.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/20\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:09:28"
+  },
+  {
+    "event_id": "2a6fdff00678dedd531e85f6b6fc7ca7482b9eeae840840b21b66427918bc3a2",
+    "parents": [
+      "bccbafab5375c780ffa2a29c41ac612a4594032178e660c40cf9a5cb86efcc3f"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex:phoebe-nested-fields\",\"lease_id\":\"373b99321e34995650ea252005414304d9ff18eb95b7212d72ac0e287cb3ef98\",\"released_at\":\"2026-11-09 11:09:32\"}",
+    "actor": "codex:phoebe-nested-fields",
+    "created_at": "2026-11-09 11:09:32"
+  },
+  {
+    "event_id": "ccd45e267799473a4d4844fce1e3696c407a6efdcfdd39d72bf4b69a8b198cac",
+    "parents": [
+      "c3e68605030eb829cf5859683ac49b814f3d3e2cd6be13bfde4eaa4f8dfe35fd"
+    ],
+    "issue_id": "ede9242a54251cc73d310b790ed3d62548a92ccbee51a93f70b4d79943cd6b86",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged f706a6b: checked single-block wide product construction writes directly to caller result buffer, with effectful fallback and interpreter/JIT/standalone agreement; Cargo/Buck/formal passed.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/21\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:10:07"
   }
 ]
