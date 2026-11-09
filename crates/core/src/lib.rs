@@ -41,6 +41,8 @@ pub enum Value {
     Bool(bool),
     Unit,
     ArrayI64(ArrayValue),
+    BorrowedArrayValue { frame: usize, value: ValueId },
+    BorrowedArrayPlace { frame: usize, place: PlaceId },
     Data(DataId, usize, Option<Box<Value>>),
     Product(DataId, Vec<Value>),
     PartialProduct(DataId, Vec<Option<Value>>),
@@ -65,8 +67,8 @@ pub enum ArrayValue {
 }
 
 impl ArrayValue {
-    pub fn from_slice(words: &[i64]) -> Result<Self, String> {
-        if words.len() < 16 {
+    pub fn from_slice(words: &[i64], shared: bool) -> Result<Self, String> {
+        if !shared {
             Ok(Self::Inline(words.to_vec()))
         } else {
             runtime::SharedWords::try_new(words)
@@ -507,7 +509,10 @@ pub mod generic_calls;
 mod interpreter;
 mod lowering;
 mod scope_verification;
+mod storage;
 mod verification;
+
+pub use storage::StoragePlan;
 
 pub use lowering::{
     lower, lower_checked, lower_linked_checked, lower_linked_reusing, lower_reusing,

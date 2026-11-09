@@ -298,6 +298,7 @@ impl CheckedLinkedProgram {
 
 struct CoreTask {
     program: Arc<Program>,
+    storage: StoragePlan,
     generics: Option<Arc<CheckedModule>>,
     message_catalog: OnceLock<phoebe_message::MessageCatalog>,
     request_descriptor: OnceLock<phoebe_message::RuntimeMessageDescriptor>,
@@ -322,8 +323,10 @@ impl CoreTask {
         entry: FunctionId,
         args: Vec<Value>,
     ) -> Self {
+        let storage = StoragePlan::for_program(&program);
         let mut task = Self {
             program,
+            storage,
             generics,
             message_catalog: OnceLock::new(),
             request_descriptor: OnceLock::new(),
@@ -390,6 +393,23 @@ impl CoreTask {
         self.frames.last().expect("active frame").values[id.0]
             .as_ref()
             .expect("verified value is defined")
+    }
+
+    fn array_words<'a>(&'a self, value: &'a Value) -> &'a [i64] {
+        match value {
+            Value::ArrayI64(words) => words.as_slice(),
+            Value::BorrowedArrayValue { frame, value } => self.array_words(
+                self.frames[*frame].values[value.0]
+                    .as_ref()
+                    .expect("borrowed array source is live"),
+            ),
+            Value::BorrowedArrayPlace { frame, place } => self.array_words(
+                self.stores[self.frames[*frame].base + place.0]
+                    .as_ref()
+                    .expect("borrowed array place is live"),
+            ),
+            _ => unreachable!("verified array value"),
+        }
     }
 
     fn transfer_value(&mut self, id: ValueId) -> Value {
@@ -546,26 +566,21 @@ impl CoreTask {
                 Some(fields[*index].take().expect("verified live field"))
             }
             Operation::ArrayI64(elements) => {
-                let mut words = [0; 32];
+                let mut words = [0; 256];
                 for (slot, element) in words.iter_mut().zip(elements) {
                     *slot = as_i64(get(*element));
                 }
                 Some(Value::ArrayI64(ArrayValue::from_slice(
                     &words[..elements.len()],
+                    self.storage.shares_array(elements.len()),
                 )?))
             }
-            Operation::ArrayGet(array, index) => {
-                let Value::ArrayI64(words) = self.peek_value(*array) else {
-                    unreachable!("verified array get")
-                };
-                Some(Value::I64(words.as_slice()[*index]))
-            }
-            Operation::ArrayLen(array) => {
-                let Value::ArrayI64(words) = self.peek_value(*array) else {
-                    unreachable!("verified array length")
-                };
-                Some(Value::I64(words.as_slice().len() as i64))
-            }
+            Operation::ArrayGet(array, index) => Some(Value::I64(
+                self.array_words(self.peek_value(*array))[*index],
+            )),
+            Operation::ArrayLen(array) => Some(Value::I64(
+                self.array_words(self.peek_value(*array)).len() as i64,
+            )),
             Operation::ArrayGetPlace(place, index) => {
                 let Some(Value::ArrayI64(words)) = &self.stores[base + place.0] else {
                     unreachable!("verified array place")
@@ -586,9 +601,36 @@ impl CoreTask {
             | Operation::PlaceInit(_, _)
             | Operation::Store(_, _) => unreachable!("handled owned transfer above"),
             Operation::StoreField(_, _, _) => unreachable!("handled owned transfer above"),
-            Operation::Copy(value) | Operation::InferredCopy(value) => Some(get(*value)),
+            Operation::Copy(value) => {
+                let function = self.frames.last().expect("active frame").function;
+                if self
+                    .storage
+                    .shares_type(self.program.functions[function.0].value_types[value.0])
+                {
+                    Some(Value::ArrayI64(ArrayValue::from_slice(
+                        self.array_words(self.peek_value(*value)),
+                        true,
+                    )?))
+                } else {
+                    Some(get(*value))
+                }
+            }
+            Operation::InferredCopy(value) => {
+                let frame = self.frames.last().expect("active frame");
+                if instruction
+                    .result
+                    .is_some_and(|result| self.storage.borrows_copy(frame.function.0, result))
+                {
+                    Some(Value::BorrowedArrayValue {
+                        frame: self.frames.len() - 1,
+                        value: *value,
+                    })
+                } else {
+                    Some(get(*value))
+                }
+            }
             Operation::Field(owner, index) => {
-                let Value::Product(_, fields) = get(*owner) else {
+                let Value::Product(_, fields) = self.peek_value(*owner) else {
                     unreachable!("verified product")
                 };
                 Some(fields[*index].clone())
@@ -619,10 +661,37 @@ impl CoreTask {
                 args.iter().map(|value| get(*value)).collect(),
                 0,
             )?),
-            Operation::Load(place)
-            | Operation::CopyPlace(place)
-            | Operation::InferredCopyPlace(place) => {
-                Some(self.stores[base + place.0].clone().expect("verified place"))
+            Operation::CopyPlace(place) => {
+                let function = self.frames.last().expect("active frame").function;
+                if self
+                    .storage
+                    .shares_type(self.program.functions[function.0].place_types[place.0])
+                {
+                    Some(Value::ArrayI64(ArrayValue::from_slice(
+                        self.array_words(
+                            self.stores[base + place.0]
+                                .as_ref()
+                                .expect("verified place"),
+                        ),
+                        true,
+                    )?))
+                } else {
+                    Some(self.stores[base + place.0].clone().expect("verified place"))
+                }
+            }
+            Operation::Load(place) | Operation::InferredCopyPlace(place) => {
+                let frame = self.frames.last().expect("active frame");
+                if instruction
+                    .result
+                    .is_some_and(|result| self.storage.borrows_copy(frame.function.0, result))
+                {
+                    Some(Value::BorrowedArrayPlace {
+                        frame: self.frames.len() - 1,
+                        place: *place,
+                    })
+                } else {
+                    Some(self.stores[base + place.0].clone().expect("verified place"))
+                }
             }
             Operation::Take(place) => Some(
                 self.stores[base + place.0]
@@ -726,9 +795,19 @@ impl CoreTask {
                 let instruction = block.instructions[frame.instruction].clone();
                 if let Operation::Call(target, args) = &instruction.operation {
                     let base = frame.base;
+                    let caller_frame = self.frames.len() - 1;
                     let args = args
                         .iter()
-                        .map(|arg| match arg {
+                        .enumerate()
+                        .map(|(param, arg)| match arg {
+                            CallArg::Value(value)
+                                if self.storage.borrows_param(target.0, param) =>
+                            {
+                                Value::BorrowedArrayValue {
+                                    frame: caller_frame,
+                                    value: *value,
+                                }
+                            }
                             CallArg::Value(value) => self.owned_value(*value),
                             CallArg::Ref(value, _) => self.value(*value),
                             CallArg::Borrow(place, _) => Value::Ref(base + place.0),
@@ -1253,6 +1332,8 @@ fn as_i64(value: Value) -> i64 {
         Value::Bool(_)
         | Value::Unit
         | Value::ArrayI64(_)
+        | Value::BorrowedArrayValue { .. }
+        | Value::BorrowedArrayPlace { .. }
         | Value::Data(_, _, _)
         | Value::Product(_, _)
         | Value::PartialProduct(_, _)
@@ -1276,6 +1357,8 @@ fn as_bool(value: Value) -> bool {
         Value::I64(_)
         | Value::Unit
         | Value::ArrayI64(_)
+        | Value::BorrowedArrayValue { .. }
+        | Value::BorrowedArrayPlace { .. }
         | Value::Data(_, _, _)
         | Value::Product(_, _)
         | Value::PartialProduct(_, _)

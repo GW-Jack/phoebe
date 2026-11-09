@@ -52,7 +52,7 @@ fn fixed_array_signatures_and_data_cross_calls() {
 #[test]
 fn fixed_array_type_bounds_and_borrows_are_diagnosed() {
     for (source, expected) in [
-        ("fn id(xs: [I64; 33]) -> Unit {}", "exceeds 32 elements"),
+        ("fn id(xs: [I64; 257]) -> Unit {}", "exceeds 256 elements"),
         ("fn id(xs: [Bool; 2]) -> Unit {}", "I64 array element type"),
         (
             "fn id(xs: &[I64; 2]) -> Unit {}",
@@ -138,7 +138,7 @@ fn indexed_array_update_preserves_prior_values_across_backends() {
 }
 
 #[test]
-fn shared_size_array_update_preserves_prior_value_across_backends() {
+fn larger_inline_array_update_preserves_prior_value_across_backends() {
     let elements = std::iter::once("40")
         .chain(std::iter::repeat_n("0", 30))
         .chain(std::iter::once("2"))
@@ -152,6 +152,57 @@ fn shared_size_array_update_preserves_prior_value_across_backends() {
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
     let path = std::env::temp_dir().join(format!(
         "phoebe-shared-size-array-update-{}",
+        std::process::id()
+    ));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn managed_array_call_preserves_caller_value_across_backends() {
+    let elements = std::iter::once("40")
+        .chain(std::iter::repeat_n("0", 254))
+        .chain(std::iter::once("2"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let source = format!(
+        "fn edit(xs: [I64; 256]) -> I64 {{ var local = xs; local[0] = 0; local[255] }}\n\
+         fn main() -> I64 {{ var a = [{elements}]; val prior = a; edit(a) + prior[0] }}"
+    );
+    let program = lower(&source);
+    assert!(core::StoragePlan::for_program(&program).shares_array(256));
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path =
+        std::env::temp_dir().join(format!("phoebe-managed-array-call-{}", std::process::id()));
+    native::build_executable(&program, &path).unwrap();
+    let output = Command::new(&path).output().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+    let clif = native::clif(&program).unwrap();
+    assert!(clif.contains("trapz"), "{clif}");
+}
+
+#[test]
+fn retained_large_array_uses_checked_inline_fallback() {
+    let elements = std::iter::once("40")
+        .chain(std::iter::repeat_n("0", 254))
+        .chain(std::iter::once("2"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let source = format!(
+        "fn main() -> I64 {{ var a = [{elements}]; val prior = a; yield; a[0] = 0; prior[0] + a[255] }}"
+    );
+    let program = lower(&source);
+    assert!(!core::StoragePlan::for_program(&program).has_shared_arrays());
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+    let path = std::env::temp_dir().join(format!(
+        "phoebe-retained-large-array-{}",
         std::process::id()
     ));
     native::build_executable(&program, &path).unwrap();

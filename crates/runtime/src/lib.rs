@@ -328,9 +328,11 @@ mod native;
 pub use native::*;
 mod managed_words;
 pub use managed_words::{
-    ManagedWords, SharedWords, WordsError, phoebe_words_get, phoebe_words_new,
-    phoebe_words_release, phoebe_words_retain, phoebe_words_set,
+    MANAGED_WORDS_DATA_OFFSET, ManagedWords, SharedWords, WordsError, phoebe_words_get,
+    phoebe_words_new, phoebe_words_release, phoebe_words_retain, phoebe_words_set,
 };
+#[cfg(debug_assertions)]
+pub use managed_words::{debug_live_word_allocations, debug_word_retain_calls};
 mod native_reply;
 mod native_scope;
 pub use native_reply::*;

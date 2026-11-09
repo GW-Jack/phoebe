@@ -15,6 +15,7 @@ memory instructions:
 | Event | Meaning | Required provenance |
 | --- | --- | --- |
 | `copy.value` | Independent copy of fixed-size nominal components | Explicit `copy(x)` or an inferred closed-value name or field use |
+| `storage.allocate`, `storage.retain`, `storage.borrow`, `storage.release`, `storage.copy_words`, `storage.cow` | Possible managed-array allocation, owner change, call-scoped read, explicit byte copy, cleanup, or copy-on-write | Selected 256-word array construction, reuse, read-only call, explicit `copy`, replacement/exit, or indexed write |
 | `copy.bytes` | Copy a variable-size value | Explicit `copy`, copy-on-write, channel send/receive, or another named value-semantic boundary |
 | `storage.grow` | Obtain storage for a growing task-local value | Constructed value and owning region |
 | `check.bounds` | Check an index against a collection length | Indexed access and the absence of a range proof |
@@ -36,7 +37,8 @@ proposed proof boundary and its limits.
 
 These are logical events, not exact counts of memory instructions. A
 `copy.value` may be carried entirely in registers. The current executable
-compiler emits this event for explicit and inferred nominal copies, `task.create` for
+compiler emits `copy.value` for inline nominal copies and the `storage.*`
+sites above for selected managed arrays, `task.create` for
 source `spawn`, `task.yield` for explicit yields and automatic loop checkpoints,
 and `channel.op` for scalar and typed channel construction and closes of owned communication capabilities. Its static
 site ledger is available with `phoebe cost <file>`; it does not count dynamic
@@ -51,8 +53,9 @@ instructions for one event or eliminate instructions when semantics allow it.
    semantics under Decision 0006: ordinary reuse needs no `copy(x)`. The
    current compiler copies fixed-size components at inferred reuse sites and
    moves a final SSA or closed place use according to CFG liveness. Cranelift
-   may remove redundant machine moves. Shared storage and copy-on-write are
-   not implemented.
+   may remove redundant machine moves. Copied 256-word bare arrays in direct
+   programs can use checked shared storage, read-only call borrowing, and
+   copy-on-write; other arrays retain the inline path.
 2. Variable-size closed values must follow the same source contract. The
    intended representation can borrow, transfer a sole owner, or retain shared
    immutable storage; a later write may copy. `&T` and `&mut T` remain explicit
@@ -128,7 +131,8 @@ operation and is necessary under the initial task-local ownership model.
 ## 4. Verification path
 
 The executable compiler emits a tab-separated static cost-site ledger on
-demand with `phoebe cost <file>`. It currently records `copy.value`,
+demand with `phoebe cost <file>`. It currently records `copy.value`, the six
+`storage.*` sites for selected managed arrays,
 `task.create`, `task.yield`, `scope.enter`, `scope.join`, and source-spanned
 `channel.op` sites for handle, reply, request, and structural aggregate closes. A
 capability-free `close_caps()` produces no channel cost site or native runtime

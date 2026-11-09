@@ -60,10 +60,10 @@ impl Parser {
                 let mut elements = Vec::new();
                 if self.current().kind != TokenKind::RBracket {
                     loop {
-                        if elements.len() == 32 {
+                        if elements.len() == 256 {
                             return Err(Diagnostic::new(
                                 self.current().span,
-                                "inline I64 array exceeds 32 elements",
+                                "fixed I64 array exceeds 256 elements",
                             ));
                         }
                         elements.push(self.expr(0)?);

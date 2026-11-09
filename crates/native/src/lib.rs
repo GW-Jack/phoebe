@@ -10,8 +10,8 @@ use std::task::Poll;
 use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
-    AbiParam, ArgumentPurpose, MemFlagsData, Signature, StackSlotData, StackSlotKind, UserFuncName,
-    Value as ClValue, types,
+    AbiParam, ArgumentPurpose, MemFlagsData, Signature, StackSlotData, StackSlotKind, TrapCode,
+    UserFuncName, Value as ClValue, types,
 };
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -202,6 +202,24 @@ fn compile_jit_impl(
         .finish(settings::Flags::new(flags))
         .map_err(|e| e.to_string())?;
     let mut jit = JITBuilder::with_isa(isa, default_libcall_names());
+    if core::StoragePlan::for_program(program).has_shared_arrays() {
+        jit.symbol(
+            "phoebe_rt_v1_words_new",
+            runtime::phoebe_words_new as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_words_retain",
+            runtime::phoebe_words_retain as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_words_release",
+            runtime::phoebe_words_release as *const u8,
+        );
+        jit.symbol(
+            "phoebe_rt_v1_words_set",
+            runtime::phoebe_words_set as *const u8,
+        );
+    }
     let mut poll_children = Vec::new();
     let direct = linked.map(|_| standalone_direct_functions(program, entry_id, &suspendable));
     let poll_children_ids = if let Some(direct) = &direct {
@@ -736,10 +754,12 @@ fn link_executable(
     emitted: &ObjectEmission,
     output: &Path,
 ) -> Result<(), String> {
+    let main_uses_runtime = program
+        .function("main")
+        .is_some_and(|(main, _)| program.runtime_context_functions()[main.0]);
     let runtime_archive = if emitted.poll_words.is_some()
-        || program
-            .function("main")
-            .is_some_and(|(main, _)| program.runtime_context_functions()[main.0])
+        || core::StoragePlan::for_program(program).has_shared_arrays()
+        || main_uses_runtime
     {
         Some(find_runtime_archive()?)
     } else {
@@ -774,7 +794,7 @@ fn link_executable(
             format!(
                 "#include <stdio.h>\n#include <stddef.h>\nextern long long phoebe_main_poll(void *, long long *);\nextern int phoebe_rt_v1_main_poll_diagnostic(long long (*)(void *, long long *), long long, long long *, unsigned char *, size_t);\nint main(void) {{ long long value = 0; unsigned char error[512] = {{0}}; if (phoebe_rt_v1_main_poll_diagnostic(phoebe_main_poll, {words}, &value, error, sizeof(error))) {{ fprintf(stderr, \"phoebe runtime failed: %s\\n\", error[0] ? (char *)error : \"unknown error\"); return 1; }} printf(\"%lld\\n\", value); return 0; }}\n"
             )
-        } else if runtime_archive.is_some() {
+        } else if main_uses_runtime {
             "#include <stdio.h>\n#include <stddef.h>\nextern long long phoebe_main(void *);\nextern int phoebe_rt_v1_main_diagnostic(long long (*)(void *), long long *, unsigned char *, size_t);\nint main(void) { long long value = 0; unsigned char error[512] = {0}; if (phoebe_rt_v1_main_diagnostic(phoebe_main, &value, error, sizeof(error))) { fprintf(stderr, \"phoebe runtime failed: %s\\n\", error[0] ? (char *)error : \"unknown error\"); return 1; } printf(\"%lld\\n\", value); return 0; }\n".to_owned()
         } else {
             "#include <stdio.h>\nextern long long phoebe_main(void);\nint main(void) { printf(\"%lld\\n\", phoebe_main()); return 0; }\n".to_owned()

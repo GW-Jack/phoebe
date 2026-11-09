@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::runtime_imports::{
-    declare_reply_imports, declare_request_imports, declare_typed_imports,
+    declare_reply_imports, declare_request_imports, declare_typed_imports, declare_words_imports,
 };
 
 /// Phoebe currently flattens only integer and pointer-shaped return parts.
@@ -54,9 +54,32 @@ pub(super) fn emit_direct_call(
         .collect()
 }
 
+fn clear_owner(
+    builder: &mut FunctionBuilder<'_>,
+    slot: cranelift_codegen::ir::StackSlot,
+    pointer: cranelift_codegen::ir::Type,
+) {
+    let zero = builder.ins().iconst(pointer, 0);
+    builder.ins().stack_store(pointer, zero, slot, 0);
+}
+
+fn release_owner<M: Module>(
+    module: &mut M,
+    builder: &mut FunctionBuilder<'_>,
+    release: FuncId,
+    slot: cranelift_codegen::ir::StackSlot,
+    pointer: cranelift_codegen::ir::Type,
+) {
+    let value = builder.ins().stack_load(pointer, pointer, slot, 0);
+    let callee = module.declare_func_in_func(release, builder.func);
+    builder.ins().call(callee, &[value]);
+    clear_owner(builder, slot, pointer);
+}
+
 pub(super) struct AbiShapes {
     shapes: phoebe_abi::Shapes,
     pointer_type: cranelift_codegen::ir::Type,
+    storage: core::StoragePlan,
 }
 
 impl AbiShapes {
@@ -67,10 +90,14 @@ impl AbiShapes {
         Ok(Self {
             shapes: phoebe_abi::Shapes::new(program)?,
             pointer_type,
+            storage: core::StoragePlan::for_program(program),
         })
     }
 
     pub(super) fn types(&self, ty: Type) -> Vec<cranelift_codegen::ir::Type> {
+        if self.storage.shares_type(ty) {
+            return vec![self.pointer_type];
+        }
         self.shapes
             .parts(ty)
             .expect("checked Core type has an ABI shape")
@@ -81,6 +108,22 @@ impl AbiShapes {
                 phoebe_abi::Part::Address => self.pointer_type,
             })
             .collect()
+    }
+
+    pub(super) fn shares_type(&self, ty: Type) -> bool {
+        self.storage.shares_type(ty)
+    }
+
+    pub(super) fn has_shared_arrays(&self) -> bool {
+        self.storage.has_shared_arrays()
+    }
+
+    fn borrows_param(&self, function: usize, index: usize) -> bool {
+        self.storage.borrows_param(function, index)
+    }
+
+    fn borrows_copy(&self, function: usize, result: core::ValueId) -> bool {
+        self.storage.borrows_copy(function, result)
     }
 
     pub(super) fn field_offset(&self, root: Type, path: &[usize]) -> usize {
@@ -293,6 +336,11 @@ pub(super) fn compile_functions<M: Module>(
     } else {
         None
     };
+    let words_imports = if shapes.has_shared_arrays() {
+        Some(declare_words_imports(module, pointer_type)?)
+    } else {
+        None
+    };
     let mut ids = Vec::with_capacity(program.functions.len());
     for (index, function) in program.functions.iter().enumerate() {
         let mut signature = module.make_signature();
@@ -442,6 +490,28 @@ pub(super) fn compile_functions<M: Module>(
                         .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>();
+            let value_owners = function
+                .value_types
+                .iter()
+                .enumerate()
+                .map(|(value_id, ty)| {
+                    let borrowed_param = function.blocks[0]
+                        .params
+                        .iter()
+                        .enumerate()
+                        .any(|(param, id)| id.0 == value_id && shapes.borrows_param(index, param));
+                    (shapes.shares_type(*ty)
+                        && !borrowed_param
+                        && !shapes.borrows_copy(index, core::ValueId(value_id)))
+                    .then(|| {
+                        builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ))
+                    })
+                })
+                .collect::<Vec<_>>();
             builder.append_block_params_for_function_params(blocks[0]);
             let return_address = (shapes.types(function.return_type).len() > register_results)
                 .then(|| {
@@ -528,6 +598,26 @@ pub(super) fn compile_functions<M: Module>(
             for block_id in order {
                 let block = &function.blocks[block_id];
                 builder.switch_to_block(blocks[block_id]);
+                if block_id == 0 {
+                    for slot in value_owners.iter().flatten() {
+                        clear_owner(&mut builder, *slot, pointer_type);
+                    }
+                    for (place_id, ty) in function.place_types.iter().enumerate() {
+                        if shapes.shares_type(*ty) {
+                            clear_owner(&mut builder, places[place_id][0], pointer_type);
+                        }
+                    }
+                    for param in &block.params {
+                        if let Some(slot) = value_owners[param.0] {
+                            builder.ins().stack_store(
+                                pointer_type,
+                                values[param.0].as_ref().expect("entry parameter")[0],
+                                slot,
+                                0,
+                            );
+                        }
+                    }
+                }
                 for (instruction_index, instruction) in block.instructions.iter().enumerate() {
                     let get = |id: core::ValueId| {
                         values[id.0].clone().expect("verified value is defined")
@@ -545,25 +635,98 @@ pub(super) fn compile_functions<M: Module>(
                         }
                         Operation::Unit => Some(Vec::new()),
                         Operation::ArrayI64(elements) => {
-                            Some(elements.iter().map(|element| one(*element)).collect())
+                            if shapes.shares_type(Type::ArrayI64(elements.len())) {
+                                let words = words_imports.expect("managed words imports");
+                                let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                                    StackSlotKind::ExplicitSlot,
+                                    u32::try_from(elements.len() * 8)
+                                        .map_err(|_| "managed array stack size overflow")?,
+                                    3,
+                                ));
+                                for (index, element) in elements.iter().enumerate() {
+                                    builder.ins().stack_store(
+                                        pointer_type,
+                                        one(*element),
+                                        slot,
+                                        i32::try_from(index * 8)
+                                            .map_err(|_| "managed array offset overflow")?,
+                                    );
+                                }
+                                let source = builder.ins().stack_addr(pointer_type, slot, 0);
+                                let len = builder.ins().iconst(pointer_type, elements.len() as i64);
+                                let callee = module.declare_func_in_func(words.new, builder.func);
+                                let call = builder.ins().call(callee, &[source, len]);
+                                let pointer = builder.inst_results(call)[0];
+                                builder.ins().trapz(pointer, TrapCode::unwrap_user(1));
+                                Some(vec![pointer])
+                            } else {
+                                Some(elements.iter().map(|element| one(*element)).collect())
+                            }
                         }
-                        Operation::ArrayGet(array, index) => Some(vec![get(*array)[*index]]),
+                        Operation::ArrayGet(array, index) => {
+                            if shapes.shares_type(function.value_types[array.0]) {
+                                let offset = runtime::MANAGED_WORDS_DATA_OFFSET
+                                    + i32::try_from(*index * 8)
+                                        .map_err(|_| "managed array read offset overflow")?;
+                                Some(vec![builder.ins().load(
+                                    types::I64,
+                                    MemFlagsData::new(),
+                                    one(*array),
+                                    offset,
+                                )])
+                            } else {
+                                Some(vec![get(*array)[*index]])
+                            }
+                        }
                         Operation::ArrayGetPlace(place, index) => {
-                            Some(vec![builder.ins().stack_load(
-                                pointer_type,
-                                types::I64,
-                                places[place.0][*index],
-                                0,
-                            )])
+                            if shapes.shares_type(function.place_types[place.0]) {
+                                let pointer = builder.ins().stack_load(
+                                    pointer_type,
+                                    pointer_type,
+                                    places[place.0][0],
+                                    0,
+                                );
+                                let offset = runtime::MANAGED_WORDS_DATA_OFFSET
+                                    + i32::try_from(*index * 8)
+                                        .map_err(|_| "managed array read offset overflow")?;
+                                Some(vec![builder.ins().load(
+                                    types::I64,
+                                    MemFlagsData::new(),
+                                    pointer,
+                                    offset,
+                                )])
+                            } else {
+                                Some(vec![builder.ins().stack_load(
+                                    pointer_type,
+                                    types::I64,
+                                    places[place.0][*index],
+                                    0,
+                                )])
+                            }
                         }
                         Operation::ArraySetPlace(place, index, value) => {
                             let component = one(*value);
-                            builder.ins().stack_store(
-                                pointer_type,
-                                component,
-                                places[place.0][*index],
-                                0,
-                            );
+                            if shapes.shares_type(function.place_types[place.0]) {
+                                let words = words_imports.expect("managed words imports");
+                                let address =
+                                    builder
+                                        .ins()
+                                        .stack_addr(pointer_type, places[place.0][0], 0);
+                                let index = builder.ins().iconst(pointer_type, *index as i64);
+                                let callee = module.declare_func_in_func(words.set, builder.func);
+                                let call = builder.ins().call(callee, &[address, index, component]);
+                                let status = builder.inst_results(call)[0];
+                                let failed =
+                                    builder.ins().icmp_imm_s(IntCC::SignedLessThan, status, 0);
+                                builder.ins().trapnz(failed, TrapCode::unwrap_user(1));
+                            } else {
+                                builder.ins().stack_store(
+                                    pointer_type,
+                                    component,
+                                    places[place.0][*index],
+                                    0,
+                                );
+                            }
                             None
                         }
                         Operation::ArrayLen(array) => {
@@ -572,9 +735,44 @@ pub(super) fn compile_functions<M: Module>(
                             };
                             Some(vec![builder.ins().iconst(types::I64, len as i64)])
                         }
-                        Operation::Move(value)
-                        | Operation::Copy(value)
-                        | Operation::InferredCopy(value) => Some(get(*value)),
+                        Operation::Move(value) => {
+                            let moved = get(*value);
+                            if let Some(slot) = value_owners[value.0] {
+                                clear_owner(&mut builder, slot, pointer_type);
+                            }
+                            Some(moved)
+                        }
+                        Operation::Copy(value) | Operation::InferredCopy(value) => {
+                            let mut copied = get(*value);
+                            if shapes.shares_type(function.value_types[value.0]) {
+                                let words = words_imports.expect("managed words imports");
+                                if matches!(instruction.operation, Operation::Copy(_)) {
+                                    let Type::ArrayI64(len) = function.value_types[value.0] else {
+                                        unreachable!("managed array type")
+                                    };
+                                    let data = builder.ins().iadd_imm_u(
+                                        copied[0],
+                                        i64::from(runtime::MANAGED_WORDS_DATA_OFFSET),
+                                    );
+                                    let len = builder.ins().iconst(pointer_type, len as i64);
+                                    let callee =
+                                        module.declare_func_in_func(words.new, builder.func);
+                                    let call = builder.ins().call(callee, &[data, len]);
+                                    copied[0] = builder.inst_results(call)[0];
+                                    builder.ins().trapz(copied[0], TrapCode::unwrap_user(1));
+                                } else if !instruction
+                                    .result
+                                    .is_some_and(|result| shapes.borrows_copy(index, result))
+                                {
+                                    let callee =
+                                        module.declare_func_in_func(words.retain, builder.func);
+                                    let call = builder.ins().call(callee, &[copied[0]]);
+                                    let status = builder.inst_results(call)[0];
+                                    builder.ins().trapnz(status, TrapCode::unwrap_user(1));
+                                }
+                            }
+                            Some(copied)
+                        }
                         Operation::BorrowBegin(place, _) => Some(vec![builder.ins().stack_addr(
                             pointer_type,
                             places[place.0][0],
@@ -734,7 +932,7 @@ pub(super) fn compile_functions<M: Module>(
                         )]),
                         Operation::Call(target, args) => {
                             let callee = module.declare_func_in_func(ids[target.0].0, builder.func);
-                            let mut args = args
+                            let mut call_args = args
                                 .iter()
                                 .flat_map(|arg| match arg {
                                     CallArg::Value(value) | CallArg::Ref(value, _) => get(*value),
@@ -758,16 +956,25 @@ pub(super) fn compile_functions<M: Module>(
                                 .collect::<Vec<_>>();
                             if context_functions[target.0] {
                                 let context = runtime_context.expect("caller context propagation");
-                                args.insert(0, context);
+                                call_args.insert(0, context);
                             }
-                            Some(emit_direct_call(
+                            let returned = emit_direct_call(
                                 &mut builder,
                                 callee,
-                                args,
+                                call_args,
                                 &shapes.types(program.functions[target.0].return_type),
                                 pointer_type,
                                 register_results,
-                            )?)
+                            )?;
+                            for (param, arg) in args.iter().enumerate() {
+                                if let CallArg::Value(value) = arg
+                                    && !shapes.borrows_param(target.0, param)
+                                    && let Some(slot) = value_owners[value.0]
+                                {
+                                    clear_owner(&mut builder, slot, pointer_type);
+                                }
+                            }
+                            Some(returned)
                         }
                         Operation::GenericCall { args, .. } => {
                             let target = generics
@@ -826,6 +1033,15 @@ pub(super) fn compile_functions<M: Module>(
                             None
                         }
                         Operation::CloseCaps(value) => {
+                            if let Some(slot) = value_owners[value.0] {
+                                release_owner(
+                                    module,
+                                    &mut builder,
+                                    words_imports.expect("managed words imports").release,
+                                    slot,
+                                    pointer_type,
+                                );
+                            }
                             let parts = get(*value);
                             let plan = shapes.close_plan(function.value_types[value.0]);
                             close::emit(&mut builder, &plan, &parts, &mut |builder, ty, token| {
@@ -874,24 +1090,81 @@ pub(super) fn compile_functions<M: Module>(
                             None
                         }
                         Operation::PlaceInit(place, value) | Operation::Store(place, value) => {
-                            for (component, slot) in get(*value).into_iter().zip(&places[place.0]) {
+                            let stored = get(*value);
+                            if shapes.shares_type(function.place_types[place.0]) {
+                                let release = words_imports.expect("managed words imports").release;
+                                release_owner(
+                                    module,
+                                    &mut builder,
+                                    release,
+                                    places[place.0][0],
+                                    pointer_type,
+                                );
+                                clear_owner(
+                                    &mut builder,
+                                    value_owners[value.0].expect("managed source owner"),
+                                    pointer_type,
+                                );
+                            }
+                            for (component, slot) in stored.into_iter().zip(&places[place.0]) {
                                 builder.ins().stack_store(pointer_type, component, *slot, 0);
                             }
                             None
                         }
                         Operation::Load(place)
-                        | Operation::Take(place)
                         | Operation::CopyPlace(place)
-                        | Operation::InferredCopyPlace(place) => Some(
-                            shapes
+                        | Operation::InferredCopyPlace(place) => {
+                            let mut loaded = shapes
                                 .types(function.place_types[place.0])
                                 .into_iter()
                                 .zip(&places[place.0])
                                 .map(|(ty, slot)| {
                                     builder.ins().stack_load(pointer_type, ty, *slot, 0)
                                 })
-                                .collect(),
-                        ),
+                                .collect::<Vec<_>>();
+                            if shapes.shares_type(function.place_types[place.0]) {
+                                let words = words_imports.expect("managed words imports");
+                                if matches!(instruction.operation, Operation::CopyPlace(_)) {
+                                    let Type::ArrayI64(len) = function.place_types[place.0] else {
+                                        unreachable!("managed array type")
+                                    };
+                                    let data = builder.ins().iadd_imm_u(
+                                        loaded[0],
+                                        i64::from(runtime::MANAGED_WORDS_DATA_OFFSET),
+                                    );
+                                    let len = builder.ins().iconst(pointer_type, len as i64);
+                                    let callee =
+                                        module.declare_func_in_func(words.new, builder.func);
+                                    let call = builder.ins().call(callee, &[data, len]);
+                                    loaded[0] = builder.inst_results(call)[0];
+                                    builder.ins().trapz(loaded[0], TrapCode::unwrap_user(1));
+                                } else if !instruction
+                                    .result
+                                    .is_some_and(|result| shapes.borrows_copy(index, result))
+                                {
+                                    let callee =
+                                        module.declare_func_in_func(words.retain, builder.func);
+                                    let call = builder.ins().call(callee, &[loaded[0]]);
+                                    let status = builder.inst_results(call)[0];
+                                    builder.ins().trapnz(status, TrapCode::unwrap_user(1));
+                                }
+                            }
+                            Some(loaded)
+                        }
+                        Operation::Take(place) => {
+                            let loaded = shapes
+                                .types(function.place_types[place.0])
+                                .into_iter()
+                                .zip(&places[place.0])
+                                .map(|(ty, slot)| {
+                                    builder.ins().stack_load(pointer_type, ty, *slot, 0)
+                                })
+                                .collect::<Vec<_>>();
+                            if shapes.shares_type(function.place_types[place.0]) {
+                                clear_owner(&mut builder, places[place.0][0], pointer_type);
+                            }
+                            Some(loaded)
+                        }
                         Operation::PackRequest { value, right } => {
                             Some(vec![one(*value), one(*right)])
                         }
@@ -911,6 +1184,17 @@ pub(super) fn compile_functions<M: Module>(
                         }
                     };
                     if let Some(result) = instruction.result {
+                        if let Some(slot) = value_owners[result.0] {
+                            let pointer = value.as_ref().expect("managed result")[0];
+                            release_owner(
+                                module,
+                                &mut builder,
+                                words_imports.expect("managed words imports").release,
+                                slot,
+                                pointer_type,
+                            );
+                            builder.ins().stack_store(pointer_type, pointer, slot, 0);
+                        }
                         values[result.0] = value;
                     }
                 }
@@ -930,6 +1214,31 @@ pub(super) fn compile_functions<M: Module>(
                     }
                     Terminator::Return(value) => {
                         let returned = get(*value);
+                        if let Some(slot) = value_owners[value.0] {
+                            clear_owner(&mut builder, slot, pointer_type);
+                        }
+                        if let Some(words) = words_imports {
+                            for slot in value_owners.iter().flatten() {
+                                release_owner(
+                                    module,
+                                    &mut builder,
+                                    words.release,
+                                    *slot,
+                                    pointer_type,
+                                );
+                            }
+                            for (place_id, ty) in function.place_types.iter().enumerate() {
+                                if shapes.shares_type(*ty) {
+                                    release_owner(
+                                        module,
+                                        &mut builder,
+                                        words.release,
+                                        places[place_id][0],
+                                        pointer_type,
+                                    );
+                                }
+                            }
+                        }
                         if let Some(address) = return_address {
                             for (part, (component, ty)) in returned
                                 .into_iter()
@@ -953,12 +1262,31 @@ pub(super) fn compile_functions<M: Module>(
                         }
                     }
                     Terminator::Jump(target, args) => {
-                        let args = args
+                        let arguments = args
                             .iter()
                             .flat_map(|arg| get(*arg))
                             .map(Into::into)
                             .collect::<Vec<_>>();
-                        builder.ins().jump(blocks[target.0], &args);
+                        for arg in args {
+                            if let Some(slot) = value_owners[arg.0] {
+                                clear_owner(&mut builder, slot, pointer_type);
+                            }
+                        }
+                        for (arg, param) in args.iter().zip(&function.blocks[target.0].params) {
+                            if let Some(slot) = value_owners[param.0] {
+                                release_owner(
+                                    module,
+                                    &mut builder,
+                                    words_imports.expect("managed words imports").release,
+                                    slot,
+                                    pointer_type,
+                                );
+                                builder
+                                    .ins()
+                                    .stack_store(pointer_type, get(*arg)[0], slot, 0);
+                            }
+                        }
+                        builder.ins().jump(blocks[target.0], &arguments);
                     }
                     Terminator::Branch {
                         condition,

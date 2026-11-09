@@ -19,10 +19,10 @@ impl Parser {
             let TokenKind::Int(len) = count.kind else {
                 return Err(Diagnostic::new(count.span, "expected fixed array length"));
             };
-            if len > 32 {
+            if len > 256 {
                 return Err(Diagnostic::new(
                     count.span,
-                    "inline I64 array exceeds 32 elements",
+                    "fixed I64 array exceeds 256 elements",
                 ));
             }
             self.pos += 1;

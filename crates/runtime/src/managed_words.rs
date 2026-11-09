@@ -18,6 +18,29 @@ pub struct ManagedWords {
     len: usize,
 }
 
+/// V1 generated-code ABI: the initialized I64 payload begins immediately
+/// after the aligned header. Only checked constant indices may use this
+/// offset, and the caller must keep an owning or borrowed pointer live.
+pub const MANAGED_WORDS_DATA_OFFSET: i32 = std::mem::size_of::<ManagedWords>() as i32;
+
+#[cfg(debug_assertions)]
+static LIVE_ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(debug_assertions)]
+static RETAIN_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+/// Debug-only allocation count for checking generated owner cleanup. It does
+/// not count references or serve as a production cost profiler.
+#[cfg(debug_assertions)]
+pub fn debug_live_word_allocations() -> usize {
+    LIVE_ALLOCATIONS.load(Ordering::SeqCst)
+}
+
+#[cfg(debug_assertions)]
+pub fn debug_word_retain_calls() -> usize {
+    RETAIN_CALLS.load(Ordering::SeqCst)
+}
+
 fn storage_layout(len: usize) -> Result<(Layout, usize), WordsError> {
     let elements = Layout::array::<i64>(len).map_err(|_| WordsError::Allocation)?;
     let (layout, offset) = Layout::new::<ManagedWords>()
@@ -27,7 +50,9 @@ fn storage_layout(len: usize) -> Result<(Layout, usize), WordsError> {
 }
 
 fn words_offset() -> usize {
-    storage_layout(0).expect("header layout fits").1
+    let offset = storage_layout(0).expect("header layout fits").1;
+    debug_assert_eq!(offset, MANAGED_WORDS_DATA_OFFSET as usize);
+    offset
 }
 
 unsafe fn data(pointer: NonNull<ManagedWords>) -> *mut i64 {
@@ -92,6 +117,8 @@ impl SharedWords {
             });
             ptr::copy_nonoverlapping(words.as_ptr(), data(pointer), words.len());
         }
+        #[cfg(debug_assertions)]
+        LIVE_ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
         Ok(Self(pointer))
     }
 
@@ -117,6 +144,8 @@ impl SharedWords {
                 (count > 0 && count < isize::MAX as usize).then_some(count + 1)
             })
             .map_err(|_| WordsError::RefcountOverflow)?;
+        #[cfg(debug_assertions)]
+        RETAIN_CALLS.fetch_add(1, Ordering::SeqCst);
         Ok(Self(self.0))
     }
 
@@ -182,6 +211,8 @@ impl Drop for SharedWords {
         }
         fence(Ordering::Acquire);
         let (layout, _) = storage_layout(header.len).expect("allocated layout remains valid");
+        #[cfg(debug_assertions)]
+        LIVE_ALLOCATIONS.fetch_sub(1, Ordering::SeqCst);
         // SAFETY: this was the final owner, and `layout` is the one used for
         // the original global-allocator allocation.
         unsafe { dealloc(self.0.as_ptr().cast::<u8>(), layout) };

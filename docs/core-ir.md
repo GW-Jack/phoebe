@@ -108,10 +108,12 @@ operations instead of cloning them at those boundaries. Its boxed values remain
 a reference implementation, not a native allocation model. `affine-ownership.md` gives the abstract
 transition rules and their evidence boundary.
 
-Fixed inline arrays have a checked `place.array.set` operation for a constant
+Fixed arrays have a checked `place.array.set` operation for a constant
 index. The operation requires an initialized mutable array place and an `I64`
-operand. It updates that one component; a prior ordinary copy is an independent
-inline value. The verifier rejects out-of-range indices, writes after a place
+operand. It updates that one logical component; a prior ordinary copy remains
+independent. The storage planner may represent a copied 256-word array with an
+owner-counted buffer and use copy-on-write. Other arrays stay inline. The
+verifier rejects out-of-range indices, writes after a place
 transfer, and writes through a lexical loan.
 
 The structural verifier checks unique SSA definitions, operand dominance,

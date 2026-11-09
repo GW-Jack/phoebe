@@ -3,6 +3,66 @@
 use super::*;
 
 #[derive(Clone, Copy)]
+pub(super) struct WordsImports {
+    pub new: FuncId,
+    pub retain: FuncId,
+    pub release: FuncId,
+    pub set: FuncId,
+}
+
+pub(super) fn declare_words_imports<M: Module>(
+    module: &mut M,
+    pointer: cranelift_codegen::ir::Type,
+) -> Result<WordsImports, String> {
+    let mut new_signature = module.make_signature();
+    new_signature
+        .params
+        .extend([AbiParam::new(pointer), AbiParam::new(pointer)]);
+    new_signature.returns.push(AbiParam::new(pointer));
+    let new = module
+        .declare_function("phoebe_rt_v1_words_new", Linkage::Import, &new_signature)
+        .map_err(|error| error.to_string())?;
+
+    let mut retain_signature = module.make_signature();
+    retain_signature.params.push(AbiParam::new(pointer));
+    retain_signature.returns.push(AbiParam::new(types::I64));
+    let retain = module
+        .declare_function(
+            "phoebe_rt_v1_words_retain",
+            Linkage::Import,
+            &retain_signature,
+        )
+        .map_err(|error| error.to_string())?;
+
+    let mut release_signature = module.make_signature();
+    release_signature.params.push(AbiParam::new(pointer));
+    let release = module
+        .declare_function(
+            "phoebe_rt_v1_words_release",
+            Linkage::Import,
+            &release_signature,
+        )
+        .map_err(|error| error.to_string())?;
+
+    let mut set_signature = module.make_signature();
+    set_signature.params.extend([
+        AbiParam::new(pointer),
+        AbiParam::new(pointer),
+        AbiParam::new(types::I64),
+    ]);
+    set_signature.returns.push(AbiParam::new(types::I64));
+    let set = module
+        .declare_function("phoebe_rt_v1_words_set", Linkage::Import, &set_signature)
+        .map_err(|error| error.to_string())?;
+    Ok(WordsImports {
+        new,
+        retain,
+        release,
+        set,
+    })
+}
+
+#[derive(Clone, Copy)]
 pub(super) struct ReplyImports {
     pub create: FuncId,
     pub close: FuncId,
