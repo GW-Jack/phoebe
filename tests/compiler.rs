@@ -635,15 +635,13 @@ fn one_variant_and_mutable_nominal_place_agree() {
 }
 
 #[test]
-fn products_cross_calls_and_returns_with_checked_destinations() {
+fn products_cross_calls_and_returns_without_place_storage() {
     let program = compile(include_str!("../examples/product.phoebe"));
     assert!(
         program
             .functions
             .iter()
-            .flat_map(|function| &function.blocks)
-            .flat_map(|block| &block.instructions)
-            .any(|instruction| matches!(instruction.operation, core::Operation::DestPublish(_)))
+            .all(|function| function.place_types.is_empty())
     );
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);

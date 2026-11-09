@@ -511,7 +511,15 @@ impl Lowerer<'_> {
                         ));
                     }
                     let expected = fields.iter().map(|(_, ty)| *ty).collect::<Vec<_>>();
-                    if expected.len() == 2 {
+                    if expected.len() == 2
+                        && matches!(
+                            args.get(1),
+                            Some(CallArgument::Value(Expr {
+                                kind: ExprKind::Try(_),
+                                ..
+                            }))
+                        )
+                    {
                         let destination = self.place(Type::Data(id));
                         self.emit_effect(Operation::DestBegin(destination), expr.span);
                         self.active_destinations.push(ActiveDestination {

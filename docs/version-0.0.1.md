@@ -166,8 +166,9 @@ components, without native heap allocation. Direct returns wider than the
 target's register return capacity use a caller-owned stack buffer, so x86-64
 and AArch64 both support finite nested results. `docs/abi-shapes.md` records the current internal
 calling convention and its unmeasured argument cost threshold. Core IR
-constructs two-field products in checked local destinations with write-once
-fields and publication after both fields are initialized. An early `?` closes
+constructs two-field products with a direct `?` in their second field in
+checked local destinations with write-once fields and publication after both
+fields are initialized. Other products remain in SSA components. An early `?` closes
 only the initialized rights, including nested rights, and a retained frame
 preserves the first field when the second field suspends. Caller-owned result
 destinations and active sum variant construction remain pending. Core IR has typed values,

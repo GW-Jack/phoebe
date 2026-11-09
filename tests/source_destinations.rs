@@ -9,7 +9,7 @@ fn lower(source: &str) -> core::Program {
 }
 
 #[test]
-fn two_field_destinations_agree_across_execution_paths() {
+fn destination_selection_agrees_across_execution_paths() {
     let cases = [
         (
             "fn main() -> I64 { val pair = Pair(20, 22); pair.a + pair.b }",
@@ -42,10 +42,17 @@ fn two_field_destinations_agree_across_execution_paths() {
     for (index, (body, expected)) in cases.into_iter().enumerate() {
         let program = lower(&format!("{PAIR}{body}"));
         let ir = program.to_string();
-        assert!(ir.contains("dest.begin"), "{ir}");
-        assert!(ir.contains("dest.publish"), "{ir}");
+        if index < 2 {
+            assert!(!ir.contains("dest.begin"), "{ir}");
+            assert!(ir.contains("product"), "{ir}");
+        } else {
+            assert!(ir.contains("dest.begin"), "{ir}");
+            assert!(ir.contains("dest.publish"), "{ir}");
+        }
         if index == 0 {
             assert!(program.cost_events().is_empty());
+            let clif = native::clif(&program).unwrap();
+            assert!(!clif.contains("stack_slot"), "{clif}");
         }
         assert_eq!(program.interpret("main", &[]).unwrap(), expected);
         assert_eq!(native::run(&program, "main", &[]).unwrap(), expected);
@@ -61,9 +68,47 @@ fn two_field_destinations_agree_across_execution_paths() {
 
 #[test]
 fn verifier_checks_destination_field_completion() {
-    let program = lower(&format!(
+    let mut program = lower(&format!(
         "{PAIR}fn main() -> I64 {{ val pair = Pair(20, 22); pair.a + pair.b }}"
     ));
+    let function = &mut program.functions[0];
+    let product_index = function.blocks[0]
+        .instructions
+        .iter()
+        .position(|item| matches!(item.operation, core::Operation::Product(_, _)))
+        .unwrap();
+    let product = function.blocks[0].instructions.remove(product_index);
+    let core::Operation::Product(_, fields) = product.operation else {
+        unreachable!()
+    };
+    let place = core::PlaceId(function.place_types.len());
+    function.place_types.push(core::Type::Data(core::DataId(0)));
+    function.blocks[0].instructions.splice(
+        product_index..product_index,
+        [
+            core::Instruction {
+                result: None,
+                operation: core::Operation::DestBegin(place),
+                span: product.span,
+            },
+            core::Instruction {
+                result: None,
+                operation: core::Operation::DestField(place, 0, fields[0]),
+                span: product.span,
+            },
+            core::Instruction {
+                result: None,
+                operation: core::Operation::DestField(place, 1, fields[1]),
+                span: product.span,
+            },
+            core::Instruction {
+                result: product.result,
+                operation: core::Operation::DestPublish(place),
+                span: product.span,
+            },
+        ],
+    );
+    core::verify(&program).unwrap();
     let instructions = &program.functions[0].blocks[0].instructions;
     let begin = instructions
         .iter()
@@ -232,7 +277,7 @@ fn main() -> I64 = when (build()) {
 "#;
     let program = lower(source);
     let ir = program.to_string();
-    assert!(ir.contains("dest.take.field p1, 0"), "{ir}");
+    assert!(ir.contains("dest.take.field p0, 0"), "{ir}");
     assert!(ir.contains("close.caps"), "{ir}");
     assert_eq!(program.interpret("main", &[]).unwrap(), 42);
     assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
@@ -251,14 +296,14 @@ fn main() -> I64 = when (build()) {
 fn pending_owned_destination_is_retained_until_deadlock_cleanup() {
     let source = r#"
 data Envelope { sender: Sender<I64>, number: I64 }
-fn wait(receiver: Receiver<I64>) -> I64 {
+fn wait(receiver: Receiver<I64>) -> Result<I64, ResourceError> {
   val ignored = receiver.receive();
   receiver.close();
-  22
+  Result<I64, ResourceError>.Ok(22)
 }
 fn build() -> Result<I64, ResourceError> {
   val (sender, receiver) = channel<I64>(capacity = 1)?;
-  val envelope = Envelope(sender, wait(receiver));
+  val envelope = Envelope(sender, wait(receiver)?);
   envelope.close_caps();
   Result<I64, ResourceError>.Ok(42)
 }
