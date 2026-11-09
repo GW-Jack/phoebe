@@ -421,6 +421,7 @@ impl phoebe_layout::DataDefinitions for Program {
     }
 }
 
+mod cost;
 pub mod generic_calls;
 mod interpreter;
 mod lowering;

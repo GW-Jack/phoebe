@@ -41,7 +41,8 @@ type, declaration, statement, and expression parsing in sibling modules under
 API. Within Core, IR definitions stay in `lib.rs`; statement lowering lives in
 `lowering/body.rs`, expression lowering in `lowering/expr.rs`, nominal
 registration in `lowering/data.rs`, incremental compatibility in
-`lowering/reuse.rs`, and function assembly in `lowering.rs`. Core verification
+`lowering/reuse.rs`, function assembly in `lowering.rs`, and cost-site
+collection in `cost.rs`. Core verification
 keeps the ownership pass in `verification.rs`, with separate operation typing,
 structural, and capability-flow modules; the interpreter is separate. Within
 Runtime, the native ABI is separate from the scheduler. Within Native, direct

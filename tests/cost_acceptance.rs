@@ -126,6 +126,48 @@ fn typed_channel_plan_is_static_module_data() {
 }
 
 #[test]
+fn only_capability_bearing_closes_get_channel_cost_sites() {
+    let source = include_str!("../examples/capability_product.phoebe");
+    let program = core::lower(&syntax::parse(source).unwrap()).unwrap();
+    let closes = program
+        .cost_events()
+        .into_iter()
+        .filter(|event| event.kind == "channel.op")
+        .collect::<Vec<_>>();
+    let structural = closes
+        .iter()
+        .filter(|event| event.function == "use_envelope")
+        .collect::<Vec<_>>();
+    assert_eq!(structural.len(), 1);
+    assert_eq!(structural[0].type_name, "Envelope");
+    assert_eq!(structural[0].reason, "structural capability close");
+    assert_eq!(
+        structural[0].span.start,
+        source.find("envelope.close_caps()").unwrap()
+    );
+    assert!(closes.iter().any(|event| {
+        event.function == "acquire"
+            && event.type_name == "ReplyReceiverI64"
+            && event.reason == "owned capability close"
+    }));
+
+    let closed = r#"
+data Plain { value: I64 }
+fn main() -> I64 {
+  val plain = Plain(42);
+  plain.close_caps();
+  42
+}
+"#;
+    let program = core::lower(&syntax::parse(closed).unwrap()).unwrap();
+    assert!(program.cost_events().is_empty());
+    let clif = native::clif(&program).unwrap();
+    assert!(!clif.contains("call "), "{clif}");
+    assert_eq!(program.interpret("main", &[]).unwrap(), 42);
+    assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
+}
+
+#[test]
 fn each_source_spawn_has_one_attributed_task_creation_site() {
     let source = include_str!("../examples/spawn_pair.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

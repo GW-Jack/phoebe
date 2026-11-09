@@ -37,9 +37,10 @@ proposed proof boundary and its limits.
 These are logical events, not exact counts of memory instructions. A
 `copy.value` may be carried entirely in registers. The current executable
 compiler emits this event for explicit nominal copies, `task.create` for
-source `spawn`, and `task.yield`
-for explicit yields and automatic loop checkpoints. Its static site ledger is available with
-`phoebe cost <file>`; it does not count dynamic executions.
+source `spawn`, `task.yield` for explicit yields and automatic loop checkpoints,
+and `channel.op` for closes of owned communication capabilities. Its static
+site ledger is available with `phoebe cost <file>`; it does not count dynamic
+executions.
 A `storage.grow` may reuse a reserved task-local page without an OS allocation.
 A `channel.op` may take a fast path without parking. A backend may emit several
 instructions for one event or eliminate instructions when semantics allow it.
@@ -124,8 +125,14 @@ operation and is necessary under the initial task-local ownership model.
 
 The executable compiler emits a tab-separated static cost-site ledger on
 demand with `phoebe cost <file>`. It currently records `copy.value`,
-`task.create`, `task.yield`, `scope.enter`, and `scope.join`, with a distinct
-reason for an automatic loop checkpoint. Scope events also arise from source
+`task.create`, `task.yield`, `scope.enter`, `scope.join`, and source-spanned
+`channel.op` sites for handle, reply, request, and structural aggregate closes. A
+capability-free `close_caps()` produces no channel cost site or native runtime
+call. One aggregate site may close multiple active rights at execution; the
+ledger does not count those dynamic leaf operations. Create, fork, send, and
+receive terminators still need source spans in Core before they can get
+source-attributed `channel.op` sites. The ledger distinguishes automatic loop
+checkpoints from explicit yields. Scope events also arise from source
 `scope` statements that may spawn. Empty-scope erasure is an executable
 acceptance check.
 The development compiler should extend it to the remaining event kinds.
