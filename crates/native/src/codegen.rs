@@ -639,7 +639,8 @@ pub(super) fn compile_functions<M: Module>(
                                 })
                                 .collect(),
                         ),
-                        Operation::DestTakeField(place, index) => {
+                        Operation::DestTakeField(place, index)
+                        | Operation::TakeField(place, index) => {
                             let Type::Data(id) = function.place_types[place.0] else {
                                 unreachable!("verified destination type")
                             };

@@ -190,6 +190,20 @@ pub(super) fn op_type(
             }
             Ok(Some(field_type))
         }
+        Operation::TakeField(place, index) => {
+            let Some(Type::Data(id)) = function.place_types.get(place.0) else {
+                return Err("field take requires a product place".into());
+            };
+            let field = program.data[id.0]
+                .fields
+                .get(*index)
+                .map(|(_, ty)| *ty)
+                .ok_or("invalid field take")?;
+            if layout.leaves(field) == 0 {
+                return Err("field take requires an owned capability field".into());
+            }
+            Ok(Some(field))
+        }
         Operation::Neg(a) => {
             if ty(*a) != Type::I64 {
                 return Err("neg expects I64".into());
@@ -482,6 +496,7 @@ pub fn operands(operation: &Operation) -> Vec<ValueId> {
         | Operation::CopyPlace(_)
         | Operation::InferredCopyPlace(_)
         | Operation::ReadField(_, _)
+        | Operation::TakeField(_, _)
         | Operation::ArrayGetPlace(_, _)
         | Operation::DestBegin(_)
         | Operation::DestPublish(_)

@@ -1,8 +1,9 @@
 # Field-path loan language
 
 Status: exact path checker, checked scalar field loans, and field-address
-lowering are integrated. Parent product references and partial capability
-records remain open under WS-4 and WS-3.
+lowering are integrated. Top-level right-field moves from mutable products
+are integrated; parent product references and complete partial-record
+semantics remain open under WS-4 and WS-3.
 
 A path is a finite sequence of product-field indices relative to one storage
 root. The empty path names the whole root. A loan at path `p` covers `p` and
@@ -52,7 +53,7 @@ joins. No reference may cross a task boundary.
 
 The present reference types are scalar. Borrowing an entire product parent is
 therefore unsupported, even though the path checker would detect its overlap
-with a child. Mutable places containing rights are separately restricted, so
-this implementation does not yet provide field loans in partial resource
-records. Those source and Core surfaces, and a fieldwise capability transfer,
-remain acceptance work for WS-4 and WS-3.
+with a child. A scalar sibling field can be borrowed from a mutable product
+after a different top-level right field moves. Nested partial field moves,
+field reinitialization, and the full cross-task and cleanup acceptance matrix
+remain open under WS-3 and WS-4.

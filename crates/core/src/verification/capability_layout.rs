@@ -14,6 +14,7 @@ pub(super) struct Leaf {
 pub(crate) struct Layout {
     products: Vec<Vec<Leaf>>,
     tagged: Vec<bool>,
+    field_counts: Vec<usize>,
 }
 
 impl Layout {
@@ -21,6 +22,7 @@ impl Layout {
         let mut layout = Self {
             products: Vec::with_capacity(data.len()),
             tagged: Vec::with_capacity(data.len()),
+            field_counts: Vec::with_capacity(data.len()),
         };
         for definition in data {
             let mut leaves = Vec::new();
@@ -66,6 +68,7 @@ impl Layout {
             }
             layout.products.push(leaves);
             layout.tagged.push(is_tagged);
+            layout.field_counts.push(definition.fields.len());
         }
         layout
     }
@@ -91,6 +94,10 @@ impl Layout {
             ty if Self::bare_right(ty) => 1,
             _ => 0,
         }
+    }
+
+    pub(crate) fn field_count(&self, id: DataId) -> usize {
+        self.field_counts[id.0]
     }
 
     pub(crate) fn field_leaves(&self, id: DataId, field: usize) -> std::ops::Range<usize> {
