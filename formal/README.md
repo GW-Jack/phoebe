@@ -4,6 +4,27 @@ Run `python3 formal/check_models.py` from the repository root. Maude 3.5.1 was
 used for the initial checks. The script rejects warnings and unexpected search
 results because Maude can exit successfully after a malformed command.
 
+## Collection selector effect discipline
+
+`collection_selector.maude` enumerates static-small, static-large, and runtime
+extents; fixed, append, and structural mutation; handle and indexed access;
+loans spanning append; and whether an append occurs. It excludes internally
+inconsistent requirement combinations, applies the bounded selection table,
+and checks that the chosen layout introduces no growth, relocation, shifting,
+chunk allocation, or fixed-inline reserve without a corresponding need. It
+also checks the static fixed default and rejects incompatible handle/index and
+structural-loan-without-handle combinations. The search explores 337 states with no encoded
+bad outcome. Seven witnesses reach every layout and both rejection paths; a
+deliberately gratuitous contiguous plan is classified bad.
+
+The model omits escape and ABI constraints, which the Rust sweep covers. It
+proves a property of this finite rule table only. The Rust selector
+has a separate exhaustive test over 5 extents and all 256 subsets of eight
+checked uses; that test checks the corresponding effects and choice conditions
+in the implementation. Neither check proves that source-use inference is
+sound, that a representation refines the abstract sequence contract, or that
+the selected layout is fastest on a real workload.
+
 ## One-task core
 
 `core.maude` has one task, two nested regions, one reference rooted in the

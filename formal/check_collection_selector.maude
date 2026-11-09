@@ -1,0 +1,25 @@
+load collection_selector.maude
+
+--- The checker recognizes a deliberately gratuitous contiguous plan.
+reduce in PHOEBE-COLLECTION-SELECTOR :
+  bad(out(small, fixed, false, false, false, false, contiguous)) .
+
+--- No valid input selects a plan with an unneeded effect or wrong guarantee.
+search [1] in PHOEBE-COLLECTION-SELECTOR : seed =>* X:State
+  such that bad(X:State) == true .
+
+--- Non-vacuous outcomes for every layout and both rejection cases.
+search [1] in PHOEBE-COLLECTION-SELECTOR : seed =>*
+  out(small, fixed, false, false, false, false, fixedInline) .
+search [1] in PHOEBE-COLLECTION-SELECTOR : seed =>*
+  out(large, fixed, false, false, false, false, fixedRegion) .
+search [1] in PHOEBE-COLLECTION-SELECTOR : seed =>*
+  out(small, append, false, true, false, true, contiguous) .
+search [1] in PHOEBE-COLLECTION-SELECTOR : seed =>*
+  out(runtime, append, false, true, true, true, segmented) .
+search [1] in PHOEBE-COLLECTION-SELECTOR : seed =>*
+  out(runtime, structural, true, false, false, true, regionLinked) .
+search [1] in PHOEBE-COLLECTION-SELECTOR : seed =>*
+  out(runtime, structural, true, true, false, true, reject) .
+search [1] in PHOEBE-COLLECTION-SELECTOR : seed =>*
+  out(runtime, structural, false, true, true, true, reject) .
