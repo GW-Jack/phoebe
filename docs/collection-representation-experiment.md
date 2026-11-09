@@ -1,4 +1,4 @@
-# Collection representation experiment — draft 0.1
+# Collection representation experiment — draft 0.2
 
 Status: exploratory design and isolated Rust benchmark, 2026-11-08. No Phoebe
 collection syntax, collection IR operation, representation selector, or
@@ -55,6 +55,76 @@ per-operation dynamic dispatch. Public, separately compiled APIs must either
 fix a representation, expose an opaque implementation with a stable ABI, or be
 generic over a representation contract; local choice cannot silently change a
 published layout or force downstream recompilation from private uses.
+
+## Infer requirements before estimating speed
+
+The default selector should first infer the **least collection capability**
+that satisfies all observed uses. It is not tasked with finding a globally
+fastest layout. Avoiding unnecessary growth machinery, relocation, node links,
+and dynamic dispatch is a correctness-checkable baseline; comparing two
+eligible layouts on real hardware is a separate performance question.
+
+For each construction site, the typed IR records a finite requirement summary:
+
+| Axis | Facts to infer from uses |
+| --- | --- |
+| Extent | Compile-time length; run-time length fixed at creation; build then freeze; append-only; arbitrary structural mutation. |
+| Access | Whole scan; front/back; indexed lookup; stable element handle; splice or keyed lookup. |
+| Loans | No interior loan; loan ends before mutation; loan spans append; loan spans suspension. |
+| Ownership | Closed values; affine or capability-bearing elements; copy requested; transfer to task or channel. |
+| Escape | Local construction and consumption; call to a summarized function; public or unknown boundary. |
+
+Facts combine by a monotone join over control-flow paths and call summaries.
+For example, one path that removes an element prevents an append-only claim;
+one loan spanning append requires stable append even if every other loan ends
+earlier. An unknown call must use its declared effects or a conservative
+summary. The finite lattice permits a local worklist fixed point without a
+solver in normal compilation. Summaries belong in module interfaces so a
+private body edit that preserves them need not invalidate callers. At a public
+ABI boundary the representation is fixed or generic, not inferred from
+unseen downstream programs.
+
+The default rules to test are deliberately simple:
+
+| Inferred use | Default representation direction | Unneeded machinery |
+| --- | --- | --- |
+| Compile-time fixed `N`, no structural mutation | Inline `[T; N]` when frame size permits; otherwise fixed region storage | Capacity field, growth path, per-element allocation. |
+| Run-time size known once, then fixed | One exact-size allocation, constructed in place | Geometric growth and relocation. |
+| Build by append, then freeze | A construction buffer with a phase transition to a fixed view; retain its allocation unless an explicit compaction pays to move it | Growth checks after freeze, implicit final copy. |
+| Append-only, with no element loan across append | Contiguous growth by default | Node links, chunk directory, stable-address promise. |
+| Append with an element loan still live | A certified stable layout, initially segmented storage | Any relocation of a borrowed element. |
+| Removal, insertion, or splicing by stable handle | An indexed region or linked layout if the handle contract requires it | O(n) search for an already known node, when avoidable. |
+
+These are defaults, not a commitment that every fixed array belongs on a task
+stack. A large fixed value in a retained task frame may need region storage.
+Likewise, a sequence whose length stops changing after construction still
+needs a length field if indexing must check a run-time bound. If a program
+uses only append and scan, a linked list should not become the default merely
+because it implements the abstract operations. A programmer can still request
+a concrete layout.
+
+The selector should emit a small explanation, for example:
+
+```text
+site 41: append-only; indexed reads; no loan spans append
+eligible: contiguous, segmented, region-linked
+chosen: contiguous (no stable-address requirement; direct indexed access)
+excluded: fixed array (length changes after construction)
+```
+
+This explanation is an inspectable planning result. The normal build does not
+benchmark alternatives or prove them anew. A profile-guided build may replace
+the default among semantically eligible representations, with its measured
+workload and objective recorded separately.
+
+The first pass obligations are mechanical: inferred requirements must be a
+sound over-approximation of every reachable use; the selected layout must
+satisfy those requirements; and lowering must introduce only effects allowed
+by that layout and source operations. In particular, a fixed-size selection
+must emit no `storage.grow` or `move.elements` site after construction, an
+append-only summary must emit no shrink operation, and a no-index program
+must not acquire an indexed bounds check. These are useful proof targets even
+when the default layout choice itself is a heuristic.
 
 ## Candidate layouts
 
@@ -118,6 +188,8 @@ The selector should see semantic requirements before choosing a layout:
 %e = borrow.element %s, %index {loan=l9, identity=element}
 borrow.end l9
 %x = sequence.get %s, %index {check.bounds, site=43}
+// inferred: append_only, indexed, no_loan_across_append
+// selected: contiguous; growth may move elements only with no live loan
 ```
 
 After selection, `sequence.new` records a concrete representation ID and its
@@ -153,13 +225,13 @@ unchanged. Because layouts can fail allocation at different pushes, the
 abstract contract permits resource failure at each fallible growth operation;
 it does **not** promise identical failure timing across representations.
 
-The normal compiler needs only deterministic eligibility checks and a small
-cost heuristic over a bounded candidate table. A separate development or CI
+The normal compiler needs deterministic eligibility checks and a bounded,
+documented default rule over a small candidate table. A separate development or CI
 workflow can check each candidate's refinement, reference-stability, failure,
 and effect claims. Such a proof must eventually connect to the implementation;
 a Maude model alone would establish only a model property. `phoebe explain`
-should report candidate exclusions, the chosen layout, and the cost evidence.
-No choice is called "best" without a stated workload and objective.
+should report candidate exclusions, the chosen layout, and the inferred facts.
+No choice is called "fastest" without a stated workload and objective.
 
 ## Research inputs
 

@@ -67,8 +67,12 @@ lifetime annotations are required.
 Regions nest. A task's retained frames remain live while it is parked. An inner
 region may end only when no live reference can reach its objects. The compiler
 must reject any control-flow path that violates this rule. Exact treatment of
-resizable collection shrinkage is deferred; draft 0.5 offers grow-only lists
-whose elements remain stable until the owning list's region ends.
+resizable collection shrinkage is deferred. The draft 0.5 grow-only list
+proposal keeps elements stable until the owning list's region ends. The
+exploratory `docs/collection-representation-experiment.md` now tests a more
+precise split: infer fixed, append-only, and stable-append requirements from
+uses, and promise stable element addresses only for a collection family that
+requires them. No collection family or storage representation is implemented.
 
 Safe code cannot construct arbitrary pointers, reinterpret object types, or
 send task-local references to another task. Allocation failure stops a task
