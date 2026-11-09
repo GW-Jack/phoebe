@@ -70,6 +70,9 @@ requires a direct return of the complete destination and excludes calls and
 other effects after partial initialization. The direct Cranelift path then
 omits the intermediate product stack loads and stores; retained tasks and
 more complex constructors still use local destinations.
+A direct one-call wrapper that returns the callee's complete wide result
+passes its own caller buffer through to the callee. This removes the wrapper's
+temporary result slot, including for capability-bearing products.
 The shape table also records the part offset and kind of each capability leaf
 in a product. A `Request<I64>` contributes its reply right at its second
 part. Reverse traversal of this table gives structural close order without
