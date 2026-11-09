@@ -1166,5 +1166,124 @@
     "payload_json": "{\"author\":\"cli\",\"body\":\"Trunk CI run 42608302007 failed in tests/native_managed_array_leaks.rs:26: debug_live_word_allocations observed 1 while expecting baseline 0. The two tests in that file run concurrently and both sample a process-global allocation counter; PR #22 checks passed, so this appears to be test interference. Your current WS-1 worktree already edits that test file; please serialize the allocation-counting tests or use a per-test counter before publishing that slice. I left your uncommitted file untouched.\"}",
     "actor": "cli",
     "created_at": "2026-11-09 11:23:08"
+  },
+  {
+    "event_id": "071f4cb9b340fbdb4519935113b28bbca0afc0dbf6ae58f6872bcac3f15a8a41",
+    "parents": [
+      "2a6fdff00678dedd531e85f6b6fc7ca7482b9eeae840840b21b66427918bc3a2"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "claim.acquired",
+    "payload_json": "{\"actor\":\"codex:phoebe-nested-paths\",\"expires_at\":\"2026-11-09 13:25:04\"}",
+    "actor": "codex:phoebe-nested-paths",
+    "created_at": "2026-11-09 11:25:04"
+  },
+  {
+    "event_id": "6cd21faf874ff30009181d41077016f2b02a75da3965784f88186fc432ee7a3c",
+    "parents": [
+      "b538eb62543314950d1c9bba50d93ad8f8096625f1b1bc73864b63a9b446ed30"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"Direct-call closure now limits the 256-word pointer ABI to functions that actually carry that array, so a retained caller can invoke a managed direct helper without forcing global inline storage. Functions carrying arrays through a yielding callee remain inline. Interpreter/JIT/standalone cases, full Cargo workspace tests, and strict Clippy pass; preparing focused PR.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:25:24"
+  },
+  {
+    "event_id": "6ce65343bdaac2d6892f8f85d4c1991db8283485da151e14f038fa7cfe0c7481",
+    "parents": [
+      "071f4cb9b340fbdb4519935113b28bbca0afc0dbf6ae58f6872bcac3f15a8a41"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"Temporarily releasing the nested-path claim to repair red trunk CI from process-global managed-allocation counter tests. No WS-3 code was changed in this worktree.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:26:00"
+  },
+  {
+    "event_id": "489f554ed2e4e103e9d196e5f097371f50d64d18e696a5951d75c1d5f9224237",
+    "parents": [
+      "6ce65343bdaac2d6892f8f85d4c1991db8283485da151e14f038fa7cfe0c7481"
+    ],
+    "issue_id": "e150085dc27913cbaf36e466f98003ff6a4c2a1d0039c63622d13bea8df70886",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex:phoebe-nested-paths\",\"lease_id\":\"071f4cb9b340fbdb4519935113b28bbca0afc0dbf6ae58f6872bcac3f15a8a41\",\"released_at\":\"2026-11-09 11:26:00\"}",
+    "actor": "codex:phoebe-nested-paths",
+    "created_at": "2026-11-09 11:26:00"
+  },
+  {
+    "event_id": "4bd8da77e6955a8f484978866857e252d97dfce08308ea33eff6327dd8e5a65d",
+    "parents": [],
+    "issue_id": "4bd8da77e6955a8f484978866857e252d97dfce08308ea33eff6327dd8e5a65d",
+    "kind": "issue.created",
+    "payload_json": "{\"assigned_to\":null,\"body\":\"Trunk CI run 42608302007 failed in native_managed_array_leaks.rs because two tests in the same process compare a process-global live-allocation counter concurrently. Add a shared test lock around the counter-sensitive tests, preserving their leak assertions. Verify Cargo CI and Buck2.\",\"filed_by\":\"codex:phoebe-ci-repair\",\"labels\":[\"test\"],\"metadata\":{\"kind\":\"task\"},\"queue\":\"phoebe\",\"title\":\"Serialize managed-array allocation counter tests\"}",
+    "actor": "codex:phoebe-ci-repair",
+    "created_at": "2026-11-09 11:26:04"
+  },
+  {
+    "event_id": "679a8b913374ed26b809bf3c3241c043dc4b490816d61fbd1975bab555552e98",
+    "parents": [
+      "4bd8da77e6955a8f484978866857e252d97dfce08308ea33eff6327dd8e5a65d"
+    ],
+    "issue_id": "4bd8da77e6955a8f484978866857e252d97dfce08308ea33eff6327dd8e5a65d",
+    "kind": "claim.acquired",
+    "payload_json": "{\"actor\":\"codex:phoebe-ci-repair\",\"expires_at\":\"2026-11-09 13:26:08\"}",
+    "actor": "codex:phoebe-ci-repair",
+    "created_at": "2026-11-09 11:26:08"
+  },
+  {
+    "event_id": "35ff8e2c0afaa1c16bb1db73645ba92d8ebfaa7459373817992699923db96a5b",
+    "parents": [
+      "6cd21faf874ff30009181d41077016f2b02a75da3965784f88186fc432ee7a3c"
+    ],
+    "issue_id": "9c65cb8f8146de50cb4ff536dd5669b83542015fb7cf862152e4af0df1da5bfb",
+    "kind": "comment.added",
+    "payload_json": "{\"author\":\"cli\",\"body\":\"Fixed the process-global debug allocation counter test race reported by concurrent trunk CI: all counter-reading managed-array tests now share a mutex. The 4-test binary passes with four test threads after rebasing on PR #23; full workspace recheck is running.\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:26:55"
+  },
+  {
+    "event_id": "21f419f6e958ef54195d05e11fa6cc0e9663eeff047e170e18abd5caa05dd65a",
+    "parents": [
+      "679a8b913374ed26b809bf3c3241c043dc4b490816d61fbd1975bab555552e98"
+    ],
+    "issue_id": "4bd8da77e6955a8f484978866857e252d97dfce08308ea33eff6327dd8e5a65d",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":\"cli\",\"kind\":\"pull_request\",\"note\":\"Merged serialization of process-wide allocation counter tests and Buck2 coverage; PR Cargo/Buck2/formal gates passed.\",\"reference\":\"https://github.com/GW-Jack/phoebe/pull/24\"}",
+    "actor": "cli",
+    "created_at": "2026-11-09 11:30:08"
+  },
+  {
+    "event_id": "08bc2f1a53ce17c156e305fd11a19fc0fcab2d75a579cf01170df76cf19cb878",
+    "parents": [
+      "21f419f6e958ef54195d05e11fa6cc0e9663eeff047e170e18abd5caa05dd65a"
+    ],
+    "issue_id": "4bd8da77e6955a8f484978866857e252d97dfce08308ea33eff6327dd8e5a65d",
+    "kind": "issue.closed",
+    "payload_json": "{\"status\":\"closed\",\"summary\":\"Global allocation counter assertions are serialized inside their test binary; Cargo and Buck2 run the test suite.\"}",
+    "actor": null,
+    "created_at": "2026-11-09 11:30:08"
+  },
+  {
+    "event_id": "7aa37069f45c2abf25a0b95883d86232974f67f45d55405790b512264961f799",
+    "parents": [
+      "08bc2f1a53ce17c156e305fd11a19fc0fcab2d75a579cf01170df76cf19cb878"
+    ],
+    "issue_id": "4bd8da77e6955a8f484978866857e252d97dfce08308ea33eff6327dd8e5a65d",
+    "kind": "claim.released",
+    "payload_json": "{\"actor\":\"codex:phoebe-ci-repair\",\"lease_id\":\"679a8b913374ed26b809bf3c3241c043dc4b490816d61fbd1975bab555552e98\",\"released_at\":\"2026-11-09 11:30:08\"}",
+    "actor": "codex:phoebe-ci-repair",
+    "created_at": "2026-11-09 11:30:08"
+  },
+  {
+    "event_id": "fd7ea1ba600119a0b9da0b4a0e96bb788e6b169e3b54327b195954a451263376",
+    "parents": [
+      "7aa37069f45c2abf25a0b95883d86232974f67f45d55405790b512264961f799"
+    ],
+    "issue_id": "4bd8da77e6955a8f484978866857e252d97dfce08308ea33eff6327dd8e5a65d",
+    "kind": "evidence.added",
+    "payload_json": "{\"added_by\":null,\"at_cut\":null,\"basis\":null,\"basis_fingerprint\":null,\"kind\":\"cuts\",\"note\":null,\"reference\":\"intent(4bd8da77e6955a8f484978866857e252d97dfce08308ea33eff6327dd8e5a65d)\"}",
+    "actor": null,
+    "created_at": "2026-11-09 11:30:08"
   }
 ]
