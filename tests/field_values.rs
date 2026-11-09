@@ -63,11 +63,10 @@ fn main() -> I64 = when (acquire()) {
         assert_eq!(program.interpret("main", &[]).unwrap(), 42);
         assert_eq!(native::run(&program, "main", &[]).unwrap(), 42);
     }
-    let invalid = source.replace("val first = packet.meta;", "val first = packet.sender;");
-    let error = core::lower(&syntax::parse(&invalid).unwrap()).unwrap_err();
-    assert!(
-        error
-            .message
-            .contains("capability field move requires a var product binding")
+    let invalid = source.replace(
+        "val first = packet.meta;",
+        "val moved = packet.sender;\n  moved.close();\n  val first = packet.meta;",
     );
+    let error = core::lower(&syntax::parse(&invalid).unwrap()).unwrap_err();
+    assert!(error.message.contains("not live"), "{error:?}");
 }

@@ -90,6 +90,12 @@ impl Lowerer<'_> {
         };
         let (operation, referent) = match binding {
             Binding::Var(place) => {
+                if mutable && self.immutable_places[place.0] {
+                    return Err(Diagnostic::new(
+                        borrow_span,
+                        "cannot mutably borrow a val binding",
+                    ));
+                }
                 let (indices, ty) =
                     self.resolve_borrow_path(self.place_types[place.0], path, borrow_span)?;
                 let operation = if indices.is_empty() {

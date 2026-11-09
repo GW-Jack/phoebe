@@ -193,7 +193,7 @@ fn main() -> I64 = 0
                 "  pair.close_caps();",
                 "  pair.sender;\n  pair.close_caps();",
             ),
-            "var product binding",
+            "not live",
         ),
     ] {
         let error = core::lower(&syntax::parse(&changed).unwrap()).unwrap_err();

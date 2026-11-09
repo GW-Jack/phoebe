@@ -66,7 +66,7 @@ impl Lowerer<'_> {
             self.emit_effect(Operation::PlaceInit(place, value), span);
             Binding::Var(place)
         } else {
-            Binding::Val(value)
+            self.owned_binding(name, value, ty, span)
         };
         locals.insert(name.to_owned(), binding);
     }
@@ -481,7 +481,7 @@ impl Lowerer<'_> {
                             self.emit_effect(Operation::PlaceInit(place, fresh), *span);
                             locals.insert(name.clone(), Binding::Var(place));
                         } else {
-                            locals.insert(name.clone(), Binding::Val(fresh));
+                            locals.insert(name.clone(), self.owned_binding(name, fresh, ty, *span));
                         }
                         continue;
                     }
@@ -491,7 +491,7 @@ impl Lowerer<'_> {
                         self.emit_effect(Operation::PlaceInit(place, value), *span);
                         locals.insert(name.clone(), Binding::Var(place));
                     } else {
-                        locals.insert(name.clone(), Binding::Val(value));
+                        locals.insert(name.clone(), self.owned_binding(name, value, ty, *span));
                     }
                 }
                 Statement::Assign(name, span, expr) => {
@@ -502,6 +502,12 @@ impl Lowerer<'_> {
                     let (value, ty) = self.expr(expr, locals)?;
                     match binding {
                         Binding::Var(place) => {
+                            if self.immutable_places[place.0] {
+                                return Err(Diagnostic::new(
+                                    *span,
+                                    format!("cannot assign to val {name}"),
+                                ));
+                            }
                             self.require(ty, self.place_types[place.0], expr.span)?;
                             self.emit_effect(Operation::Store(place, value), *span);
                         }
