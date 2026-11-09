@@ -571,6 +571,7 @@ fn terminator_live(function: &Function, block_id: usize, incoming: &[Live]) -> L
             capacity,
             success,
             failure,
+            ..
         }
         | Terminator::TypedChannelNew {
             capacity,

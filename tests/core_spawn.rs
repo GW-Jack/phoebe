@@ -44,6 +44,7 @@ fn two_task_program() -> Program {
                             capacity: ValueId(0),
                             success: BlockId(1),
                             failure: BlockId(2),
+                            span: Span { start: 0, end: 0 },
                         },
                     },
                     Block {

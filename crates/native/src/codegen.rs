@@ -915,6 +915,7 @@ pub(super) fn compile_functions<M: Module>(
                         capacity,
                         success,
                         failure,
+                        ..
                     } => {
                         let (create, _, _, _) = runtime_imports.expect("channel runtime imports");
                         let callee = module.declare_func_in_func(create, builder.func);
@@ -969,6 +970,7 @@ pub(super) fn compile_functions<M: Module>(
                         capacity,
                         success,
                         failure,
+                        ..
                     } => {
                         let imports = typed_imports.expect("typed runtime imports");
                         let callee = module.declare_func_in_func(imports.create, builder.func);

@@ -121,11 +121,13 @@ impl Lowerer<'_> {
                             capacity: value,
                             success,
                             failure,
+                            span: *span,
                         },
                         None => Terminator::ChannelNew {
                             capacity: value,
                             success,
                             failure,
+                            span: *span,
                         },
                     });
                     self.current = failure;

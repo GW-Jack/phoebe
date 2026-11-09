@@ -126,6 +126,39 @@ fn typed_channel_plan_is_static_module_data() {
 }
 
 #[test]
+fn channel_creation_cost_sites_retain_source_spans_through_rebasing() {
+    let typed = include_str!("../examples/cost/typed_descriptor.phoebe");
+    for (source, expected_type) in [
+        (typed.to_owned(), "Bool"),
+        (typed.replace("channel<Bool>", "channel<I64>"), "I64"),
+    ] {
+        let mut program = core::lower(&syntax::parse(&source).unwrap()).unwrap();
+        let site = source.find("channel<").unwrap();
+        let creations = program
+            .cost_events()
+            .into_iter()
+            .filter(|event| event.reason == "channel construction")
+            .collect::<Vec<_>>();
+        assert_eq!(creations.len(), 1);
+        assert_eq!(creations[0].kind, "channel.op");
+        assert_eq!(creations[0].function, "make");
+        assert_eq!(creations[0].span.start, site);
+        assert_eq!(creations[0].type_name, expected_type);
+
+        program.functions[0].for_each_source_span_mut(|span| {
+            span.start += 7;
+            span.end += 7;
+        });
+        let rebased = program
+            .cost_events()
+            .into_iter()
+            .find(|event| event.reason == "channel construction")
+            .unwrap();
+        assert_eq!(rebased.span.start, site + 7);
+    }
+}
+
+#[test]
 fn only_capability_bearing_closes_get_channel_cost_sites() {
     let source = include_str!("../examples/capability_product.phoebe");
     let program = core::lower(&syntax::parse(source).unwrap()).unwrap();

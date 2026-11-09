@@ -105,6 +105,29 @@ impl Program {
                         reason: "lexical scope",
                     });
                 }
+                let channel_creation = match block.terminator {
+                    Terminator::ChannelNew { span, .. } => Some((span, "I64".to_owned())),
+                    Terminator::TypedChannelNew { message, span, .. } => {
+                        let ty = message.value_type();
+                        let type_name = match ty {
+                            Type::Data(id) => self.data[id.0].name.clone(),
+                            _ => format!("{ty:?}"),
+                        };
+                        Some((span, type_name))
+                    }
+                    _ => None,
+                };
+                if let Some((span, type_name)) = channel_creation {
+                    events.push(CostEvent {
+                        function: function.name.clone(),
+                        block: block_id,
+                        instruction: block.instructions.len(),
+                        span,
+                        kind: "channel.op",
+                        type_name,
+                        reason: "channel construction",
+                    });
+                }
             }
         }
         events

@@ -38,7 +38,7 @@ These are logical events, not exact counts of memory instructions. A
 `copy.value` may be carried entirely in registers. The current executable
 compiler emits this event for explicit nominal copies, `task.create` for
 source `spawn`, `task.yield` for explicit yields and automatic loop checkpoints,
-and `channel.op` for closes of owned communication capabilities. Its static
+and `channel.op` for scalar and typed channel construction and closes of owned communication capabilities. Its static
 site ledger is available with `phoebe cost <file>`; it does not count dynamic
 executions.
 A `storage.grow` may reuse a reserved task-local page without an OS allocation.
@@ -129,9 +129,9 @@ demand with `phoebe cost <file>`. It currently records `copy.value`,
 `channel.op` sites for handle, reply, request, and structural aggregate closes. A
 capability-free `close_caps()` produces no channel cost site or native runtime
 call. One aggregate site may close multiple active rights at execution; the
-ledger does not count those dynamic leaf operations. Create, fork, send, and
-receive terminators still need source spans in Core before they can get
-source-attributed `channel.op` sites. The ledger distinguishes automatic loop
+ledger does not count those dynamic leaf operations. Scalar and typed channel
+construction now have source-spanned `channel.op` sites; reply and request
+creation, fork, send, and receive still need Core source spans. The ledger distinguishes automatic loop
 checkpoints from explicit yields. Scope events also arise from source
 `scope` statements that may spawn. Empty-scope erasure is an executable
 acceptance check.

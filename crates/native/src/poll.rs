@@ -1174,6 +1174,7 @@ fn compile_poll_module<M: Module>(
                         capacity,
                         success,
                         failure,
+                        ..
                     }
                     | Terminator::TypedChannelNew {
                         capacity,

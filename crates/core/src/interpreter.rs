@@ -632,6 +632,7 @@ impl CoreTask {
                     capacity,
                     success,
                     failure,
+                    ..
                 } => {
                     let result = usize::try_from(as_i64(self.value(capacity)))
                         .map_err(|_| ResourceError::InvalidChannelCapacity)
@@ -657,6 +658,7 @@ impl CoreTask {
                     capacity,
                     success,
                     failure,
+                    ..
                 } => {
                     let capacity_value = as_i64(self.value(capacity));
                     let descriptor = self.typed_descriptor(message)?;
@@ -1271,6 +1273,7 @@ impl fmt::Display for Program {
                         capacity,
                         success,
                         failure,
+                        ..
                     } => writeln!(
                         f,
                         "    channel.new.i64 v{} success block{} failure block{}",
@@ -1281,6 +1284,7 @@ impl fmt::Display for Program {
                         capacity,
                         success,
                         failure,
+                        ..
                     } => writeln!(
                         f,
                         "    channel.new.typed {message:?} v{} success block{} failure block{}",

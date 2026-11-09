@@ -66,6 +66,29 @@ fastest layout. Avoiding unnecessary growth machinery, relocation, node links,
 and dynamic dispatch is a correctness-checkable baseline; comparing two
 eligible layouts on real hardware is a separate performance question.
 
+Here, collection capability means an operation or guarantee such as fixed
+extent, append, removal, indexed access, or stable element identity. It does
+not mean a transferable communication right. The semantic analysis should
+infer these capabilities from reachable operations and loan lifetimes, not
+from naming or superficial syntax. A collection initialized by repeated
+appends and never changed afterward can have a build phase followed by a
+fixed phase. A collection whose length is known at creation and never changed
+needs no growth path. A collection that is only appended to needs no removal
+or shrink path. None of these conclusions follows from a single example path;
+the analysis must account for every reachable branch and summarized call.
+
+Let `Req(s)` be the operations and guarantees required at construction site
+`s`, and `Cap(R)` those provided by representation `R`. The eligibility
+condition is `Req(s) subseteq Cap(R)`, together with ownership, loan, failure,
+and ABI compatibility. The normal compiler then applies a deterministic,
+bounded rule among eligible layouts. Its soundness obligation is to
+over-approximate actual uses in `Req(s)` and preserve the abstract sequence
+contract after lowering. The default's performance claim is narrower:
+lowering must not add growth, relocation, bounds checks, or indirect calls
+whose required capability and source operation are absent. This claim can be
+checked against IR effects without proving that the selected eligible layout
+is fastest. Empirical benchmarks may later revise the default ordering.
+
 For each construction site, the typed IR records a finite requirement summary:
 
 | Axis | Facts to infer from uses |

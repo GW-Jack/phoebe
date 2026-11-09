@@ -617,6 +617,7 @@ pub(crate) fn verify_structure(
                     capacity,
                     success,
                     failure,
+                    ..
                 } => {
                     check_use(*capacity, block_id, end)?;
                     if function.value_types[capacity.0] != Type::I64 {
@@ -641,6 +642,7 @@ pub(crate) fn verify_structure(
                     capacity,
                     success,
                     failure,
+                    ..
                 } => {
                     check_use(*capacity, block_id, end)?;
                     let outputs = &function.blocks[success.0].params;

@@ -194,12 +194,14 @@ pub enum Terminator {
         capacity: ValueId,
         success: BlockId,
         failure: BlockId,
+        span: Span,
     },
     TypedChannelNew {
         message: MessageType,
         capacity: ValueId,
         success: BlockId,
         failure: BlockId,
+        span: Span,
     },
     ReplyNew {
         success: BlockId,
@@ -305,13 +307,13 @@ impl Function {
             match &mut block.terminator {
                 Terminator::Yield { span, .. }
                 | Terminator::ScopeJoin { span, .. }
-                | Terminator::Spawn { span, .. } => visit(span),
+                | Terminator::Spawn { span, .. }
+                | Terminator::ChannelNew { span, .. }
+                | Terminator::TypedChannelNew { span, .. } => visit(span),
                 Terminator::Return(_)
                 | Terminator::Jump(_, _)
                 | Terminator::Branch { .. }
                 | Terminator::Match { .. }
-                | Terminator::ChannelNew { .. }
-                | Terminator::TypedChannelNew { .. }
                 | Terminator::ReplyNew { .. }
                 | Terminator::RequestChannelNew { .. }
                 | Terminator::RequestUnpack { .. }

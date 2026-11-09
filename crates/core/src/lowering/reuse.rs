@@ -205,6 +205,7 @@ mod data_reuse_tests {
                     capacity: ValueId(0),
                     success: BlockId(0),
                     failure: BlockId(0),
+                    span: Span { start: 0, end: 0 },
                 },
             }],
             value_types: vec![Type::TypedSender(old), Type::TypedReceiver(old)],

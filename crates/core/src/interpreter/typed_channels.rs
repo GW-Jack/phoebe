@@ -47,6 +47,7 @@ fn nominal_message_crosses_checked_typed_channel_and_returns_to_caller() {
                     capacity: ValueId(0),
                     success: BlockId(1),
                     failure: BlockId(5),
+                    span: Span { start: 0, end: 0 },
                 },
             },
             Block {
@@ -182,6 +183,7 @@ fn typed_core_moves_reply_right_inside_nominal_message() {
                     capacity: ValueId(0),
                     success: BlockId(1),
                     failure: BlockId(7),
+                    span: Span { start: 0, end: 0 },
                 },
             },
             Block {
